@@ -1,0 +1,30 @@
+#!/bin/sh
+# Refuses a push carrying mangled text. Install with `npm run hooks:install`.
+#
+# Cannot do what would actually be ideal — refuse when a shell command touched an Arabic-bearing
+# file — because git sees commits, not how they were made. So it looks for the residue instead:
+# U+FFFD, and runs of question marks inside strings. See scripts/check-encoding.mjs.
+
+set -eu
+
+remote_sha_zero="0000000000000000000000000000000000000000"
+root="$(git rev-parse --show-toplevel)"
+
+# git feeds pre-push one line per ref: <local ref> <local sha> <remote ref> <remote sha>
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$remote_sha_zero" ] && continue
+
+  if [ "$remote_sha" = "$remote_sha_zero" ]; then
+    # A new branch. Diff against the upstream default rather than the whole of history, which would
+    # re-check every commit ever made and fail on damage somebody already repaired.
+    base="$(git merge-base "$local_sha" origin/develop 2>/dev/null || echo "")"
+    range="${base:+$base..$local_sha}"
+    [ -n "$range" ] || range="$local_sha"
+  else
+    range="$remote_sha..$local_sha"
+  fi
+
+  git diff --no-color "$range" -- . | node "$root/scripts/check-encoding.mjs" || exit 1
+done
+
+exit 0

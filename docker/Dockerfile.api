@@ -1,0 +1,109 @@
+# syntax=docker/dockerfile:1
+
+# The API image, and the migration image, from one file.
+#
+# Two targets, because migrations run as a SEPARATE STEP before the new image goes live
+# (ARCHITECTURE.md §14, expand -> migrate -> contract). They need different things: the migrator
+# needs the Prisma CLI and prisma/, the runtime needs neither and should not carry a tool that can
+# rewrite the schema of a production database.
+#
+# Debian slim rather than Alpine: Prisma's client runtime links against glibc/OpenSSL, and the
+# Alpine variants need musl-specific engine builds. The size difference is not worth an evening.
+
+# Pinned to the major Node this project declares in "engines" and uses in CI.
+ARG NODE_IMAGE=node:24.13.0-bookworm-slim
+
+
+# ---------------------------------------------------------------------------------------------
+# deps -- production dependencies only, resolved from the committed lockfile.
+# ---------------------------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS deps
+WORKDIR /app
+COPY apps/api/package.json apps/api/package-lock.json ./
+# `npm ci` refuses to install on an older Node because .npmrc sets engine-strict -- deliberate.
+#
+# --no-audit/--no-fund remove two network round-trips that produce advisory text nobody reads in
+# a build. The retry settings are not superstition: this install pulls ~1000 packages and a
+# single reset kills the whole layer, which is a long way to come to fail.
+RUN npm ci --omit=dev --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000
+
+
+# ---------------------------------------------------------------------------------------------
+# build -- full dependencies, generate the Prisma client, compile to dist/.
+# ---------------------------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS build
+WORKDIR /app
+COPY apps/api/package.json apps/api/package-lock.json ./
+RUN npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000
+COPY apps/api/ ./
+# src/generated is gitignored, so it does not arrive with the source and nothing compiles without
+# it. `prisma generate` needs no reachable database.
+RUN npx prisma generate && npm run build
+
+
+# ---------------------------------------------------------------------------------------------
+# migrator -- `prisma migrate deploy`. Runs to completion and exits; never long-lived.
+#
+# This is the ONE image that connects as DATABASE_URL, the migration superuser. It is a separate
+# image precisely so the running application cannot: that role has BYPASSRLS, and an application
+# connecting with it turns every row-level security policy into a no-op (CLAUDE.md,
+# SCHEMA-DECISIONS.md D12).
+# ---------------------------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS migrator
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/prisma ./prisma
+COPY --from=build /app/prisma.config.ts ./prisma.config.ts
+
+# `src/` is here because this image also runs the seed, and prisma/seed/ imports the real
+# application code -- src/prisma/client.ts, withTenant(), the tenant-scoping extension. That is
+# deliberate on the seed's part (there is no seed-only write path, SCHEMA-DECISIONS.md D16) and it
+# means the seed cannot run from an image carrying only prisma/. Without this the seed fails with
+# ERR_MODULE_NOT_FOUND on file:///app/src/prisma/client.ts.
+COPY --from=build /app/src ./src
+
+USER node
+
+# The default is migrations. The seed overrides it:
+#   docker compose run --rm --entrypoint npm migrate run seed
+#
+# Overriding the ENTRYPOINT is not optional. `run migrate npm run seed` APPENDS to the entrypoint,
+# producing `npx prisma migrate deploy npm run seed` -- which prisma ignores. It prints "No pending
+# migrations to apply", exits 0, and seeds nothing. A command that silently does the wrong thing and
+# reports success is worse than one that fails, so it is spelled out here and in DEPLOY.md §5.
+ENTRYPOINT ["npx", "prisma", "migrate", "deploy"]
+
+
+# ---------------------------------------------------------------------------------------------
+# runtime -- the API. No source, no dev dependencies.
+#
+# It DOES contain the Prisma CLI, and `--omit=dev` cannot remove it: @prisma/client 7 declares
+# `prisma` as a runtime dependency, not a peer. Verified by inspecting the built image rather
+# than assumed -- an earlier version of this comment claimed otherwise and was wrong.
+#
+# The separation that matters is therefore about CREDENTIALS, not about the tool being absent:
+# this container is never given DATABASE_URL, so the CLI it carries has no superuser connection
+# string to use. `clinic_os_app` cannot perform the DDL a migration needs, and anything it could
+# do through the CLI it could already do through the application.
+# ---------------------------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=3000
+
+COPY --from=deps  /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/package.json ./package.json
+
+# The `node` user ships with the image, uid 1000. Running as root inside a container is one
+# misconfiguration away from being root on the host.
+USER node
+
+EXPOSE 3000
+
+# No shell form: PID 1 is node itself, so SIGTERM reaches it and enableShutdownHooks() can close
+# the Prisma pool. With the shell form, sh is PID 1, swallows the signal, and every deploy ends in
+# a 10-second SIGKILL with connections still open.
+CMD ["node", "dist/main.js"]

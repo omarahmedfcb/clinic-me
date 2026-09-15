@@ -1,0 +1,7 @@
+dist/
+node_modules/
+tsconfig.tsbuildinfo
+
+# Playwright artefacts. Traces are kept only for failures and are never committed.
+test-results/
+playwright-report/

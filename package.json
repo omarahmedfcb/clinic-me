@@ -1,0 +1,18 @@
+{
+  "name": "clinic-os",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Repo-root scripts. The apps have their own package.json and their own lockfiles.",
+  "type": "module",
+  "engines": {
+    "node": ">=24",
+    "npm": "11.19.0"
+  },
+  "scripts": {
+    "preview": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/review.mjs",
+    "hooks:install": "git config core.hooksPath .githooks",
+    "verify": "npm run verify:api && npm run verify:web",
+    "verify:api": "npm --prefix apps/api run typecheck && npm --prefix apps/api test && npm --prefix apps/api run test:integration && npm --prefix apps/api run test:no-dotenv && npm --prefix apps/api run test:integration:no-dotenv",
+    "verify:web": "npm --prefix apps/web run typecheck && npm --prefix apps/web test"
+  }
+}

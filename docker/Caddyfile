@@ -1,0 +1,38 @@
+# Caddy serves the SPA and proxies the API on one origin, with automatic TLS.
+#
+# {$SITE_ADDRESS} is the public hostname, from the environment. Set it to a real domain and Caddy
+# obtains a Let's Encrypt certificate on first start with no further configuration. Set it to
+# :80 for a local smoke test and it serves plain HTTP instead.
+#
+# {$API_ORIGIN} is the API container, e.g. http://api:3000.
+
+{$SITE_ADDRESS} {
+	encode gzip
+
+	# The API first: a more specific matcher wins regardless of block order, but stating it first
+	# is how a reader expects to find it.
+	handle_path /api/* {
+		reverse_proxy {$API_ORIGIN}
+	}
+
+	handle {
+		root * /srv
+		# An SPA: every unmatched path is a client-side route, so serve index.html rather than 404.
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		# Sent on every response, including index.html.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	log {
+		output stderr
+		format console
+	}
+}

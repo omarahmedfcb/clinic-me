@@ -1,0 +1,275 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens.
+ *
+ * Defined once here as CSS custom properties and consumed through Tailwind's @theme, so a colour
+ * decision is changed in one place rather than hunted across components. The palette is
+ * deliberately quiet: this is a screen clinic staff look at for eight hours, not a marketing page.
+ * Teal reads as clinical without the alarm-red/hospital-green cliché.
+ *
+ * On greyscale: this comment used to claim every status colour survives a greyscale print, and
+ * that was never measured. It is only true of the darker fills. The pale tier -- COMPLETED,
+ * BOOKED, IN_CONSULTATION, CANCELLED, NO_SHOW -- sits between L* 92.6 and 100, so on paper those
+ * are one colour and the badge's own text label is what separates them. Said plainly here because
+ * a guarantee nobody re-measures is worse than none: it stops people checking.
+ */
+@theme {
+  --font-sans: "Cairo", "Segoe UI", "Tahoma", "Noto Sans Arabic", system-ui, sans-serif;
+
+  --color-surface: #ffffff;
+  --color-surface-sunken: #f6f8f9;
+  --color-surface-raised: #ffffff;
+  --color-border: #e3e8ea;
+  --color-border-strong: #cbd4d8;
+
+  --color-ink: #12201f;
+  --color-ink-muted: #5c6b6e;
+  --color-ink-subtle: #8a979a;
+
+  --color-primary: #0f766e;
+  --color-primary-hover: #115e59;
+  --color-primary-soft: #f0fdfa;
+  --color-primary-ring: #99f6e4;
+
+  --color-danger: #b42318;
+  --color-danger-hover: #912018;
+  --color-danger-soft: #fef3f2;
+
+  --color-warning: #b54708;
+  --color-warning-soft: #fffaeb;
+
+  /*
+   * BOOKED's own colour, and the reason it is not `warning`.
+   *
+   * PHASE-2.md §18 ruled BOOKED **amber**. It was implemented as `--color-warning`, which measures
+   * L* 44.7 at hue 52deg -- a burnt orange, not an amber -- and the founder read it off the screen
+   * as orange on 1 September 2026. Nothing had drifted; the ruling was simply never given a token.
+   *
+   * Borrowing `warning` was also why the badge and the timeline disagreed about what BOOKED looks
+   * like: the badge took the pale `warning-soft` and the timeline took the solid `warning`, so one
+   * status had two appearances with no single place to change it. `--color-amber` is that place.
+   * `warning` keeps its own meaning -- a real warning, on the transfer badge and the schedule
+   * editor -- and BOOKED no longer rides on it.
+   */
+  --color-amber: #e2a53c;
+  --color-amber-soft: #fef6e7;
+  --color-amber-ink: #7a4a02;
+
+  --color-success: #067647;
+  --color-success-soft: #ecfdf3;
+
+  /*
+   * The arrival ramp: CONFIRMED -> ARRIVED -> WAITING, one hue getting darker as the patient gets
+   * closer to the doctor's door, with green-ink as the fourth step the timeline uses.
+   *
+   * ## Spaced on deltaE, because even lightness steps were not even steps
+   *
+   * These were previously placed on L* alone at 93.0 / 68.9 / 44.9 -- "an even 24 points apart",
+   * which was true, was correctly measured, and did not produce three distinguishable greens. The
+   * founder read them off the screen as two.
+   *
+   * The reason equal lightness is not equal separation: the first step also gained 37 points of
+   * chroma (12.8 -> 49.9) and the second gained none (49.9 -> 44.8). Measured as deltaE76 the old
+   * ramp ran **44.3 / 24.9 / 35.9** -- the CONFIRMED->ARRIVED step was nearly twice the
+   * ARRIVED->WAITING one, so the bottom pair collapsed together exactly as reported.
+   *
+   * Placed on deltaE instead, the ladder now runs **30.7 / 31.2 / 28.5**. L* is no longer even
+   * (92.9 / 70.1 / 40.1 / 19.8) and that is the point: lightness was the wrong ruler, not a ruler
+   * being read wrongly. A guarantee stated in the units that hide the defect is worse than none,
+   * because it reads as verified -- the old figure was accurate for four months and never rechecked.
+   *
+   * The hue (158deg) stays close to --color-success, so the ramp belongs to this palette rather
+   * than importing a second green.
+   */
+  --color-green-soft: #b8f9d4;
+  --color-green-mid: #49c087;
+  --color-green-strong: #006d41;
+  /* Text for the two lighter steps: 11.06:1 on green-soft, 5.78:1 on green-mid. White is 6.43:1
+     on green-strong and 13.24:1 on green-ink. */
+  --color-green-ink: #0c3723;
+
+  /*
+   * IN_CONSULTATION. Founder's ruling, 1 September 2026: *"it should read as ACTIVE, not as heavy
+   * ... distinguishable by being different, not by being darkest"* -- and his own note that the
+   * original "light grey" was his wording rather than a measurement.
+   *
+   * So the separation here is **hue, not weight**: it is the only achromatic fill among four
+   * greens, which is what makes it findable at a glance without being the darkest thing on the
+   * screen. At L* 58.0 it sits above WAITING in both mappings -- 18 points above the badge's
+   * green-strong (40.1) and 38 above the timeline's green-ink (19.8).
+   *
+   * L* 58 is not a round number, it is the **lightest value that still clears 3:1 against the
+   * free-slot background** (`info-soft`, #eff8ff) at 3.15:1 -- the non-text threshold a wide
+   * colour bar has to meet. Going lighter is where this stops working: L* 62 measures 2.77:1 and
+   * L* 70 only 2.13:1. That constraint is why "lighter" has a floor, and it is the same wall the
+   * previous attempt hit from the other side with #cbd4d8 at 1.40:1.
+   */
+  --color-active-grey: #888c8f;
+
+  --color-info: #175cd3;
+  --color-info-soft: #eff8ff;
+
+  --radius-card: 0.75rem;
+}
+
+html {
+  background-color: var(--color-surface-sunken);
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * Arabic numerals.
+ *
+ * The seed stores phone numbers and money as Latin digits ("+201005551001", "300.00"), and that is
+ * what Egyptian clinics actually read on screen -- Eastern Arabic-Indic digits (٠١٢٣) are common in
+ * print but not in phone numbers or software. The `.numeric` class marks any run of digits that
+ * must stay left-to-right inside otherwise right-to-left text: without an explicit direction, a
+ * leading "+" on a phone number jumps to the wrong end of the string.
+ */
+.numeric {
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-variant-numeric: tabular-nums;
+  display: inline-block;
+}
+
+/* A focus ring that is visible against every surface in the palette, keyboard-only. */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/*
+ * Scale and fade only -- no translate. The dialog is centred by auto margins (see overlays.tsx),
+ * so a translate here would fight that centring, and would need mirroring for RTL besides.
+ */
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/*
+ * The drawer slides in from the inline-start edge, which is the RIGHT edge in Arabic and the LEFT
+ * edge in English. Expressed with a logical property (inset-inline-start) and a direction-agnostic
+ * transform, so this is one animation rather than a mirrored pair (ARCHITECTURE.md §2).
+ */
+@keyframes drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--drawer-offset, 1rem));
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/*
+  Print — a schedule a clinic can pin to a wall.
+ *
+ * A stylesheet, not a library and not a second render path. The screen already has the whole
+ * arrangement on it; printing is a question of hiding the controls and letting the ink survive.
+ *
+ * `print:hidden` on the interactive parts does most of it (Tailwind's print variant). What needs
+ * saying here is what a utility class cannot reach: the page box, backgrounds that vanish because
+ * browsers drop them by default, and the two break rules that stop a doctor's Thursday being
+ * split across two sheets.
+ */
+@media print {
+  /*
+    Colour-adjust, because Chrome drops background colours when printing and every status in this
+    application is carried by one. Without it a booked slot and a free slot print identically,
+    which is worse than printing nothing: the sheet looks complete and says the wrong thing.
+  */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  @page {
+    /* Landscape: seven day-columns across a portrait page are unreadable at any font size. */
+    size: A4 landscape;
+    margin: 12mm;
+  }
+
+  body {
+    background: #fff;
+  }
+
+  /* The shell's chrome is navigation, not content. */
+  aside,
+  header {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+  }
+
+  /* A day box split across a page boundary is a schedule nobody can read. */
+  .print-keep-together,
+  li,
+  section {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /*
+    Inputs print as their values. A schedule sheet full of empty-looking form boxes is the usual
+    failure of printing an editor directly, and it is why this needs a stylesheet rather than a
+    browser's default.
+  */
+  input,
+  select {
+    border: none !important;
+    padding: 0 !important;
+    background: transparent !important;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  /* Links printed with their href are noise on a wall chart. */
+  a::after {
+    content: none !important;
+  }
+}

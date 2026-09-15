@@ -1,0 +1,64 @@
+-- Phase 4, PR 1 — the two schema items Q2 and Q7 depend on.
+-- `PHASE-4.md` §5 and Q2/Q7, `PHASE-4-PLAN.md` PR 1.
+--
+-- `PHASE-4.md` §5 promised "two integer columns and one partial unique index". One integer column
+-- shipped in PR #50 (`appointments.quoted_price_minor`). These are the other two, and until they
+-- exist Q7's compare-and-set has nothing to compare against and Q2's constraint is a sentence in a
+-- document.
+--
+--
+-- 1. `visits.revision` — the compare-and-set counter (Q7)
+--
+-- Q7's ruling: compare-and-set, never last-write-wins, never a lock. A second client saving into a
+-- visit someone else has changed is refused and told so, rather than silently overwriting a
+-- sentence the first doctor was still typing.
+--
+-- INTEGER, not a timestamp. `updated_at` looks like it would serve and does not: two saves inside
+-- the same millisecond are indistinguishable by it, and clock adjustment can move it backwards. A
+-- counter has neither property. It is also not a UUID or a hash, because the value is never
+-- compared for anything except equality with the number the client was last given, and a reader
+-- debugging a refusal can see at a glance that revision 4 lost to revision 5.
+--
+-- DEFAULT 0 and NOT NULL so every existing row has a defined starting point. The 933 visits already
+-- seeded are all COMPLETED and nothing will compare-and-set them; the default exists so the column
+-- is never null rather than because those rows need a meaningful value.
+--
+-- The counter is incremented by the write path, which does not exist yet (PR 2). Nothing in this
+-- migration makes it move.
+--
+--
+-- 2. One COMPLETED visit per appointment — the partial unique index (Q2, Q15)
+--
+-- **Not one row per appointment.** Q15 requires that several drafts may exist against one
+-- appointment — a doctor's own draft, and after a transfer the receiving doctor's separate empty
+-- one — while only one of them may ever be finished. A plain unique constraint on `appointment_id`
+-- would forbid the drafts; no constraint at all would allow two finished clinical records for the
+-- same visit, which is the thing that must never happen.
+--
+-- A partial unique index is exactly that distinction and is why `ARCHITECTURE.md` §4's
+-- `appointments 1:0..1 visits` is wrong twice over: nothing ever enforced it, and after Q15 it is
+-- not the relationship we want. That document is corrected in this same pull request.
+--
+-- **Why the database and not the service.** `CLAUDE.md`: if code is the only thing between a
+-- mistake and the database, it is a comment. A service-layer check passes on a machine where this
+-- migration was never applied, and the Definition of Done says so explicitly — "proven by
+-- attempting a second and being refused by the database, not by the service".
+--
+-- **Prisma cannot express this.** `@@unique` has no `WHERE`, so the index is created here and noted
+-- in `schema.prisma` rather than modelled there — the same treatment the append-only triggers, the
+-- RLS policies and the GENERATED `remaining_minor` column already get (D5, D7).
+--
+-- **The predicate is not tenant-scoped, deliberately.** `appointment_id` is a UUIDv7 generated in
+-- the application and an appointment belongs to exactly one tenant, so uniqueness on it alone is
+-- strictly stronger than uniqueness on `(tenant_id, appointment_id)` and cannot be satisfied by a
+-- row in another tenant. Adding `tenant_id` would widen what is permitted, not narrow it.
+--
+-- **It is enforced under RLS, which is the point of putting it here.** A unique index is checked by
+-- Postgres regardless of the policies in force, so `clinic_os_app` cannot insert a duplicate even
+-- though RLS would hide the conflicting row from a `SELECT` it ran itself.
+
+ALTER TABLE "visits" ADD COLUMN "revision" INTEGER NOT NULL DEFAULT 0;
+
+CREATE UNIQUE INDEX "visits_one_completed_per_appointment"
+    ON "visits" ("appointment_id")
+    WHERE "status" = 'COMPLETED';

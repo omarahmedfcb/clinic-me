@@ -1,0 +1,132 @@
+import { Client } from "pg";
+
+/**
+ * SCHEMA-DECISIONS.md D19 — the nine Arabic normalisation rules behind `patients.name_search_ar`.
+ *
+ * This file exists because the rules live in a Postgres GENERATED column, whose expression cannot
+ * be altered in place: changing it means dropping the column, re-adding it and recomputing every
+ * row. A mapping with that change cost has to be right the first time, and has to stay right.
+ *
+ * It asserts three things, and the third is the unusual one:
+ *
+ *   1. Each rule merges what D19 says it merges.
+ *   2. Names that are genuinely different stay different — the over-merge guard.
+ *   3. The three KNOWN collisions normalise to the same value, on purpose.
+ *
+ * (3) is not a statement that collapsing حسني and حسنى is desirable. It is not. It is the accepted
+ * cost of a rule whose absence would fail to find مصطفى, يحيى, منى and على — the ordinary spellings
+ * of the most common Egyptian names. Recording it as a passing assertion means the behaviour is
+ * documented here rather than discovered in a clinic, and that anyone who later tries to "fix" one
+ * of these pairs is told by a failing test that it was known and deliberate. If you are reading
+ * this because such a test just failed: see D19, and note that the two constraints which make
+ * these collisions survivable (no UNIQUE constraint, and results displaying full_name_ar with
+ * phone and date of birth) are load-bearing, not advisory.
+ */
+
+// Invisible characters, written as escapes for the same reason the migration uses U&'\XXXX'.
+const ZERO_WIDTH_SPACE = "​";
+const RIGHT_TO_LEFT_MARK = "‏";
+const TATWEEL = "ـ";
+const FARSI_YEH = "ی";
+
+let client: Client;
+
+beforeAll(async () => {
+  client = new Client({ connectionString: process.env["TEST_DATABASE_URL"] });
+  await client.connect();
+});
+
+afterAll(async () => {
+  await client.end();
+});
+
+async function normalise(input: string | null): Promise<string | null> {
+  const result = await client.query<{ out: string | null }>(
+    "SELECT normalize_arabic_name($1) AS out",
+    [input],
+  );
+  return result.rows[0]?.out ?? null;
+}
+
+describe("normalize_arabic_name — each rule merges what D19 says", () => {
+  it.each([
+    ["1 · strips tashkeel", "محمّد", "محمد"],
+    ["2 · strips tatweel", `مح${TATWEEL}م${TATWEEL}د`, "محمد"],
+    ["3 · strips zero-width and bidi marks", `محمد${ZERO_WIDTH_SPACE}${RIGHT_TO_LEFT_MARK}`, "محمد"],
+    ["4 · maps Farsi yeh to Arabic yeh", `عل${FARSI_YEH}`, "علي"],
+    ["5 · collapses and trims whitespace", "  محمد   سيد  ", "محمد سيد"],
+    ["6 · unifies alef forms (hamza above)", "أحمد", "احمد"],
+    ["6 · unifies alef forms (hamza below)", "إبراهيم", "ابراهيم"],
+    ["6 · unifies alef forms (maddah)", "آمنة", "امنه"],
+    ["7 · maps hamza carriers, drops standalone hamza", "عائشة", "عايشه"],
+    ["7 · maps waw-hamza to waw", "رؤوف", "رووف"],
+    ["8 · maps teh marbuta to heh", "فاطمة", "فاطمه"],
+    ["9 · maps alef maksura to yeh", "مصطفى", "مصطفي"],
+  ])("%s", async (_rule, input, expected) => {
+    await expect(normalise(input)).resolves.toBe(expected);
+  });
+
+  it("returns NULL for NULL rather than an empty string", async () => {
+    await expect(normalise(null)).resolves.toBeNull();
+  });
+
+  it("applies alef maksura everywhere, not only at the end of the string", async () => {
+    // The reason the rule is global: a full name is several words, so the letter routinely sits at
+    // the end of a word that is not the end of the string. A word-end-only rule would need word
+    // boundary matching inside an expression that can never be altered in place.
+    await expect(normalise("يحيى محمد")).resolves.toBe("يحيي محمد");
+  });
+});
+
+describe("normalize_arabic_name — genuinely different names stay different", () => {
+  it.each([
+    ["علاء (m) vs آلاء (f)", "علاء", "آلاء"],
+    ["إيمان (f) vs أيمن (m)", "إيمان", "أيمن"],
+    ["حسن vs حسين", "حسن", "حسين"],
+    ["محمد vs أحمد", "محمد", "أحمد"],
+    ["سمير vs سمر", "سمير", "سمر"],
+    ["منى vs منال", "منى", "منال"],
+  ])("%s", async (_pair, left, right) => {
+    const [a, b] = await Promise.all([normalise(left), normalise(right)]);
+    expect(a).not.toBe(b);
+  });
+});
+
+describe("normalize_arabic_name — the known collisions, asserted deliberately", () => {
+  /**
+   * Each pair below is two DIFFERENT names that this mapping collapses into one search key. They
+   * are accepted, not overlooked. See the file header before changing any of them.
+   */
+  it.each([
+    ["rule 9 · حسني (m) collides with حسنى (f)", "حسني", "حسنى"],
+    ["rule 9 · يسري (m) collides with يسرى (f)", "يسري", "يسرى"],
+    ["rule 8 · عبده (m) collides with عبدة (f)", "عبده", "عبدة"],
+    ["rule 7 · سماء collides with سما", "سماء", "سما"],
+  ])("%s", async (_pair, left, right) => {
+    const [a, b] = await Promise.all([normalise(left), normalise(right)]);
+    expect(a).toBe(b);
+  });
+});
+
+describe("patients.name_search_ar is generated by the database", () => {
+  it("is computed from full_name_ar, not supplied by the writer", async () => {
+    const result = await client.query<{ is_generated: string }>(
+      `SELECT is_generated FROM information_schema.columns
+        WHERE table_name = 'patients' AND column_name = 'name_search_ar'`,
+    );
+    expect(result.rows[0]?.is_generated).toBe("ALWAYS");
+  });
+
+  it("carries no unique constraint — D19 requires it stay a retrieval key only", async () => {
+    // Load-bearing: rules 8 and 9 knowingly collapse distinct names. A UNIQUE constraint here
+    // would turn each of those collisions into a write that fails against a real patient.
+    const result = await client.query<{ count: string }>(
+      `SELECT count(*) AS count
+         FROM pg_index i
+         JOIN pg_class c ON c.oid = i.indrelid
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY (i.indkey)
+        WHERE c.relname = 'patients' AND a.attname = 'name_search_ar' AND i.indisunique`,
+    );
+    expect(result.rows[0]?.count).toBe("0");
+  });
+});

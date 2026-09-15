@@ -1,0 +1,2001 @@
+// Phase 1, Checkpoint 1 — full schema per ARCHITECTURE.md §4/§4b, overridden by SCHEMA-DECISIONS.md (D1-D10).
+// All ids are UUIDv7, generated in the application (D6) — no @default here. A create without an id is a bug.
+// remaining_minor (Payment) is a Postgres GENERATED column added in prisma/sql/01-constraints.sql (D7);
+// the field below is read-only from Prisma's perspective — never assign it in application code.
+// Append-only tables (audit_logs, appointment_events, visit_revisions, payment_adjustments) get
+// BEFORE UPDATE OR DELETE triggers in the same constraints file (D5); Prisma has no way to express that here.
+//
+// Indexing rule: every tenant-scoped model gets a tenantId-covering index. Where a composite index or
+// unique constraint already has tenantId as its leftmost column, a separate bare @@index([tenantId]) is
+// skipped as a redundant duplicate — Postgres serves tenantId-only lookups from the composite's prefix.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================================
+// Enums (authoritative — SCHEMA-DECISIONS.md D8)
+// ============================================================================
+
+/// Interface language (SCHEMA-DECISIONS.md D20). Deliberately NOT a BCP-47 tag -- the region
+/// belongs in the frontend's Intl mapping (apps/web/src/i18n/format.ts), not in a stored
+/// preference. The matching CHECK constraints stay in place alongside this type: ALTER TYPE ... ADD
+/// VALUE would widen the enum without widening them, so adding a language stays a deliberate
+/// two-step act rather than one line run while debugging.
+enum LocaleCode {
+  ar
+  en
+
+  @@map("locale_code")
+}
+
+// AI_AGENT is the synthetic actor of ARCHITECTURE.md §12 rule 2 -- "its own permission set,
+// strictly narrower than a receptionist's". It is added in Phase 2 while the enum is cheap to
+// extend, not because anything runs as it yet: nothing authenticates as AI_AGENT until Phase 7.
+// Its row in common/permissions.ts is therefore NONE across all twenty capabilities, and a test
+// asserts that. See PHASE-2.md §12 item 2 -- granting a capability to a role nobody holds is a
+// capability nobody reviews, and the empty row makes Phase 7 have the conversation deliberately.
+enum MembershipRole {
+  OWNER
+  ADMIN
+  DOCTOR
+  RECEPTIONIST
+  AI_AGENT
+}
+
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  REVOKED
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  LOCKED
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+  CANCELLED
+}
+
+enum BillingPeriod {
+  MONTHLY
+  ANNUAL
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  VOID
+  PAST_DUE
+}
+
+// D8 amendment (2026-08-27): four types, not three. Order matters and is not alphabetical --
+// Postgres sorts enum columns by declared order, so CONSULTATION sits after NEW to give the
+// clinical sequence a receptionist expects. Enum order cannot be changed later without recreating
+// the type. See prisma/sql/16-service-type-consultation.sql.
+enum ServiceType {
+  NEW
+  CONSULTATION
+  FOLLOW_UP
+  PROCEDURE
+}
+
+enum ScheduleExceptionType {
+  BLOCKED
+  HOLIDAY
+  EXTRA_AVAILABILITY
+}
+
+enum PatientStatus {
+  ACTIVE
+  ARCHIVED
+  MERGED
+}
+
+enum PatientRelationship {
+  SELF
+  SPOUSE
+  CHILD
+  PARENT
+  SIBLING
+  OTHER
+}
+
+enum AppointmentStatus {
+  BOOKED
+  CONFIRMED
+  ARRIVED
+  WAITING
+  IN_CONSULTATION
+  /// The patient stepped out for imaging or a lab (PHASE-4.md Q34). Still present for their own
+  /// doctor, still occupying the slot, and distinct on the queue so reception knows why.
+  PAUSED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum AppointmentSource {
+  WHATSAPP
+  RECEPTION
+  DOCTOR
+  ONLINE
+  WALK_IN
+}
+
+enum AppointmentEventType {
+  CREATED
+  STATUS_CHANGED
+  RESCHEDULED
+  CANCELLED
+  OVERLAP_AUTHORISED
+  NOTE_ADDED
+}
+
+/// Patient transfer request lifecycle. SCHEMA-DECISIONS.md D24.
+///
+/// Four terminal states, and LAPSED is the deliberate one: the appointment ended while the request
+/// was still open. There is no EXPIRED member -- expiry of the resulting access grant is COMPUTED
+/// at read time from `decidedAt` plus the window, never stored, so that no unwritten job can leave
+/// access alive forever. Adding EXPIRED here would reintroduce exactly that failure.
+enum TransferStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  LAPSED
+}
+
+enum VisitStatus {
+  DRAFT
+  COMPLETED
+}
+
+/// Who put a procedure line on a visit. RECEPTION is the consultation already booked at the desk;
+/// DOCTOR is a service added during the consultation. PHASE-4.md Q25.
+enum ProcedureSource {
+  RECEPTION
+  DOCTOR
+}
+
+/// The standing clinical facts a profile entry can be about. PHASE-4.md Q22.
+enum ClinicalProfileField {
+  PAST_MEDICAL
+  PAST_SURGICAL
+  CHRONIC_CONDITIONS
+  CHRONIC_MEDICATIONS
+  FAMILY_HISTORY
+  RISK_FACTORS
+}
+
+enum TreatmentPlanStatus {
+  ACTIVE
+  COMPLETED
+  ABANDONED
+}
+
+enum TreatmentSessionStatus {
+  PLANNED
+  COMPLETED
+  SKIPPED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PENDING_CONFIRMATION
+  PARTIAL
+  PAID
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  INSTAPAY
+  MOBILE_WALLET
+  BANK_TRANSFER
+  OTHER
+}
+
+enum ConfirmationMethod {
+  GATEWAY_WEBHOOK
+  MANUAL_RECEPTION
+  CASH
+}
+
+enum AdjustmentType {
+  CORRECTION
+  REFUND
+  DISCOUNT_APPLIED
+  WRITE_OFF
+}
+
+enum ConversationStatus {
+  OPEN
+  CLOSED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  TEMPLATE
+  IMAGE
+  DOCUMENT
+  LOCATION
+  INTERACTIVE
+}
+
+enum MessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum MessageCategory {
+  UTILITY
+  SERVICE
+  MARKETING
+  AUTHENTICATION
+}
+
+enum TemplateApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum FollowupStatus {
+  PENDING
+  SENT
+  BOOKED
+  DECLINED
+  EXPIRED
+  CANCELLED
+}
+
+enum ConsentPurpose {
+  TREATMENT
+  WHATSAPP_COMMS
+  PRESCRIPTION_DELIVERY
+  MARKETING
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  READ_SENSITIVE
+  LOGIN
+  LOGOUT
+  PERMISSION_CHANGE
+  BREAK_GLASS_ACCESS
+}
+
+/**
+ * What a notification is about. A CLOSED set, deliberately: adding a kind should be a decision,
+ * not a side effect of some new write path. Queue movement, schedule edits and anything clinical
+ * are excluded — see PHASE-2.md §16 for why each.
+ */
+enum NotificationKind {
+  APPOINTMENT_BOOKED
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_RESCHEDULED
+  TRANSFER_REQUESTED
+  TRANSFER_ACCEPTED
+  /// A rejection that only flips a status is invisible to the desk that raised it. D24.
+  TRANSFER_REJECTED
+  /// The appointment ended while the request was still open -- closed by nobody. D24.
+  TRANSFER_LAPSED
+}
+
+enum AttachmentCategory {
+  LAB
+  IMAGING
+  REPORT
+  ID_DOCUMENT
+  OTHER
+}
+
+// ============================================================================
+// Identity & Tenancy
+// ============================================================================
+
+model Tenant {
+  id                       String       @id @db.Uuid
+  name                     String
+  slug                     String       @unique
+  phone                    String
+  /// A second clinic number for the letterhead. PHASE-4.md Q28.
+  secondaryPhone           String?      @map("secondary_phone")
+  /// The rest of the letterhead (PHASE-4.md Q37). All nullable: a clinic with no commercial register
+  /// must be able to say so by leaving it empty, and the sheet prints what is filled.
+  /// Q45: the letterhead prints English. Nullable — a clinic that has not filled these still
+  /// prints, falling back to the Arabic name and address rather than refusing the sheet.
+  nameEn                   String?      @map("name_en")
+  /// The next patient file number this clinic will hand out. Incremented under a row lock.
+  nextPatientFileNumber    Int          @default(1) @map("next_patient_file_number")
+  /// The next receipt number. Gapless: incremented inside the transaction that writes the receipt.
+  nextReceiptNumber        Int          @default(1) @map("next_receipt_number")
+  /// Ruling 4: two settings and a LEAST, not one number. Null on either means that half is unset;
+  /// null on both means this clinic has no ceiling. 5000 minor units is EGP-shaped by default and
+  /// is a value someone can change, never a constant a constraint reads.
+  discountCeilingPercent   Int?         @default(10) @map("discount_ceiling_percent")
+  discountCeilingMinor     Int?         @default(5000) @map("discount_ceiling_minor")
+  addressEn                String?      @map("address_en")
+  taxRegistrationNumber    String?      @map("tax_registration_number")
+  commercialRegisterNumber String?      @map("commercial_register_number")
+  email                    String?
+  whatsappPhone            String?      @map("whatsapp_phone")
+  /// Free text, not a schedule: a letterhead carries a phrase like the clinic's opening days, which
+  /// columns cannot hold without inventing a second calendar beside `schedule_templates`.
+  printedWorkingHours      String?      @map("printed_working_hours")
+  tagline                  String?
+  address                  String
+  /// Storage key, never a URL: `StorageProvider` has no `url()`, and a column named `_url` invites
+  /// a caller to hand the object to a browser and make the capability gate decoration.
+  logoStorageKey           String?      @map("logo_storage_key")
+  timezone                 String       @default("Africa/Cairo")
+  locale                   LocaleCode
+  currency                 String // ISO 4217, e.g. "EGP" — §18b
+  status                   TenantStatus
+  settings                 Json
+  createdAt                DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Scheduling policy (PHASE-2.md §6). Real columns rather than keys inside `settings`, which is
+  // Json and has never had a defined shape: putting them there would be a loose type defended by
+  // a runtime guard, which this project has already decided against once (D20).
+  //
+  // slotGranularityMinutes is server-resolved and NOT caller-overridable (PHASE-2.md Q18) -- a
+  // caller-chosen granularity of 1 enumerates a doctor's whole day minute by minute.
+  //
+  // Two lead-time columns rather than five, one per AppointmentSource: the real distinction is a
+  // human standing in the clinic (RECEPTION, DOCTOR, WALK_IN) versus a remote self-service channel
+  // (WHATSAPP, ONLINE). Five columns tracking five enum values would be four chances for them to
+  // disagree about one policy.
+  slotGranularityMinutes    Int @default(15) @map("slot_granularity_minutes")
+  bookingLeadMinutesStaff   Int @default(0) @map("booking_lead_minutes_staff")
+  bookingLeadMinutesPatient Int @default(120) @map("booking_lead_minutes_patient")
+  bookingHorizonDays        Int @default(90) @map("booking_horizon_days")
+  // ARCHITECTURE.md §9's clinic-configurable no-show grace period, given a home now rather than
+  // invented in Phase 3 when the nightly job needs it.
+  noShowGraceMinutes        Int @default(30) @map("no_show_grace_minutes")
+
+  memberships              Membership[]
+  doctors                  Doctor[]
+  services                 Service[]
+  scheduleTemplates        ScheduleTemplate[]
+  scheduleBreaks           ScheduleBreak[]
+  scheduleExceptions       ScheduleException[]
+  contacts                 Contact[]
+  patients                 Patient[]
+  appointments             Appointment[]
+  appointmentEvents        AppointmentEvent[]
+  visits                   Visit[]
+  patientTransfers         PatientTransfer[]
+  insurancePolicies        InsurancePolicy[]
+  patientInsurance         PatientInsurance[]
+  visitRevisions           VisitRevision[]
+  prescriptions            Prescription[]
+  prescriptionItems        PrescriptionItem[]
+  visitProcedures          VisitProcedure[]
+  visitInvestigations      VisitInvestigation[]
+  payments                 Payment[]
+  paymentAdjustments       PaymentAdjustment[]
+  auditLogs                AuditLog[]
+  consents                 Consent[]
+  accessGrants             AccessGrant[]
+  treatmentPlans           TreatmentPlan[]
+  treatmentPlanSessions    TreatmentPlanSession[]
+  prescriptionAccessTokens PrescriptionAccessToken[]
+  subscriptions            Subscription[]
+  usageRecords             UsageRecord[]
+  usageAlerts              UsageAlert[]
+  invoices                 Invoice[]
+  conversations            Conversation[]
+  messages                 Message[]
+  messageTemplates         MessageTemplate[]
+  followupTasks            FollowupTask[]
+  attachments              Attachment[]
+  notifications            Notification[]
+  notificationReads        NotificationRead[]
+  patientAllergies         PatientAllergy[]
+  clinicalProfileEntries   PatientClinicalProfileEntry[]
+  patientRelations         PatientRelation[]
+  insuranceCompanies       InsuranceCompany[]
+  visitCharges             VisitCharge[]
+  visitChargeLines         VisitChargeLine[]
+  chargeableMaterials      ChargeableMaterial[]
+  patientCredits           PatientCredit[]
+
+  @@map("tenants")
+}
+
+// Global identity — NOT tenant-scoped.
+model User {
+  id                 String      @id @db.Uuid
+  email              String?     @unique
+  phoneE164          String      @unique @map("phone_e164")
+  passwordHash       String      @map("password_hash")
+  fullName           String      @map("full_name")
+  /// Interface-language override (SCHEMA-DECISIONS.md D20). NULL means no override -- follow the
+  /// tenant default. Deliberately nullable rather than defaulted: "never chose" and "chose Arabic"
+  /// are different facts, and the D20 resolution chain depends on telling them apart.
+  locale             LocaleCode?
+  isPlatformAdmin    Boolean     @default(false) @map("is_platform_admin")
+  /// Set when an admin issues a temporary password. Every route except the change refuses until it
+  /// is cleared, so "forced at next login" is enforced rather than asked for by a screen.
+  mustChangePassword Boolean     @default(false) @map("must_change_password")
+  lastLoginAt        DateTime?   @map("last_login_at") @db.Timestamptz(6)
+  /// Profile photo, on the person rather than the membership: a human has one face across the
+  /// clinics they work at, the way they have one name and one number. NULL means initials are drawn.
+  photoStorageKey    String?     @map("photo_storage_key")
+  status             UserStatus
+  createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships               Membership[]
+  refreshTokens             RefreshToken[]
+  appointmentEventsActed    AppointmentEvent[]
+  visitRevisionsActed       VisitRevision[]
+  visitsCreated             Visit[]
+  appointmentsCreated       Appointment[]                 @relation("AppointmentCreatedBy")
+  appointmentsUpdated       Appointment[]                 @relation("AppointmentUpdatedBy")
+  paymentsCollected         Payment[]                     @relation("PaymentCollectedBy")
+  chargeDiscountsAuthorised VisitCharge[]                 @relation("ChargeDiscountAuthorisedBy")
+  chargeLinesAdjusted       VisitChargeLine[]             @relation("ChargeLineAdjustedBy")
+  visitPricesAdjusted       Visit[]                       @relation("VisitPriceAdjustedBy")
+  paymentsConfirmed         Payment[]                     @relation("PaymentConfirmedBy")
+  paymentAdjustmentsActed   PaymentAdjustment[]
+  patientCreditsActed       PatientCredit[]
+  auditLogsActed            AuditLog[]
+  consentsCaptured          Consent[]
+  accessGrantsReceived      AccessGrant[]                 @relation("AccessGrantGrantedTo")
+  accessGrantsApproved      AccessGrant[]                 @relation("AccessGrantApprovedBy")
+  conversationsAssigned     Conversation[]
+  attachmentsUploaded       Attachment[]
+  notifications             Notification[]
+  allergiesRecorded         PatientAllergy[]
+  clinicalProfileEntries    PatientClinicalProfileEntry[]
+  patientRelationsCreated   PatientRelation[]
+  visitProceduresRecorded   VisitProcedure[]
+
+  @@map("users")
+}
+
+// The multi-clinic join.
+model Membership {
+  id                  String           @id @db.Uuid
+  userId              String           @map("user_id") @db.Uuid
+  tenantId            String           @map("tenant_id") @db.Uuid
+  role                MembershipRole
+  permissionsOverride Json?            @map("permissions_override")
+  status              MembershipStatus
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user               User               @relation(fields: [userId], references: [id])
+  tenant             Tenant             @relation(fields: [tenantId], references: [id])
+  doctor             Doctor?
+  refreshTokens      RefreshToken[]
+  notificationReads  NotificationRead[]
+  transfersInitiated PatientTransfer[]  @relation("TransferInitiatedBy")
+  transfersDecided   PatientTransfer[]  @relation("TransferDecidedBy")
+
+  /// Deliberately NOT unique on (userId, tenantId) since 2026-09-06: an owner who also works the
+  /// desk holds a second membership as RECEPTIONIST and switches to it, so the audit trail records
+  /// the role that actually acted. `doctors.membershipId` stays unique, which is what keeps "which
+  /// doctor is this caller" answerable by construction.
+  @@index([tenantId])
+  @@map("memberships")
+}
+
+// ============================================================================
+// Clinic Configuration
+// ============================================================================
+
+model Doctor {
+  id                        String    @id @db.Uuid
+  tenantId                  String    @map("tenant_id") @db.Uuid
+  membershipId              String    @unique @map("membership_id") @db.Uuid
+  specialty                 String
+  licenseNumber             String    @map("license_number")
+  /// When the practising licence lapses. Nullable and unconstrained -- an expired licence must be
+  /// recordable, or the one case worth surfacing is the one that cannot be stored.
+  licenseExpiry             DateTime? @map("license_expiry") @db.Date
+  title                     String
+  /// Free text: rooms are called "2", "2أ" and "الأشعة". A numeric column would refuse most of them.
+  roomNumber                String?   @map("room_number")
+  /// The print fields Q28 pulled forward from Phase 5. Storage keys, never URLs — see `Tenant`.
+  printedName               String?   @map("printed_name")
+  /// Q45: what the English sheet prints under the signature.
+  printedNameEn             String?   @map("printed_name_en")
+  syndicateNumber           String?   @map("syndicate_number")
+  signatureStorageKey       String?   @map("signature_storage_key")
+  stampStorageKey           String?   @map("stamp_storage_key")
+  isActive                  Boolean   @default(true) @map("is_active")
+  /// R1 and R2, set by an admin on the doctor form: may this doctor move a visit total, and may
+  /// they take payment themselves. Both default false — a permission nobody granted is not held.
+  mayAdjustPrices           Boolean   @default(false) @map("may_adjust_prices")
+  /// R1 as amended: how far this doctor may move a total. Both null means unlimited; the lower of
+  /// the two binds. Enforced by a trigger as well as at the route -- see the migration.
+  priceAdjustmentCapPercent Int?      @map("price_adjustment_cap_percent")
+  priceAdjustmentCapMinor   Int?      @map("price_adjustment_cap_minor")
+  collectsPayments          Boolean   @default(false) @map("collects_payments")
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant             Tenant              @relation(fields: [tenantId], references: [id])
+  membership         Membership          @relation(fields: [membershipId], references: [id])
+  scheduleTemplates  ScheduleTemplate[]
+  scheduleExceptions ScheduleException[]
+  appointments       Appointment[]
+  transfersFrom      PatientTransfer[]   @relation("TransferFrom")
+  transfersTo        PatientTransfer[]   @relation("TransferTo")
+  visits             Visit[]
+  prescriptions      Prescription[]
+  treatmentPlans     TreatmentPlan[]
+  followupTasks      FollowupTask[]
+
+  @@index([tenantId])
+  @@map("doctors")
+}
+
+model Service {
+  id              String      @id @db.Uuid
+  tenantId        String      @map("tenant_id") @db.Uuid
+  nameAr          String      @map("name_ar")
+  nameEn          String      @map("name_en")
+  type            ServiceType
+  durationMinutes Int         @map("duration_minutes")
+  // Turnaround after an appointment of this service (PHASE-2.md Q20). It widens the OCCUPIED
+  // footprint of an existing appointment to [start, end + buffer]; the BOOKABLE slot stays
+  // [start, start + duration]. The buffer belongs to the PRECEDING appointment's service, not the
+  // one being booked, so occupancy queries must join each appointment's own service. Default 0
+  // means nothing changes until a clinic sets it.
+  bufferMinutes   Int         @default(0) @map("buffer_minutes")
+  priceMinor      Int         @map("price_minor")
+  isActive        Boolean     @default(true) @map("is_active")
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id])
+  appointments     Appointment[]
+  visitProcedures  VisitProcedure[]
+  visitChargeLines VisitChargeLine[]
+
+  @@index([tenantId])
+  @@map("services")
+}
+
+model ScheduleTemplate {
+  id        String    @id @db.Uuid
+  tenantId  String    @map("tenant_id") @db.Uuid
+  doctorId  String    @map("doctor_id") @db.Uuid
+  weekday   Int
+  startTime DateTime  @map("start_time") @db.Time(0)
+  endTime   DateTime  @map("end_time") @db.Time(0)
+  validFrom DateTime  @map("valid_from") @db.Date
+  validTo   DateTime? @map("valid_to") @db.Date
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant Tenant          @relation(fields: [tenantId], references: [id])
+  doctor Doctor          @relation(fields: [doctorId], references: [id])
+  breaks ScheduleBreak[]
+
+  @@index([tenantId])
+  @@map("schedule_templates")
+}
+
+model ScheduleBreak {
+  id                 String   @id @db.Uuid
+  tenantId           String   @map("tenant_id") @db.Uuid
+  scheduleTemplateId String   @map("schedule_template_id") @db.Uuid
+  startTime          DateTime @map("start_time") @db.Time(0)
+  endTime            DateTime @map("end_time") @db.Time(0)
+  label              String
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant           Tenant           @relation(fields: [tenantId], references: [id])
+  scheduleTemplate ScheduleTemplate @relation(fields: [scheduleTemplateId], references: [id])
+
+  @@index([tenantId])
+  @@map("schedule_breaks")
+}
+
+model ScheduleException {
+  id        String                @id @db.Uuid
+  tenantId  String                @map("tenant_id") @db.Uuid
+  // NULL means every doctor in the tenant (PHASE-2.md Q13). A public holiday that has to be
+  // entered once per doctor is a holiday someone works by accident -- and the doctor hired next
+  // month inherits nothing. This is what keeps HOLIDAY meaningfully distinct from BLOCKED:
+  // clinic-wide versus one doctor, rather than two names for the same behaviour.
+  doctorId  String?               @map("doctor_id") @db.Uuid
+  date      DateTime              @db.Date
+  type      ScheduleExceptionType
+  // Nullability is constrained by type in SQL, not by convention -- see prisma/sql/13-*.sql.
+  // BLOCKED/HOLIDAY: both NULL (whole day) or both set (partial day). EXTRA_AVAILABILITY: both
+  // always set, because a null window is not "all day available", it is meaningless.
+  startTime DateTime?             @map("start_time") @db.Time(0)
+  endTime   DateTime?             @map("end_time") @db.Time(0)
+  reason    String?
+  createdAt DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id])
+  // onDelete spelled out because Prisma's default for an OPTIONAL relation is SetNull, while the
+  // database has RESTRICT -- migration 14 made this column nullable without saying so, and the two
+  // then disagreed. Restrict is also the right answer: a doctor with a one-off closure recorded
+  // against them should not be deletable, and doctors are deactivated rather than deleted anyway.
+  doctor Doctor? @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([tenantId, date])
+  @@map("schedule_exceptions")
+}
+
+// ============================================================================
+// Patients
+// ============================================================================
+
+model Contact {
+  id            String    @id @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  phoneE164     String    @map("phone_e164")
+  whatsappOptIn Boolean   @default(false) @map("whatsapp_opt_in")
+  verifiedAt    DateTime? @map("verified_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant                   Tenant                    @relation(fields: [tenantId], references: [id])
+  patients                 Patient[]
+  conversations            Conversation[]
+  messages                 Message[]
+  prescriptionAccessTokens PrescriptionAccessToken[]
+  /// One phone, several patients, one policy — the policy hangs off the household, not the person.
+  insurancePolicies        InsurancePolicy[]
+
+  // @@unique([tenantId, phoneE164]) already covers tenantId-only lookups (leftmost prefix) — no bare index added.
+  @@unique([tenantId, phoneE164])
+  @@map("contacts")
+}
+
+model Patient {
+  id                    String              @id @db.Uuid
+  tenantId              String              @map("tenant_id") @db.Uuid
+  contactId             String?             @map("contact_id") @db.Uuid
+  /// Per clinic, sequential, allocated under a row lock on the tenant (Phase 5 PR 2). A unique
+  /// index on (tenant_id, file_number) is what makes a duplicate impossible rather than unlikely.
+  fileNumber            Int                 @default(dbgenerated()) @map("file_number")
+  fullNameAr            String              @map("full_name_ar")
+  fullNameEn            String?             @map("full_name_en")
+  /// Postgres GENERATED ALWAYS ... STORED, from normalize_arabic_name(full_name_ar). `@ignore`
+  /// keeps it out of the Prisma Client: the database computes it, and any attempt to write it
+  /// would be rejected. Read it through raw SQL, which is what trigram search needs anyway.
+  nameSearchAr          String?             @map("name_search_ar") @ignore
+  /// Application-maintained, unlike nameSearchAr. Transliteration of the Arabic name plus the
+  /// normalised full_name_en (SCHEMA-DECISIONS.md D19).
+  nameSearchLatin       String?             @map("name_search_latin")
+  phoneE164             String              @map("phone_e164")
+  secondaryPhone        String?             @map("secondary_phone")
+  gender                String?
+  dateOfBirth           DateTime?           @map("date_of_birth") @db.Date
+  nationalId            String?             @map("national_id")
+  /// ISO 3166-1 alpha-2, CHECK-constrained. Required at intake (D26); NULL on rows recorded before
+  /// this column existed, which the derived "incomplete" flag surfaces rather than a backfill.
+  nationality           String?
+  /// Offered instead of nationalId when the patient is not Egyptian (D27).
+  passportNumber        String?             @map("passport_number")
+  /// Filled from the national ID when one is given, and correctable (D27).
+  governorate           String?
+  referralSource        String?             @map("referral_source")
+  email                 String?
+  address               String?
+  emergencyContact      Json?               @map("emergency_contact")
+  notes                 String?
+  relationshipToContact PatientRelationship @map("relationship_to_contact")
+  status                PatientStatus
+  mergedIntoPatientId   String?             @map("merged_into_patient_id") @db.Uuid
+  createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant                 Tenant                        @relation(fields: [tenantId], references: [id])
+  contact                Contact?                      @relation(fields: [contactId], references: [id])
+  mergedInto             Patient?                      @relation("PatientMerge", fields: [mergedIntoPatientId], references: [id])
+  mergedFrom             Patient[]                     @relation("PatientMerge")
+  appointments           Appointment[]
+  visits                 Visit[]
+  transfers              PatientTransfer[]
+  prescriptions          Prescription[]
+  payments               Payment[]
+  consents               Consent[]
+  treatmentPlans         TreatmentPlan[]
+  followupTasks          FollowupTask[]
+  attachments            Attachment[]
+  notifications          Notification[]
+  allergies              PatientAllergy[]
+  clinicalProfileEntries PatientClinicalProfileEntry[]
+  relationsFrom          PatientRelation[]             @relation("PatientRelationFrom")
+  relationsTo            PatientRelation[]             @relation("PatientRelationTo")
+  /// Coverage is per patient, never inferred from the household contact: a live-in grandparent on
+  /// their own government scheme is the ordinary case. See prisma/sql/21-patient-insurance.sql.
+  insuranceCoverage      PatientInsurance[]
+
+  /// When a clinician last confirmed the allergy list. NULL means nobody has asked, which the
+  /// safety summary must show differently from "no known allergies" — an empty list alone is
+  /// ambiguous, and a blank box reads as reassurance it has not earned.
+  allergiesReviewedAt DateTime?     @map("allergies_reviewed_at") @db.Timestamptz(6)
+  allergiesReviewedBy String?       @map("allergies_reviewed_by") @db.Uuid
+  visitCharges        VisitCharge[]
+  patientCredits      PatientCredit[]
+
+  // dateOfBirth, gender, emergencyContact made nullable per founder instruction (21 Aug 2026) — a walk-in
+  // registration will not have a date of birth, and a required field here means staff invent one.
+  // Back-ported into ARCHITECTURE.md §4 on 2026-08-24, so the written spec no longer drifts from this.
+  // A PARTIAL UNIQUE INDEX on (tenant_id, national_id) WHERE national_id IS NOT NULL exists and is
+  // not expressible here -- `@@unique` has no WHERE. Created in
+  // 20260907160000_patient_intake_fields, mirrored at prisma/sql/23-patient-intake-fields.sql.
+  // It is the enforcement for D27: two receptionists registering the same walk-in seconds apart is
+  // the race a service-layer "does this ID exist" check loses.
+  @@index([tenantId, phoneE164])
+  @@index([tenantId, fullNameAr])
+  // The two GIN trigram indexes on name_search_ar / name_search_latin are created in
+  // prisma/sql/10-patient-bilingual-names.sql — Prisma cannot express an operator-class index.
+  @@map("patients")
+}
+
+/// A household's insurance policy. `PHASE-3.md` Q18; `prisma/sql/21-patient-insurance.sql` carries
+/// the full reasoning and is the authority.
+///
+/// **It hangs off `contacts`, not `patients`** — one phone, several patients, one policy. A father's
+/// policy covering a wife and two children is one row here and four `patient_insurance` rows, not
+/// four copies of a policy number that drift apart the day one of them is corrected.
+///
+/// **There is no `isActive` column, deliberately.** A policy is in force when
+/// `validFrom <= the date asked about AND (validTo IS NULL OR that date <= validTo)`, compared on
+/// every read against an instant the caller passes in. Same argument as D24: a status column
+/// flipped by a nightly sweep looks exactly like expiry and reports a lapsed policy as live forever
+/// if the sweep is never written. `validTo` NULL means open-ended, which is a real case — several
+/// Egyptian corporate schemes renew silently — and must read as neither "expired" nor "unknown".
+///
+/// **No money here.** No coverage percentage, ceiling or co-payment; those belong with the payer
+/// split on `payments`. A percentage here invites a service to multiply by it and store the result,
+/// which is the derived-money drift D7 exists to prevent. Claims are Phase 5.
+/// The clinic's insurance companies -- PHASE-5-PLAN.md PR 1.
+///
+/// No coverage percentage and no copay: PHASE-5-DESIGN.md 4.2 makes the payer split manual because
+/// no coverage rate exists, and columns here would make it look automatable.
+model InsuranceCompany {
+  id                    String                 @id @db.Uuid
+  tenantId              String                 @map("tenant_id") @db.Uuid
+  name                  String
+  type                  InsuranceCompanyType
+  contractNumber        String?                @map("contract_number")
+  contractStart         DateTime?              @map("contract_start") @db.Date
+  contractEnd           DateTime?              @map("contract_end") @db.Date
+  contactPerson         String?                @map("contact_person")
+  phone                 String?
+  email                 String?
+  claimSubmissionMethod ClaimSubmissionMethod? @map("claim_submission_method")
+  paymentTermsDays      Int?                   @map("payment_terms_days")
+  priorApprovalRequired Boolean                @default(false) @map("prior_approval_required")
+  isActive              Boolean                @default(true) @map("is_active")
+  createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant   Tenant            @relation(fields: [tenantId], references: [id])
+  policies InsurancePolicy[]
+
+  /// A UNIQUE INDEX on (tenant_id, lower(name)) exists and is not expressible here -- @@unique has
+  /// no expression support. It lives in 20260909180000_insurance_companies.
+  @@index([tenantId, isActive])
+  @@map("insurance_companies")
+}
+
+enum InsuranceCompanyType {
+  INSURER
+  TPA
+  CORPORATE
+  GOVERNMENT
+}
+
+enum ClaimSubmissionMethod {
+  PORTAL
+  EMAIL
+  PAPER
+  OTHER
+}
+
+model InsurancePolicy {
+  id               String    @id @db.Uuid
+  tenantId         String    @map("tenant_id") @db.Uuid
+  contactId        String    @map("contact_id") @db.Uuid
+  /// The registry row this policy names, when it has one. Nullable beside the free-text name: rows
+  /// written before the registry existed keep their text, and both are readable.
+  companyId        String?   @map("company_id") @db.Uuid
+  planName         String?   @map("plan_name")
+  /// Free text, not an enum: there is no registry to validate against, and a closed list the desk
+  /// cannot extend is always worked around by picking a wrong value from it.
+  insurerName      String    @map("insurer_name")
+  policyNumber     String    @map("policy_number")
+  /// The policyholder as the card names them. Deliberately not a foreign key to `patients` — the
+  /// holder is very often an employer's employee who is not a patient of this clinic.
+  policyholderName String    @map("policyholder_name")
+  validFrom        DateTime  @map("valid_from") @db.Date
+  validTo          DateTime? @map("valid_to") @db.Date
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
+  contact          Contact            @relation(fields: [contactId], references: [id])
+  company          InsuranceCompany?  @relation(fields: [companyId], references: [id])
+  patientInsurance PatientInsurance[]
+
+  @@unique([tenantId, insurerName, policyNumber])
+  @@index([tenantId, contactId])
+  @@map("insurance_policies")
+}
+
+/// Which patients a policy actually covers, and as what.
+///
+/// The join table is not ceremony: being under a household's phone does not mean being on that
+/// household's policy. Coverage is stated per patient rather than inferred from the contact.
+///
+/// Not unique on `(tenantId, patientId)` — a patient may hold several policies at once (last year's
+/// lapsed corporate scheme and this year's, or a government scheme alongside an employer's). Which
+/// applies on a given date is the read-time comparison's job, and more than one may apply; the
+/// screen shows what it finds rather than picking a winner.
+model PatientInsurance {
+  id                         String              @id @db.Uuid
+  tenantId                   String              @map("tenant_id") @db.Uuid
+  patientId                  String              @map("patient_id") @db.Uuid
+  policyId                   String              @map("policy_id") @db.Uuid
+  /// The existing `PatientRelationship` enum, not a new one: `patients.relationshipToContact`
+  /// already answers a question of exactly this shape, and a second enum saying SPOUSE in different
+  /// letters would be one more thing to keep in step for no gain.
+  relationshipToPolicyholder PatientRelationship @map("relationship_to_policyholder")
+  /// Which policy applies first when a patient holds several. A partial unique index enforces at
+  /// most one primary per patient; it lives in 20260909180000_insurance_companies.
+  isPrimary                  Boolean             @default(false) @map("is_primary")
+  createdAt                  DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant  Tenant          @relation(fields: [tenantId], references: [id])
+  patient Patient         @relation(fields: [patientId], references: [id])
+  policy  InsurancePolicy @relation(fields: [policyId], references: [id])
+
+  @@unique([tenantId, patientId, policyId])
+  @@index([tenantId, patientId])
+  @@index([tenantId, policyId])
+  @@map("patient_insurance")
+}
+
+// ============================================================================
+// Appointments
+// ============================================================================
+
+model Appointment {
+  id                        String            @id @db.Uuid
+  tenantId                  String            @map("tenant_id") @db.Uuid
+  patientId                 String            @map("patient_id") @db.Uuid
+  doctorId                  String            @map("doctor_id") @db.Uuid
+  serviceId                 String            @map("service_id") @db.Uuid
+  scheduledStart            DateTime          @map("scheduled_start") @db.Timestamptz(6)
+  scheduledEnd              DateTime          @map("scheduled_end") @db.Timestamptz(6)
+  status                    AppointmentStatus
+  source                    AppointmentSource
+  // What reception told the patient at booking, snapshotted from `services.price_minor` so that
+  // editing a service price cannot rewrite history (PHASE-5-DESIGN.md §2.2). Nullable because the
+  // only value available to backfill older rows is today's price, which would assert a quote
+  // nobody gave; NULL means "not recorded" and must never render as zero. This is not the amount
+  // charged -- that is the Phase 5 charge lines, and the two are allowed to differ.
+  quotedPriceMinor          Int?              @map("quoted_price_minor")
+  complaintSummary          String?           @map("complaint_summary")
+  bookingNotes              String?           @map("booking_notes")
+  cancellationReason        String?           @map("cancellation_reason")
+  rescheduleCount           Int               @default(0) @map("reschedule_count")
+  createdBy                 String            @map("created_by") @db.Uuid
+  updatedBy                 String            @map("updated_by") @db.Uuid
+  arrivedAt                 DateTime?         @map("arrived_at") @db.Timestamptz(6)
+  waitingStartedAt          DateTime?         @map("waiting_started_at") @db.Timestamptz(6)
+  consultationStartedAt     DateTime?         @map("consultation_started_at") @db.Timestamptz(6)
+  consultationEndedAt       DateTime?         @map("consultation_ended_at") @db.Timestamptz(6)
+  allowOverlap              Boolean           @default(false) @map("allow_overlap")
+  overlapAuthorisedByUserId String?           @map("overlap_authorised_by_user_id") @db.Uuid
+  overlapReason             String?           @map("overlap_reason")
+  createdAt                 DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant                Tenant             @relation(fields: [tenantId], references: [id])
+  patient               Patient            @relation(fields: [patientId], references: [id])
+  doctor                Doctor             @relation(fields: [doctorId], references: [id])
+  service               Service            @relation(fields: [serviceId], references: [id])
+  createdByUser         User               @relation("AppointmentCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser         User               @relation("AppointmentUpdatedBy", fields: [updatedBy], references: [id])
+  events                AppointmentEvent[]
+  visits                Visit[]
+  transfers             PatientTransfer[]
+  payments              Payment[]
+  followupTasksResolved FollowupTask[]
+  notifications         Notification[]
+
+  @@index([tenantId, doctorId, scheduledStart])
+  @@index([tenantId, scheduledStart, status])
+  @@map("appointments")
+}
+
+// Append-only (D5).
+model AppointmentEvent {
+  id                 String               @id @db.Uuid
+  tenantId           String               @map("tenant_id") @db.Uuid
+  appointmentId      String               @map("appointment_id") @db.Uuid
+  eventType          AppointmentEventType @map("event_type")
+  fromStatus         AppointmentStatus?   @map("from_status")
+  toStatus           AppointmentStatus?   @map("to_status")
+  fromScheduledStart DateTime?            @map("from_scheduled_start") @db.Timestamptz(6)
+  toScheduledStart   DateTime?            @map("to_scheduled_start") @db.Timestamptz(6)
+  reason             String?
+  actorUserId        String               @map("actor_user_id") @db.Uuid
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id])
+  appointment Appointment @relation(fields: [appointmentId], references: [id])
+  actorUser   User        @relation(fields: [actorUserId], references: [id])
+
+  @@index([tenantId, appointmentId, createdAt])
+  @@map("appointment_events")
+}
+
+// ============================================================================
+// Clinical
+// ============================================================================
+
+model Visit {
+  id                    String      @id @db.Uuid
+  tenantId              String      @map("tenant_id") @db.Uuid
+  patientId             String      @map("patient_id") @db.Uuid
+  doctorId              String      @map("doctor_id") @db.Uuid
+  appointmentId         String      @map("appointment_id") @db.Uuid
+  complaint             String?
+  medicalHistory        String?     @map("medical_history")
+  examination           String?
+  diagnosis             String?
+  treatmentPlan         String?     @map("treatment_plan")
+  doctorNotes           String?     @map("doctor_notes")
+  /// Investigations requested, as a sentence. The structured lines are `visit_investigations`;
+  /// a request is often both, which is what Q24 rules.
+  investigations        String?
+  followUpDate          DateTime?   @map("follow_up_date") @db.Date
+  followUpIntervalDays  Int?        @map("follow_up_interval_days")
+  status                VisitStatus
+  /// Compare-and-set counter for concurrent edits (`PHASE-4.md` Q7). Incremented by the visit
+  /// write path; a save carrying a stale value is refused rather than overwriting. Never a
+  /// timestamp: two saves in one millisecond are indistinguishable by `updated_at`, and a clock
+  /// can move backwards.
+  revision              Int         @default(0)
+  completedAt           DateTime?   @map("completed_at") @db.Timestamptz(6)
+  vitals                Json?
+  /// Q46. Constrained in SQL: days positive, days and start present together, note only with leave.
+  sickLeaveDays         Int?        @map("sick_leave_days")
+  sickLeaveFrom         DateTime?   @map("sick_leave_from") @db.Date
+  sickLeaveNote         String?     @map("sick_leave_note")
+  sickLeavePrintedCount Int         @default(0) @map("sick_leave_printed_count")
+  /// R1: the doctor's signed adjustment to the visit total, recorded before completion and copied
+  /// onto the charge as an ADJUSTMENT line. Signed: negative lowers the total. Constrained in SQL.
+  priceAdjustmentMinor  Int?        @map("price_adjustment_minor")
+  priceAdjustmentReason String?     @map("price_adjustment_reason")
+  priceAdjustedByUserId String?     @map("price_adjusted_by_user_id") @db.Uuid
+  priceAdjustedAt       DateTime?   @map("price_adjusted_at") @db.Timestamptz(6)
+  createdBy             String      @map("created_by") @db.Uuid
+  createdAt             DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant                Tenant                 @relation(fields: [tenantId], references: [id])
+  patient               Patient                @relation(fields: [patientId], references: [id])
+  doctor                Doctor                 @relation(fields: [doctorId], references: [id])
+  appointment           Appointment            @relation(fields: [appointmentId], references: [id])
+  createdByUser         User                   @relation(fields: [createdBy], references: [id])
+  priceAdjustedBy       User?                  @relation("VisitPriceAdjustedBy", fields: [priceAdjustedByUserId], references: [id])
+  revisions             VisitRevision[]
+  prescriptions         Prescription[]
+  payments              Payment[]
+  treatmentPlanSessions TreatmentPlanSession[]
+  treatmentPlanOrigins  TreatmentPlan[]        @relation("TreatmentPlanOrigin")
+  followupTasks         FollowupTask[]
+  attachments           Attachment[]
+  procedures            VisitProcedure[]
+  investigationLines    VisitInvestigation[]
+  visitCharge           VisitCharge?
+
+  // A PARTIAL UNIQUE INDEX on (appointment_id) WHERE status = 'COMPLETED' exists on this table and
+  // is not expressible here -- `@@unique` has no WHERE clause. It lives in
+  // 20260907120000_visit_revision_and_completed_index, mirrored at
+  // prisma/sql/22-visit-revision-and-completed-index.sql, and is treated the same way as the
+  // append-only triggers (D5) and the GENERATED remaining_minor column (D7): created in SQL,
+  // recorded here so nobody concludes from this block that the table is unconstrained.
+  //
+  // It permits SEVERAL DRAFTS per appointment and exactly ONE COMPLETED (PHASE-4.md Q2, Q15). A
+  // plain @@unique([appointmentId]) would be wrong -- it forbids the second draft a transfer
+  // creates. ARCHITECTURE.md §4's "appointments 1:0..1 visits" describes neither the old state
+  // (nothing enforced it) nor the wanted one.
+  @@index([tenantId, patientId, completedAt])
+  @@index([tenantId, doctorId, status])
+  @@map("visits")
+}
+
+// Append-only (D5).
+model VisitRevision {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  visitId        String   @map("visit_id") @db.Uuid
+  changedFields  Json     @map("changed_fields")
+  previousValues Json     @map("previous_values")
+  actorUserId    String   @map("actor_user_id") @db.Uuid
+  reason         String
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id])
+  visit     Visit  @relation(fields: [visitId], references: [id])
+  actorUser User   @relation(fields: [actorUserId], references: [id])
+
+  @@index([tenantId, visitId])
+  @@map("visit_revisions")
+}
+
+model Prescription {
+  id           String   @id @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  visitId      String   @map("visit_id") @db.Uuid
+  patientId    String   @map("patient_id") @db.Uuid
+  doctorId     String   @map("doctor_id") @db.Uuid
+  issuedAt     DateTime @map("issued_at") @db.Timestamptz(6)
+  printedCount Int      @default(0) @map("printed_count")
+  notes        String?
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant       Tenant                    @relation(fields: [tenantId], references: [id])
+  visit        Visit                     @relation(fields: [visitId], references: [id])
+  patient      Patient                   @relation(fields: [patientId], references: [id])
+  doctor       Doctor                    @relation(fields: [doctorId], references: [id])
+  items        PrescriptionItem[]
+  accessTokens PrescriptionAccessToken[]
+
+  @@index([tenantId, visitId])
+  @@map("prescriptions")
+}
+
+model PrescriptionItem {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  prescriptionId String   @map("prescription_id") @db.Uuid
+  medicationName String   @map("medication_name")
+  /// Q45 split the line as an Egyptian prescription is written: strength and form identify the
+  /// product, dose and frequency are the instructions, quantity is what the pharmacist dispenses.
+  strength       String?
+  form           String?
+  quantity       String?
+  dose           String
+  frequency      String
+  duration       String
+  instructions   String?
+  sortOrder      Int      @map("sort_order")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  prescription Prescription @relation(fields: [prescriptionId], references: [id])
+
+  @@index([tenantId, prescriptionId])
+  @@map("prescription_items")
+}
+
+/// What was done at a visit, and what it cost at the moment it was recorded. PHASE-4.md Q25.
+///
+/// unitPriceMinor is NULLABLE and means "no price was recorded", never zero -- the same reading
+/// appointments.quoted_price_minor carries, and for the same reason: the only value available to
+/// invent is today's services.price_minor, which would assert a charge nobody made.
+model VisitProcedure {
+  id               String          @id @db.Uuid
+  tenantId         String          @map("tenant_id") @db.Uuid
+  visitId          String          @map("visit_id") @db.Uuid
+  serviceId        String          @map("service_id") @db.Uuid
+  quantity         Int             @default(1)
+  unitPriceMinor   Int?            @map("unit_price_minor")
+  source           ProcedureSource
+  recordedByUserId String          @map("recorded_by_user_id") @db.Uuid
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant  @relation(fields: [tenantId], references: [id])
+  visit          Visit   @relation(fields: [visitId], references: [id])
+  service        Service @relation(fields: [serviceId], references: [id])
+  recordedByUser User    @relation(fields: [recordedByUserId], references: [id])
+
+  // A PARTIAL UNIQUE INDEX on (visit_id) WHERE source = 'RECEPTION' exists on this table and is not
+  // expressible here -- @@unique has no WHERE clause. It lives in 20260908130000_visit_procedures,
+  // mirrored at prisma/sql/26-visit-procedures.sql.
+  @@index([tenantId, visitId])
+  @@map("visit_procedures")
+}
+
+/// One investigation requested at a visit. PHASE-4.md Q24.
+/// Ordered by `sortOrder` for the same reason `prescription_items` is: the list has an intent.
+model VisitInvestigation {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  visitId   String   @map("visit_id") @db.Uuid
+  /// Free text, stored byte-identical. Clinical content is never normalised.
+  name      String
+  notes     String?
+  sortOrder Int      @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  visit  Visit  @relation(fields: [visitId], references: [id])
+
+  @@index([tenantId, visitId])
+  @@map("visit_investigations")
+}
+
+// ============================================================================
+// Finance
+// ============================================================================
+
+model Payment {
+  id                      String              @id @db.Uuid
+  tenantId                String              @map("tenant_id") @db.Uuid
+  patientId               String              @map("patient_id") @db.Uuid
+  appointmentId           String?             @map("appointment_id") @db.Uuid
+  visitId                 String?             @map("visit_id") @db.Uuid
+  /// Phase 5 PR 5: a receipt, not an invoice. Price, discount and amount-due moved to
+  /// `visit_charges`; what is left is one money movement.
+  amountMinor             Int                 @default(0) @map("amount_minor")
+  /// Sequential and gapless per clinic, allocated by a trigger inside the writing transaction.
+  receiptNumber           Int                 @default(dbgenerated()) @map("receipt_number")
+  receiptDate             DateTime            @default(dbgenerated()) @map("receipt_date") @db.Date
+  /// The charge this settles. NULLABLE by ruling: a payment can arrive before the invoice (Q19).
+  chargeId                String?             @map("charge_id") @db.Uuid
+  method                  PaymentMethod
+  status                  PaymentStatus
+  collectedByUserId       String?             @map("collected_by_user_id") @db.Uuid
+  paidAt                  DateTime?           @map("paid_at") @db.Timestamptz(6)
+  notes                   String?
+  confirmationMethod      ConfirmationMethod? @map("confirmation_method")
+  patientClaimAt          DateTime?           @map("patient_claim_at") @db.Timestamptz(6)
+  patientClaimEvidenceUrl String?             @map("patient_claim_evidence_url")
+  confirmedByUserId       String?             @map("confirmed_by_user_id") @db.Uuid
+  confirmedAt             DateTime?           @map("confirmed_at") @db.Timestamptz(6)
+  createdAt               DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant          Tenant              @relation(fields: [tenantId], references: [id])
+  patient         Patient             @relation(fields: [patientId], references: [id])
+  charge          VisitCharge?        @relation(fields: [chargeId], references: [id])
+  appointment     Appointment?        @relation(fields: [appointmentId], references: [id])
+  visit           Visit?              @relation(fields: [visitId], references: [id])
+  collectedByUser User?               @relation("PaymentCollectedBy", fields: [collectedByUserId], references: [id])
+  confirmedByUser User?               @relation("PaymentConfirmedBy", fields: [confirmedByUserId], references: [id])
+  adjustments     PaymentAdjustment[]
+  creditsCreated  PatientCredit[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, patientId])
+  @@map("payments")
+}
+
+// Append-only (D5).
+model PaymentAdjustment {
+  id             String         @id @db.Uuid
+  tenantId       String         @map("tenant_id") @db.Uuid
+  paymentId      String         @map("payment_id") @db.Uuid
+  adjustmentType AdjustmentType @map("adjustment_type")
+  amountMinor    Int            @map("amount_minor")
+  reason         String
+  actorUserId    String         @map("actor_user_id") @db.Uuid
+  previousStatus PaymentStatus  @map("previous_status")
+  newStatus      PaymentStatus  @map("new_status")
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant    Tenant  @relation(fields: [tenantId], references: [id])
+  payment   Payment @relation(fields: [paymentId], references: [id])
+  actorUser User    @relation(fields: [actorUserId], references: [id])
+
+  @@index([tenantId])
+  @@map("payment_adjustments")
+}
+
+// ============================================================================
+// Governance
+// ============================================================================
+
+// Append-only (D5).
+model AuditLog {
+  id            String      @id @db.Uuid
+  tenantId      String?     @map("tenant_id") @db.Uuid
+  actorUserId   String      @map("actor_user_id") @db.Uuid
+  actorRole     String      @map("actor_role")
+  action        AuditAction
+  entityType    String      @map("entity_type")
+  entityId      String      @map("entity_id") @db.Uuid
+  previousState Json?       @map("previous_state")
+  newState      Json?       @map("new_state")
+  ipAddress     String      @map("ip_address")
+  userAgent     String      @map("user_agent")
+  // The WhatsApp message that triggered this action, for a write made by the AI agent
+  // (ARCHITECTURE.md §12 rule 3). A real column rather than a key inside `newState`: it is a
+  // foreign key with referential integrity, it is indexable, and "which actions did this message
+  // cause" is a question an incident review will actually ask. NULL for every action with a human
+  // behind it, which is all of them until Phase 7.
+  //
+  // WRITES only, by decision rather than by omission. §12 rule 3 originally read "every tool call
+  // is written to audit_logs", which was already false: D16's triggers fire on INSERT/UPDATE/
+  // DELETE, so find_available_slots() has never left a row. Amended 2026-08-28 to "every tool call
+  // that writes" -- auditing every availability lookup would outnumber the appointments themselves,
+  // for a read that discloses nothing a patient could not learn by phoning the clinic.
+  messageId     String?     @map("message_id") @db.Uuid
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // onDelete: Restrict is explicit because Prisma's default for an optional relation is SetNull,
+  // and SetNull is an UPDATE, which the D5 append-only trigger refuses unconditionally. Leaving
+  // the default in place made deleting a tenant fail with "Table audit_logs is append-only"
+  // instead of a foreign-key violation. See SCHEMA-DECISIONS.md D18. The same reasoning applies
+  // to `message` below, and for the same reason it is spelled out rather than defaulted.
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  actorUser User     @relation(fields: [actorUserId], references: [id])
+  message   Message? @relation(fields: [messageId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, entityType, entityId])
+  @@index([tenantId, createdAt])
+  @@index([messageId])
+  @@map("audit_logs")
+}
+
+model Consent {
+  id               String         @id @db.Uuid
+  tenantId         String         @map("tenant_id") @db.Uuid
+  patientId        String         @map("patient_id") @db.Uuid
+  purpose          ConsentPurpose
+  granted          Boolean
+  grantedAt        DateTime       @map("granted_at") @db.Timestamptz(6)
+  withdrawnAt      DateTime?      @map("withdrawn_at") @db.Timestamptz(6)
+  capturedByUserId String         @map("captured_by_user_id") @db.Uuid
+  evidence         Json
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant  @relation(fields: [tenantId], references: [id])
+  patient        Patient @relation(fields: [patientId], references: [id])
+  capturedByUser User    @relation(fields: [capturedByUserId], references: [id])
+
+  @@index([tenantId])
+  @@map("consents")
+}
+
+model AccessGrant {
+  id               String   @id @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  grantedToUserId  String   @map("granted_to_user_id") @db.Uuid
+  reason           String
+  expiresAt        DateTime @map("expires_at") @db.Timestamptz(6)
+  approvedByUserId String   @map("approved_by_user_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant @relation(fields: [tenantId], references: [id])
+  grantedToUser  User   @relation("AccessGrantGrantedTo", fields: [grantedToUserId], references: [id])
+  approvedByUser User   @relation("AccessGrantApprovedBy", fields: [approvedByUserId], references: [id])
+
+  @@index([tenantId])
+  @@map("access_grants")
+}
+
+// ============================================================================
+// Treatment Plans
+// ============================================================================
+
+model TreatmentPlan {
+  id                String              @id @db.Uuid
+  tenantId          String              @map("tenant_id") @db.Uuid
+  patientId         String              @map("patient_id") @db.Uuid
+  doctorId          String              @map("doctor_id") @db.Uuid
+  title             String
+  diagnosisText     String              @map("diagnosis_text") // snapshot at plan creation — D9
+  originVisitId     String?             @map("origin_visit_id") @db.Uuid
+  totalSessions     Int                 @map("total_sessions")
+  completedSessions Int                 @default(0) @map("completed_sessions")
+  status            TreatmentPlanStatus
+  startedAt         DateTime            @map("started_at") @db.Timestamptz(6)
+  notes             String?
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant        Tenant                 @relation(fields: [tenantId], references: [id])
+  patient       Patient                @relation(fields: [patientId], references: [id])
+  doctor        Doctor                 @relation(fields: [doctorId], references: [id])
+  originVisit   Visit?                 @relation("TreatmentPlanOrigin", fields: [originVisitId], references: [id])
+  sessions      TreatmentPlanSession[]
+  followupTasks FollowupTask[]
+
+  @@index([tenantId, patientId, status])
+  @@map("treatment_plans")
+}
+
+model TreatmentPlanSession {
+  id              String                 @id @db.Uuid
+  tenantId        String                 @map("tenant_id") @db.Uuid
+  treatmentPlanId String                 @map("treatment_plan_id") @db.Uuid
+  sessionNumber   Int                    @map("session_number")
+  visitId         String?                @map("visit_id") @db.Uuid
+  plannedDate     DateTime               @map("planned_date") @db.Date
+  status          TreatmentSessionStatus
+  notes           String?
+  createdAt       DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant        Tenant        @relation(fields: [tenantId], references: [id])
+  treatmentPlan TreatmentPlan @relation(fields: [treatmentPlanId], references: [id])
+  visit         Visit?        @relation(fields: [visitId], references: [id])
+
+  @@unique([treatmentPlanId, sessionNumber])
+  @@index([tenantId])
+  @@map("treatment_plan_sessions")
+}
+
+// ============================================================================
+// Prescription Delivery
+// ============================================================================
+
+model PrescriptionAccessToken {
+  id             String    @id @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  prescriptionId String    @map("prescription_id") @db.Uuid
+  tokenHash      String    @unique @map("token_hash")
+  contactId      String    @map("contact_id") @db.Uuid
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(6)
+  maxViews       Int       @map("max_views")
+  viewCount      Int       @default(0) @map("view_count")
+  firstViewedAt  DateTime? @map("first_viewed_at") @db.Timestamptz(6)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  prescription Prescription @relation(fields: [prescriptionId], references: [id])
+  contact      Contact      @relation(fields: [contactId], references: [id])
+
+  @@index([tenantId])
+  @@map("prescription_access_tokens")
+}
+
+// ============================================================================
+// Billing & Metering
+// ============================================================================
+
+model Subscription {
+  id                   String             @id @db.Uuid
+  tenantId             String             @map("tenant_id") @db.Uuid
+  doctorCount          Int                @map("doctor_count")
+  baseMessageAllowance Int                @map("base_message_allowance")
+  perDoctorAllowance   Int                @map("per_doctor_allowance")
+  priceBaseMinor       Int                @map("price_base_minor")
+  pricePerDoctorMinor  Int                @map("price_per_doctor_minor")
+  overagePriceMinor    Int                @map("overage_price_minor")
+  currency             String
+  billingPeriod        BillingPeriod      @map("billing_period")
+  status               SubscriptionStatus
+  trialEndsAt          DateTime?          @map("trial_ends_at") @db.Timestamptz(6)
+  currentPeriodStart   DateTime           @map("current_period_start") @db.Timestamptz(6)
+  currentPeriodEnd     DateTime           @map("current_period_end") @db.Timestamptz(6)
+  createdAt            DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  invoices Invoice[]
+
+  @@index([tenantId])
+  @@map("subscriptions")
+}
+
+model UsageRecord {
+  id            String   @id @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  periodStart   DateTime @map("period_start") @db.Timestamptz(6)
+  periodEnd     DateTime @map("period_end") @db.Timestamptz(6)
+  messageType   String   @map("message_type")
+  quantity      Int
+  unitCostMinor Int      @map("unit_cost_minor")
+  recordedAt    DateTime @map("recorded_at") @db.Timestamptz(6)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, periodStart])
+  @@map("usage_records")
+}
+
+model UsageAlert {
+  id           String   @id @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  period       String
+  thresholdPct Int      @map("threshold_pct")
+  sentAt       DateTime @map("sent_at") @db.Timestamptz(6)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@map("usage_alerts")
+}
+
+model Invoice {
+  id               String        @id @db.Uuid
+  tenantId         String        @map("tenant_id") @db.Uuid
+  subscriptionId   String        @map("subscription_id") @db.Uuid
+  invoiceNumber    String        @map("invoice_number")
+  periodStart      DateTime      @map("period_start") @db.Timestamptz(6)
+  periodEnd        DateTime      @map("period_end") @db.Timestamptz(6)
+  currency         String
+  subtotalMinor    Int           @map("subtotal_minor")
+  overageMinor     Int           @default(0) @map("overage_minor")
+  discountMinor    Int           @default(0) @map("discount_minor")
+  taxMinor         Int           @default(0) @map("tax_minor")
+  totalMinor       Int           @map("total_minor")
+  status           InvoiceStatus
+  issuedAt         DateTime?     @map("issued_at") @db.Timestamptz(6)
+  dueAt            DateTime      @map("due_at") @db.Timestamptz(6)
+  paidAt           DateTime?     @map("paid_at") @db.Timestamptz(6)
+  paymentReference String?       @map("payment_reference")
+  etaSubmissionId  String?       @map("eta_submission_id")
+  etaStatus        String?       @map("eta_status")
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  subscription Subscription @relation(fields: [subscriptionId], references: [id])
+
+  // @@unique([tenantId, invoiceNumber]) already covers tenantId-only lookups (leftmost prefix) — no bare index added.
+  @@unique([tenantId, invoiceNumber])
+  @@map("invoices")
+}
+
+// ============================================================================
+// Messaging (D1 — schema created now, empty until Phase 6+)
+// ============================================================================
+
+model Conversation {
+  id                     String             @id @db.Uuid
+  tenantId               String             @map("tenant_id") @db.Uuid
+  contactId              String             @map("contact_id") @db.Uuid
+  channel                String             @default("whatsapp")
+  externalConversationId String             @map("external_conversation_id")
+  status                 ConversationStatus
+  lastMessageAt          DateTime?          @map("last_message_at") @db.Timestamptz(6)
+  openedAt               DateTime           @map("opened_at") @db.Timestamptz(6)
+  closedAt               DateTime?          @map("closed_at") @db.Timestamptz(6)
+  assignedToUserId       String?            @map("assigned_to_user_id") @db.Uuid
+  createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant    @relation(fields: [tenantId], references: [id])
+  contact        Contact   @relation(fields: [contactId], references: [id])
+  assignedToUser User?     @relation(fields: [assignedToUserId], references: [id])
+  messages       Message[]
+
+  // @@unique([tenantId, externalConversationId]) already covers tenantId-only lookups — no bare index added.
+  @@unique([tenantId, externalConversationId])
+  @@map("conversations")
+}
+
+model Message {
+  id                String           @id @db.Uuid
+  tenantId          String           @map("tenant_id") @db.Uuid
+  conversationId    String           @map("conversation_id") @db.Uuid
+  contactId         String           @map("contact_id") @db.Uuid
+  direction         MessageDirection
+  messageType       MessageType      @map("message_type")
+  externalMessageId String           @map("external_message_id")
+  templateId        String?          @map("template_id") @db.Uuid
+  // Never clinical content — truncated preview only.
+  bodyPreview       String?          @map("body_preview") @db.VarChar(280)
+  mediaUrl          String?          @map("media_url")
+  status            MessageStatus
+  failureReason     String?          @map("failure_reason")
+  billable          Boolean
+  billingCategory   MessageCategory  @map("billing_category")
+  sentAt            DateTime         @map("sent_at") @db.Timestamptz(6)
+  deliveredAt       DateTime?        @map("delivered_at") @db.Timestamptz(6)
+  readAt            DateTime?        @map("read_at") @db.Timestamptz(6)
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant       Tenant           @relation(fields: [tenantId], references: [id])
+  conversation Conversation     @relation(fields: [conversationId], references: [id])
+  contact      Contact          @relation(fields: [contactId], references: [id])
+  template     MessageTemplate? @relation(fields: [templateId], references: [id])
+  // Every action the AI agent took because of this message (§12 rule 3). ON DELETE RESTRICT on
+  // the audit side means a message that caused an audited action can no longer be deleted, which
+  // is the correct direction for an append-only trail: the evidence outlives the convenience.
+  auditLogs    AuditLog[]
+
+  @@unique([tenantId, externalMessageId])
+  @@index([tenantId, conversationId, createdAt])
+  @@map("messages")
+}
+
+model MessageTemplate {
+  id                   String                 @id @db.Uuid
+  tenantId             String?                @map("tenant_id") @db.Uuid // null = platform-wide
+  name                 String
+  externalTemplateName String                 @map("external_template_name")
+  language             String
+  category             MessageCategory
+  bundles              String[]
+  body                 String
+  variables            Json
+  metaApprovalStatus   TemplateApprovalStatus @map("meta_approval_status")
+  approvedAt           DateTime?              @map("approved_at") @db.Timestamptz(6)
+  isActive             Boolean                @default(true) @map("is_active")
+  createdAt            DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant   Tenant?   @relation(fields: [tenantId], references: [id])
+  messages Message[]
+
+  @@index([tenantId])
+  @@map("message_templates")
+}
+
+model FollowupTask {
+  id                     String         @id @db.Uuid
+  tenantId               String         @map("tenant_id") @db.Uuid
+  patientId              String         @map("patient_id") @db.Uuid
+  doctorId               String         @map("doctor_id") @db.Uuid
+  visitId                String         @map("visit_id") @db.Uuid
+  treatmentPlanId        String?        @map("treatment_plan_id") @db.Uuid
+  dueDate                DateTime       @map("due_date") @db.Date
+  status                 FollowupStatus
+  attempts               Int            @default(0)
+  sentAt                 DateTime?      @map("sent_at") @db.Timestamptz(6)
+  respondedAt            DateTime?      @map("responded_at") @db.Timestamptz(6)
+  resultingAppointmentId String?        @map("resulting_appointment_id") @db.Uuid
+  expiresAt              DateTime       @map("expires_at") @db.Timestamptz(6)
+  createdAt              DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant               Tenant         @relation(fields: [tenantId], references: [id])
+  patient              Patient        @relation(fields: [patientId], references: [id])
+  doctor               Doctor         @relation(fields: [doctorId], references: [id])
+  visit                Visit          @relation(fields: [visitId], references: [id])
+  treatmentPlan        TreatmentPlan? @relation(fields: [treatmentPlanId], references: [id])
+  resultingAppointment Appointment?   @relation(fields: [resultingAppointmentId], references: [id])
+
+  @@index([tenantId, status, dueDate])
+  @@map("followup_tasks")
+}
+
+// ============================================================================
+// Auth — refresh tokens (NOT tenant-scoped — belongs to global user identity)
+// ============================================================================
+
+model RefreshToken {
+  id            String    @id @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  membershipId  String?   @map("membership_id") @db.Uuid
+  tokenHash     String    @unique @map("token_hash")
+  familyId      String    @map("family_id") @db.Uuid
+  parentTokenId String?   @map("parent_token_id") @db.Uuid
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedReason String?   @map("revoked_reason")
+  ipAddress     String    @map("ip_address")
+  userAgent     String    @map("user_agent")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user        User           @relation(fields: [userId], references: [id])
+  membership  Membership?    @relation(fields: [membershipId], references: [id])
+  parentToken RefreshToken?  @relation("RefreshTokenLineage", fields: [parentTokenId], references: [id])
+  childTokens RefreshToken[] @relation("RefreshTokenLineage")
+
+  @@index([userId, familyId])
+  @@map("refresh_tokens")
+}
+
+// ============================================================================
+// Attachments — tenant-scoped, RLS-protected, never hard-deleted
+// ============================================================================
+
+/**
+ * A notification. Its own table rather than a view over `audit_logs` — PHASE-2.md §16.
+ * Four reasons in short: `audit_logs` is append-only so read state cannot live there; it is written
+ * by a trigger that knows a row changed but not *why* (a reschedule and a cancellation are both
+ * UPDATE on appointments); its JSONB snapshots carry clinical content; and its retention is a
+ * compliance question while notifications are prunable UI state.
+ * Written by the appointments service in the SAME transaction as the change it describes, so a
+ * booking that rolls back cannot leave a notification claiming it happened.
+ */
+model Notification {
+  id            String            @id @db.Uuid
+  tenantId      String            @map("tenant_id") @db.Uuid
+  kind          NotificationKind
+  appointmentId String?           @map("appointment_id") @db.Uuid
+  patientId     String?           @map("patient_id") @db.Uuid
+  actorUserId   String            @map("actor_user_id") @db.Uuid
+  /**
+   * Where the change came from — reception, the doctor, or the WhatsApp agent.
+   */
+  source        AppointmentSource
+  occurredAt    DateTime          @map("occurred_at") @db.Timestamptz(6)
+  /**
+   * Only what the list renders: a patient's display name, a time. NEVER clinical content — this is
+   * read by reception, and CLAUDE.md separates clinical content by endpoint and DTO rather than by
+   * remembering to leave it out.
+   */
+  payload       Json
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant      Tenant             @relation(fields: [tenantId], references: [id])
+  appointment Appointment?       @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+  patient     Patient?           @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  actorUser   User               @relation(fields: [actorUserId], references: [id])
+  reads       NotificationRead[]
+
+  @@index([tenantId, occurredAt])
+  @@map("notifications")
+}
+
+/**
+ * Who has read what. **Per membership, not per user.**
+ * A person can hold memberships in two clinics (§4 — the seeded دينا does), so per-user read state
+ * would mark a notification read at one clinic by reading it at the other.
+ * A table rather than a column on `notifications`, because one notification has many recipients —
+ * reception, admin and the doctor may all see one booking — and a single column cannot hold three
+ * people's read state.
+ */
+model NotificationRead {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  notificationId String   @map("notification_id") @db.Uuid
+  membershipId   String   @map("membership_id") @db.Uuid
+  readAt         DateTime @default(now()) @map("read_at") @db.Timestamptz(6)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Restrict)
+  membership   Membership   @relation(fields: [membershipId], references: [id], onDelete: Restrict)
+
+  @@unique([notificationId, membershipId])
+  @@index([tenantId, membershipId])
+  @@map("notification_reads")
+}
+
+model Attachment {
+  id               String             @id @db.Uuid
+  tenantId         String             @map("tenant_id") @db.Uuid
+  patientId        String             @map("patient_id") @db.Uuid
+  visitId          String?            @map("visit_id") @db.Uuid
+  uploadedByUserId String             @map("uploaded_by_user_id") @db.Uuid
+  fileName         String             @map("file_name")
+  storageKey       String             @map("storage_key")
+  mimeType         String             @map("mime_type")
+  sizeBytes        Int                @map("size_bytes")
+  category         AttachmentCategory
+  description      String?
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  archivedAt       DateTime?          @map("archived_at") @db.Timestamptz(6)
+
+  tenant         Tenant  @relation(fields: [tenantId], references: [id])
+  patient        Patient @relation(fields: [patientId], references: [id])
+  visit          Visit?  @relation(fields: [visitId], references: [id])
+  uploadedByUser User    @relation(fields: [uploadedByUserId], references: [id])
+
+  @@index([tenantId, patientId])
+  @@map("attachments")
+}
+
+/// Kinship between two patients — Q30. Distinct from D28's household, which is a shared phone.
+/// Both directions are stored as separate rows, written and deleted as a pair by the service.
+model PatientRelation {
+  id               String         @id @db.Uuid
+  tenantId         String         @map("tenant_id") @db.Uuid
+  patientId        String         @map("patient_id") @db.Uuid
+  relatedPatientId String         @map("related_patient_id") @db.Uuid
+  relation         PatientKinship
+  createdByUserId  String         @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant  @relation(fields: [tenantId], references: [id])
+  patient        Patient @relation("PatientRelationFrom", fields: [patientId], references: [id])
+  relatedPatient Patient @relation("PatientRelationTo", fields: [relatedPatientId], references: [id])
+  createdByUser  User    @relation(fields: [createdByUserId], references: [id])
+
+  @@unique([patientId, relatedPatientId])
+  @@index([tenantId, patientId])
+  @@map("patient_relations")
+}
+
+enum PatientKinship {
+  HUSBAND
+  WIFE
+  SON
+  DAUGHTER
+  FATHER
+  MOTHER
+  /// Used when the reciprocal cannot be derived — the other patient has no recorded sex.
+  RELATIVE
+}
+
+/// Patient-level clinical content, APPEND-ONLY — PHASE-4.md Q22. Its own table, never columns on
+/// `patients`, which reception reads. Allergies stay in `patient_allergies`, the one list.
+///
+/// Any doctor may add an entry; nobody edits or deletes one. Enforced by a BEFORE UPDATE OR DELETE
+/// trigger (D5), not by the service, because a service check passes on a database that never got it.
+model PatientClinicalProfileEntry {
+  id           String               @id @db.Uuid
+  tenantId     String               @map("tenant_id") @db.Uuid
+  patientId    String               @map("patient_id") @db.Uuid
+  field        ClinicalProfileField
+  /// Free text, stored byte-identical. Clinical content is never normalised.
+  content      String
+  authorUserId String               @map("author_user_id") @db.Uuid
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant     Tenant  @relation(fields: [tenantId], references: [id])
+  patient    Patient @relation(fields: [patientId], references: [id])
+  authorUser User    @relation(fields: [authorUserId], references: [id])
+
+  @@index([tenantId, patientId, createdAt])
+  @@map("patient_clinical_profile_entries")
+}
+
+/// Known allergies — asserted, not derived.
+///
+/// Chronic medication is deliberately NOT modelled here. It is derived from prescription items at
+/// query time so that it cannot go stale: a mirrored field would diverge the first time a doctor
+/// changed a dose in a prescription without updating the copy, and a stale medication list in a
+/// safety summary is worse than an empty one because it will be trusted. See PHASE-4.md.
+model PatientAllergy {
+  id               String          @id @db.Uuid
+  tenantId         String          @map("tenant_id") @db.Uuid
+  patientId        String          @map("patient_id") @db.Uuid
+  /// Free text, stored byte-identical. Clinical content is never normalised.
+  substance        String
+  /// Ready for a coded catalogue without a rewrite. NULL until one exists — never invented.
+  substanceCode    String?         @map("substance_code")
+  codeSystem       String?         @map("code_system")
+  reaction         String?
+  severity         AllergySeverity
+  status           AllergyStatus   @default(ACTIVE)
+  notes            String?
+  recordedByUserId String          @map("recorded_by_user_id") @db.Uuid
+  recordedAt       DateTime        @default(now()) @map("recorded_at") @db.Timestamptz(6)
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant  @relation(fields: [tenantId], references: [id])
+  patient        Patient @relation(fields: [patientId], references: [id])
+  recordedByUser User    @relation(fields: [recordedByUserId], references: [id])
+
+  @@index([tenantId, patientId])
+  @@map("patient_allergies")
+}
+
+enum AllergySeverity {
+  MILD
+  MODERATE
+  SEVERE
+  LIFE_THREATENING
+}
+
+enum AllergyStatus {
+  ACTIVE
+  RESOLVED
+  /// Recorded in error. Kept rather than deleted, and excluded from the summary.
+  ENTERED_IN_ERROR
+}
+
+/// Patient care transfers (PHASE-3.md Q16/Q17/Q21, SCHEMA-DECISIONS.md D24).
+///
+/// **There is deliberately no expiry column.** A grant is active when `status` is `ACCEPTED` and
+/// `now < decidedAt + window`, compared on every read. See D24 before adding a cleanup job.
+model PatientTransfer {
+  id                      String         @id @db.Uuid
+  tenantId                String         @map("tenant_id") @db.Uuid
+  patientId               String         @map("patient_id") @db.Uuid
+  fromDoctorId            String         @map("from_doctor_id") @db.Uuid
+  toDoctorId              String         @map("to_doctor_id") @db.Uuid
+  /// The occasion. LAPSED is decided from this appointment's status.
+  appointmentId           String         @map("appointment_id") @db.Uuid
+  status                  TransferStatus @default(PENDING)
+  reason                  String?
+  initiatedByMembershipId String         @map("initiated_by_membership_id") @db.Uuid
+  decidedByMembershipId   String?        @map("decided_by_membership_id") @db.Uuid
+  /// The instant the access window is measured from. NULL exactly while PENDING (CHECK enforced).
+  decidedAt               DateTime?      @map("decided_at") @db.Timestamptz(6)
+  decisionNote            String?        @map("decision_note")
+  createdAt               DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id])
+  patient     Patient     @relation(fields: [patientId], references: [id])
+  fromDoctor  Doctor      @relation("TransferFrom", fields: [fromDoctorId], references: [id])
+  toDoctor    Doctor      @relation("TransferTo", fields: [toDoctorId], references: [id])
+  appointment Appointment @relation(fields: [appointmentId], references: [id])
+  initiatedBy Membership  @relation("TransferInitiatedBy", fields: [initiatedByMembershipId], references: [id])
+  decidedBy   Membership? @relation("TransferDecidedBy", fields: [decidedByMembershipId], references: [id])
+
+  /// The partial unique index (`WHERE status = 'PENDING'`) lives in prisma/sql/19 -- Prisma cannot
+  /// express a partial unique constraint, and it is what makes "one open request per patient"
+  /// unwinnable rather than merely unlikely.
+  @@index([tenantId, status])
+  @@index([tenantId, toDoctorId, patientId, status])
+  @@index([tenantId, appointmentId])
+  @@map("patient_transfers")
+}
+
+/// What a completed visit costs -- PHASE-5-DESIGN.md 4.1. Not `Invoice`: that name is taken by
+/// SaaS subscription billing, and two unrelated things one word apart is a query waiting to go wrong.
+model VisitCharge {
+  id                         String       @id @db.Uuid
+  tenantId                   String       @map("tenant_id") @db.Uuid
+  visitId                    String       @unique @map("visit_id") @db.Uuid
+  patientId                  String       @map("patient_id") @db.Uuid
+  status                     ChargeStatus @default(OPEN)
+  subtotalMinor              Int          @default(0) @map("subtotal_minor")
+  discountMinor              Int          @default(0) @map("discount_minor")
+  discountReason             String?      @map("discount_reason")
+  /// What an insurer or employer is expected to pay. Set by hand: no coverage rate exists (4.2).
+  payerShareMinor            Int          @default(0) @map("payer_share_minor")
+  /// Who allowed a discount above the ceiling. Null means nobody had to (ruling 4).
+  discountAuthorisedByUserId String?      @map("discount_authorised_by_user_id") @db.Uuid
+  /// The clinic's ceiling as it stood when this charge was written. A CHECK cannot reach another
+  /// table, and raising the ceiling next year must not retroactively authorise an old discount.
+  ceilingPercentSnapshot     Int?         @map("ceiling_percent_snapshot")
+  ceilingMinorSnapshot       Int?         @map("ceiling_minor_snapshot")
+  createdAt                  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant               Tenant            @relation(fields: [tenantId], references: [id])
+  visit                Visit             @relation(fields: [visitId], references: [id])
+  patient              Patient           @relation(fields: [patientId], references: [id])
+  discountAuthorisedBy User?             @relation("ChargeDiscountAuthorisedBy", fields: [discountAuthorisedByUserId], references: [id])
+  lines                VisitChargeLine[]
+  payments             Payment[]
+  creditsApplied       PatientCredit[]
+
+  /// The patient's share and the balance are NOT columns: they are computed by the
+  /// `visit_charge_balances` view (D7 as amended -- database-computed, not necessarily GENERATED).
+  @@index([tenantId, status])
+  @@map("visit_charges")
+}
+
+/// One procedure or material on a charge, with its name and price frozen at completion.
+model VisitChargeLine {
+  id               String           @id @db.Uuid
+  tenantId         String           @map("tenant_id") @db.Uuid
+  chargeId         String           @map("charge_id") @db.Uuid
+  nameSnapshot     String           @map("name_snapshot")
+  unitPriceMinor   Int              @map("unit_price_minor")
+  quantity         Int              @default(1)
+  source           ChargeLineSource
+  /// R1: set on an ADJUSTMENT line only — the doctor who moved the total. The reason and the
+  /// instant live on the visit the adjustment was made against.
+  adjustedByUserId String?          @map("adjusted_by_user_id") @db.Uuid
+  serviceId        String?          @map("service_id") @db.Uuid
+  materialId       String?          @map("material_id") @db.Uuid
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant     Tenant              @relation(fields: [tenantId], references: [id])
+  charge     VisitCharge         @relation(fields: [chargeId], references: [id])
+  service    Service?            @relation(fields: [serviceId], references: [id])
+  material   ChargeableMaterial? @relation(fields: [materialId], references: [id])
+  adjustedBy User?               @relation("ChargeLineAdjustedBy", fields: [adjustedByUserId], references: [id])
+
+  /// A CHECK keeps `source` in step with which of the two ids is set; see the migration.
+  @@index([tenantId, chargeId])
+  @@map("visit_charge_lines")
+}
+
+/// Materials a visit can be charged for. Deliberately not rows in `services`: a material has no
+/// duration and is not bookable, and putting it there gives the slot engine rows to ignore.
+model ChargeableMaterial {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  nameAr     String   @map("name_ar")
+  nameEn     String?  @map("name_en")
+  unit       String
+  priceMinor Int      @map("price_minor")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant Tenant            @relation(fields: [tenantId], references: [id])
+  lines  VisitChargeLine[]
+
+  @@index([tenantId, isActive])
+  @@map("chargeable_materials")
+}
+
+/// Clinic credit, ruling 5. One row per movement; the balance is a view, never a stored number.
+model PatientCredit {
+  id              String         @id @db.Uuid
+  tenantId        String         @map("tenant_id") @db.Uuid
+  patientId       String         @map("patient_id") @db.Uuid
+  movement        CreditMovement
+  /// Always positive. The direction is the movement — a signed amount invites a sum that nets two
+  /// different events, and "never forfeited" has to be readable from the rows.
+  amountMinor     Int            @map("amount_minor")
+  /// Required for a refund, by CHECK: a refund nobody stated a reason for is one somebody has to
+  /// explain a year later.
+  reason          String?
+  actorUserId     String         @map("actor_user_id") @db.Uuid
+  /// Where the credit came from: an unallocated payment, or the part of one that exceeded the bill.
+  sourcePaymentId String?        @map("source_payment_id") @db.Uuid
+  /// The charge this movement settled.
+  appliedChargeId String?        @map("applied_charge_id") @db.Uuid
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant        Tenant       @relation(fields: [tenantId], references: [id])
+  patient       Patient      @relation(fields: [patientId], references: [id])
+  actorUser     User         @relation(fields: [actorUserId], references: [id])
+  sourcePayment Payment?     @relation(fields: [sourcePaymentId], references: [id])
+  appliedCharge VisitCharge? @relation(fields: [appliedChargeId], references: [id])
+
+  @@index([tenantId, patientId])
+  @@index([tenantId, appliedChargeId])
+  @@index([tenantId, sourcePaymentId])
+  @@map("patient_credits")
+}
+
+enum CreditMovement {
+  CREDIT
+  APPLIED
+  REFUNDED
+}
+
+enum ChargeStatus {
+  OPEN
+  SETTLED
+  VOID
+}
+
+enum ChargeLineSource {
+  CATALOGUE
+  AD_HOC
+  MATERIAL
+  /// R1: a signed line moving the total, written instead of editing a snapshotted one.
+  ADJUSTMENT
+}

@@ -1,0 +1,33 @@
+-- Phase 2 — adds CONSULTATION to ServiceType.
+--
+-- Salvaged from PR #20 (`feature/doctors-services-schedules`) when that branch was closed. Its
+-- three-module rewrite of doctors/services/schedules was superseded by what landed in PR #22 and
+-- is covered by tests there; this migration was the one thing on it that nothing else carried, so
+-- it is kept rather than lost with the branch.
+--
+-- Renumbered from 13 to 16: `13-scheduling-and-ai-actor.sql` took that slot on develop while #20
+-- sat open. The SQL below is unchanged from the original.
+--
+-- SCHEMA-DECISIONS.md D8 is the authoritative enum list and recorded three values:
+-- NEW | FOLLOW_UP | PROCEDURE. The founder specified four on 2026-08-27 —
+-- NEW كشف, CONSULTATION استشارة, FOLLOW_UP إعادة كشف, PROCEDURE إجراء آخر — so this
+-- migration amends D8 rather than diverging from it quietly. The amendment is recorded in that
+-- document too; a schema that disagrees with D8 is worse than either version alone, because D8 is
+-- what the next person will read.
+--
+-- WHY THE VALUE IS PLACED, NOT APPENDED
+--
+-- `ADD VALUE ... AFTER 'NEW'` puts CONSULTATION second in the type's declared order rather than
+-- last. Postgres sorts enum columns by that order, so anything that ever does `ORDER BY type` gets
+-- the clinical sequence a receptionist expects — new visit, consultation, follow-up, procedure —
+-- rather than the order the values happened to be added in. Enum ordering cannot be changed later
+-- without recreating the type, so it is worth one word now.
+--
+-- WHY THIS MIGRATION DOES NOTHING ELSE
+--
+-- `ALTER TYPE ... ADD VALUE` and any use of the new value cannot share a transaction in
+-- PostgreSQL. Prisma wraps migration.sql in one, so a migration that added the value AND inserted
+-- a row using it would fail with "unsafe use of new value". Adding the value alone is safe;
+-- anything that writes CONSULTATION belongs in a later migration or in application code.
+
+ALTER TYPE "ServiceType" ADD VALUE IF NOT EXISTS 'CONSULTATION' AFTER 'NEW';

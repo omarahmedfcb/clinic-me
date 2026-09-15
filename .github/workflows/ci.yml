@@ -1,0 +1,218 @@
+name: CI
+
+# CI ran only on pushes to develop until 2026-08-25, which meant it could not gate anything: the
+# first report on a change arrived after the shared branch was already carrying it.
+#
+# `"**"` rather than a list of prefixes. The first attempt at this fix listed develop, feature/**
+# and fix/**, matching CLAUDE.md's branch convention -- and the very next branch was named
+# docs/..., got no run, and looked exactly like a branch whose CI had not finished yet. A gate that
+# depends on naming the branch correctly is not a gate, and its failure mode is silence, which is
+# the one this project keeps paying for. Every push is checked; nothing has to be remembered.
+#
+# The cost is accepted knowingly: a branch with an open PR runs twice per push, once from `push`
+# and once from `pull_request`. They have different refs, so a concurrency group would not collapse
+# them. That is about a minute of runner time on a private repo, against a class of silent gap.
+#
+# workflow_dispatch allows forcing a run without inventing a commit -- needed when a run failed for
+# a reason outside the code (a flaky service container, a GitHub incident) and the question is
+# whether it still fails, not what changed.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [develop]
+  workflow_dispatch:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    # Service containers start before any job step (including checkout) runs, so they cannot
+    # mount a file from the checked-out repo (docker/postgres-init, which docker-compose.yml
+    # uses locally, isn't available yet at this point). CI only ever needs the one database
+    # integration tests connect to, so POSTGRES_DB creates clinic_os_test directly instead --
+    # there is no local-machine "dev database" concept in an ephemeral CI run.
+    #
+    # POSTGRES_HOST_AUTH_METHOD / POSTGRES_INITDB_ARGS mirror docker-compose.yml exactly
+    # (SCHEMA-DECISIONS.md D13): without them, initdb's default trust rules for loopback
+    # connections sit ahead of the entrypoint's scram-sha-256 rule, and
+    # connection-security.integration.spec.ts's wrong-password-is-rejected test would pass for
+    # the wrong reason (nothing was ever checking the password) or fail outright.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: clinic_os
+          POSTGRES_PASSWORD: ci-only-password-not-a-secret
+          POSTGRES_DB: clinic_os_test
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+          POSTGRES_INITDB_ARGS: "--auth-local=scram-sha-256 --auth-host=scram-sha-256"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U clinic_os -d clinic_os_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # clinic_os_app's password is set by test/integration/globalSetup.ts on every run (it has
+      # no password until then -- SCHEMA-DECISIONS.md D12/D13, no secret in a checked-in
+      # migration file), so this value only has to match what globalSetup.ts sets it to, not be
+      # kept secret -- it is discarded with the ephemeral service container at the end of the job.
+      TEST_DATABASE_URL: postgresql://clinic_os:ci-only-password-not-a-secret@localhost:5432/clinic_os_test?schema=public
+      TEST_APP_DATABASE_URL: postgresql://clinic_os_app:ci-only-app-password-not-a-secret@localhost:5432/clinic_os_test?schema=public
+
+    defaults:
+      run:
+        working-directory: apps/api
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: apps/api/package-lock.json
+
+      - run: npm ci
+
+      # src/generated/prisma is gitignored (SCHEMA-DECISIONS.md D10) -- nothing past this step
+      # compiles without it. prisma generate does not need a reachable database (verified: it
+      # succeeds even against an unroutable DATABASE_URL), so TEST_DATABASE_URL above is enough.
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      # A literal, not a repo secret, for the same reason POSTGRES_PASSWORD above is one: it signs
+      # tokens that live for milliseconds inside one ephemeral container and is never a production
+      # key. A repo secret would also be unavailable to fork PRs, breaking CI there for no gain.
+      # The name is chosen so it cannot be mistaken for a real credential by a human or a scanner.
+      - run: npm run test:integration
+        env:
+          JWT_SECRET: ci-only-jwt-secret-not-a-secret
+          SLOT_TOKEN_SECRET: ci-only-slot-token-secret-not-a-secret
+          # `--runInBand` puts every integration suite in one process, deliberately: they share one
+          # database and would collide otherwise. Node's default ceiling is ~2 GB and the suite
+          # crossed it at 66 suites — aborting with every suite passing, which reads as a flake
+          # rather than as a limit. The runner has 16 GB; 4 GB is headroom, not a workaround.
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      # The seed is not covered by any test suite, and on 2026-08-26 a migration that added a CHECK
+      # constraint broke it -- `npm run seed` failed with 23514 on the first row, and nothing
+      # noticed, because CI had never run it. It is the only exercise of the full write path
+      # (extension, RLS, audit triggers, every table) against a real migrated database, and a
+      # developer whose seed does not run cannot start.
+      #
+      # It runs LAST, after the integration suite, so seeded rows cannot influence a test. It uses
+      # the same clinic_os_test database: the seed refuses to run twice, so this also proves the
+      # already-seeded path does not error.
+      - name: Seed a real database
+        run: npm run seed
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+          APP_DATABASE_URL: ${{ env.TEST_APP_DATABASE_URL }}
+
+      - run: npm run build
+
+  # ---------------------------------------------------------------------------------------------
+  # apps/web — a SECOND job, because until 2026-09-02 CI did not touch the frontend at all.
+  #
+  # Not "CI never built anything": the job above has run `npm run build` for apps/api all along.
+  # What was missing is narrower and worse — **`apps/web` appeared nowhere in this file.** No
+  # `npm ci`, no typecheck, no build. A frontend that did not compile could reach `develop`, and
+  # the only thing between that and a merge was whoever last ran the commands by hand.
+  #
+  # A separate job rather than more steps above, because it shares nothing with that one: its own
+  # lockfile, its own node_modules, no database, no Prisma client. Running in parallel also means a
+  # frontend break is reported in about a minute rather than behind the integration suite.
+  #
+  # **What this does NOT catch, said plainly so nobody believes the loop is closed.** It would not
+  # have caught the crash of 2026-09-02: that source compiled perfectly, and the fault was a *stale
+  # artefact* — a built bundle and a built API from different commits. Compilation cannot see that;
+  # `preview:fresh`, `start:fresh` and `PHASE-4.md` §0 are what address it. This job closes a
+  # different and previously uncovered class: code that does not build at all, and type errors in a
+  # tree nothing was typechecking.
+  web:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: apps/web/package-lock.json
+
+      - run: npm ci
+
+      # Typechecked explicitly as well as through the build. `npm run build` is
+      # `tsc -b && vite build`, so a type error already fails it — but named separately the log
+      # says *which* half failed, and a later change to the build script cannot quietly drop the
+      # typecheck with nothing noticing.
+      - run: npm run typecheck
+
+      # The component tests — vitest + @testing-library/react in jsdom, added 2026-09-06.
+      #
+      # **This job is why they exist here rather than under apps/api.** The API job runs its own
+      # `npm ci` inside `apps/api`, so `apps/web/node_modules` is not on that runner at all: a spec
+      # there cannot import a `.tsx` file or resolve this app's React, which is how a password-toggle
+      # test came to pass locally and fail on CI. A runner beside the code it tests has the app's own
+      # React, its own JSX pipeline and a DOM.
+      #
+      # Before `build`, deliberately. A failing assertion is a more useful first word than a failing
+      # bundle, and vitest finishes in seconds.
+      - run: npm test
+
+      # The build itself. `vite build` does work `tsc` never does — resolving every import, running
+      # the Tailwind and React plugins, emitting CSS — so it fails on things a typecheck passes,
+      # which is exactly the gap this job exists for.
+      - run: npm run build
+
+      # Chromium for the smoke test below.
+      #
+      # **A separate step on purpose, and it must not be `|| true`.** If the download fails, this
+      # step fails and the job stops — the alternative is `npm run smoke` skipping itself and CI
+      # going green while nothing ran a browser, which is the failure shape this project has found
+      # in its own tooling five times. `--with-deps` installs the system libraries Chromium needs on
+      # a bare ubuntu runner; without it the browser is present and cannot launch.
+      #
+      # The runner image ships Google's Chrome apt source, and `--with-deps` runs `apt-get update`,
+      # which fails the whole step when that third-party index is inconsistent — as it was on
+      # 2026-09-09, twice, with `Hash Sum mismatch` on `dl.google.com`. Playwright downloads its own
+      # Chromium and needs only Ubuntu's own libraries, so the source is removed first. This is not
+      # a `|| true` in disguise: every failure that is actually about installing a browser still
+      # fails the step and stops the job.
+      # Any extension: the runner image has used both `google-chrome.list` and, since the deb822
+      # change, `google-chrome.sources`. Removing only the first left the step failing identically.
+      - run: sudo rm -f /etc/apt/sources.list.d/*google*
+      - run: npx playwright install --with-deps chromium
+
+      # **The layer nothing had: the built bundle, executed in a real browser.**
+      #
+      # Between "it compiles" and "it renders" there is a gap that had swallowed a bug for two
+      # review cycles — 062ae51, every route blank because a plugin injected its preamble into a
+      # comment, with compilation perfectly happy throughout.
+      #
+      # `smoke.spec.ts` stays deliberately narrow: load the routes, assert the app mounted and threw
+      # nothing. No content assertions there, ever — the moment it checks what a screen *says* it
+      # becomes a second suite duplicating the first, and it rots.
+      #
+      # `print-and-layout.spec.ts` joined it on 2026-09-09, approved by the founder, and is the one
+      # exception with a stated boundary: it asserts only what jsdom is structurally incapable of
+      # evaluating — the `@media print` cascade, and layout geometry. Both are properties of a real
+      # rendering engine, not of a screen's wording, so neither can duplicate a unit test.
+      #
+      # The server builds its own bundle before serving, so this can never test a stale `dist/`.
+      - run: npm run smoke

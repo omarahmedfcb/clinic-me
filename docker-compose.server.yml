@@ -1,0 +1,107 @@
+# Server deployment. NOT the file you use on a laptop -- that is docker-compose.yml.
+#
+# The differences are not cosmetic, and each exists because the laptop version would be a hole on
+# a machine with a public IP. See docs/DEPLOY.md for the full brief.
+#
+#   1. NO PUBLISHED DATABASE PORTS. docker-compose.yml publishes 5432 and 6379 so a developer can
+#      reach them from the host. Here they are absent entirely: Postgres is reachable only from
+#      other containers on this network. Publishing them on a server means Postgres is on the
+#      internet.
+#   2. NO TEST DATABASE. docker/postgres-init creates clinic_os_test, which exists for the
+#      integration suite and has no business on a server.
+#   3. NO REDIS. Nothing in Phase 1 reads REDIS_PASSWORD; BullMQ arrives in Phase 6. A container
+#      that does nothing is still a container that can be misconfigured.
+#   4. MIGRATIONS ARE A SEPARATE SERVICE that runs to completion before the API starts.
+
+name: clinic-os
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      # Identical to the local compose file and for the same reason (SCHEMA-DECISIONS.md D13):
+      # without these, initdb's default trust rules for loopback sit ahead of the scram-sha-256
+      # rule and any in-container connection skips password verification entirely.
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+      POSTGRES_INITDB_ARGS: "--auth-local=scram-sha-256 --auth-host=scram-sha-256"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Deliberately no docker/postgres-init mount -- see note 2 above.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Runs `prisma migrate deploy` and exits. The API waits for it to succeed.
+  #
+  # This is the only service that connects as DATABASE_URL, the migration superuser -- the role
+  # with BYPASSRLS. Keeping it in its own short-lived container is what stops the long-running
+  # application from ever holding that connection string.
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+      target: migrator
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+      target: runtime
+    restart: unless-stopped
+    environment:
+      # APP_DATABASE_URL only. The application must never see DATABASE_URL (CLAUDE.md): that role
+      # bypasses every RLS policy, and client.ts throws on startup rather than falling back to it.
+      APP_DATABASE_URL: ${APP_DATABASE_URL:?set APP_DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      PORT: 3000
+      # Behind Caddy, so the client IP arrives in X-Forwarded-For. Without this the audit trail
+      # records the proxy's address on every row. See DEPLOY.md -- this is correctness, not config.
+      TRUST_PROXY: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS -- the public hostname, or :80 for a smoke test}
+      API_ORIGIN: http://api:3000
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      # Certificates and ACME account keys. Losing this volume means re-issuing on every restart,
+      # which Let's Encrypt rate-limits.
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

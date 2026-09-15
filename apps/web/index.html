@@ -1,0 +1,67 @@
+<!doctype html>
+<!--
+  lang and dir are set here, on the document, not toggled by JavaScript after mount.
+  Arabic RTL is the default state of this application (CLAUDE.md), so it must be true before the
+  first paint -- a direction applied later causes a visible left-to-right flash and, worse, lets
+  layout bugs hide behind a toggle nobody flips during review.
+
+  The attributes below are the DEFAULT, and the inline script in the document head may correct
+  them from the cached locale before anything paints (SCHEMA-DECISIONS.md D20). If that script is
+  ever removed, the app still renders -- in Arabic, for everyone.
+
+  DO NOT write the literal head tag inside a comment in this file. @vitejs/plugin-react injects its
+  Fast Refresh preamble by string-matching the FIRST occurrence of that opening tag, so a mention
+  of it in prose above the real one puts the preamble inside this comment, where it never runs.
+  Every route then renders blank in dev with "can't detect preamble", while the production build --
+  which has no preamble at all -- looks perfectly fine. That cost this project two rounds of
+  looking at a stale preview build instead of the bug.
+-->
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>معرض المكونات — Clinic OS</title>
+
+    <!--
+      Pre-paint direction stamp (SCHEMA-DECISIONS.md D20).
+
+      This runs before the stylesheet and before the module bundle, because direction has to be
+      correct on the first frame. A value from the database arrives after login, which is far too
+      late; the cache is the only thing that can answer this early, which is the entire reason it
+      exists. It is a bootstrap hint and nothing else -- once a session exists, the user row wins
+      and src/i18n/locale-store.ts overwrites this value.
+
+      The cached value is UNTRUSTED: localStorage is hand-editable, survives deploys, and can be
+      older than any code reading it. Anything that is not exactly "ar" or "en" falls back to
+      Arabic, silently -- an unrecognised value must never reach the dir attribute, because a
+      document in an undefined direction is an unreadable page, not a cosmetic problem.
+
+      The allowed values and the storage key are duplicated here: this is plain script in HTML and
+      cannot import the module that owns them. test/unit/web-locale.spec.ts extracts this script,
+      runs it against a fake storage, and asserts it agrees with parseLocale() on every input --
+      so the duplication cannot drift without failing the build.
+    -->
+    <script>
+      (function stampDirection() {
+        try {
+          var cached = window.localStorage.getItem("clinic-os.locale");
+          if (cached !== "ar" && cached !== "en") return;
+          document.documentElement.lang = cached;
+          document.documentElement.dir = cached === "ar" ? "rtl" : "ltr";
+        } catch (unavailable) {
+          // Storage can throw outright -- a private window, blocked site data, an embedded viewer.
+          // The document keeps the Arabic RTL default above. A language preference is never worth
+          // failing a page load over.
+        }
+      })();
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

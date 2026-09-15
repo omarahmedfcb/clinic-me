@@ -1,0 +1,56 @@
+{
+  "name": "@clinic-os/api",
+  "version": "0.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=24",
+    "npm": "11.19.0"
+  },
+  "scripts": {
+    "prisma:validate": "prisma validate",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "start:fresh": "npm run build && npm start",
+    "test": "jest --selectProjects unit",
+    "test:integration": "jest --selectProjects integration --runInBand",
+    "test:no-dotenv": "node scripts/run-without-dotenv.mjs unit",
+    "test:integration:no-dotenv": "node scripts/run-without-dotenv.mjs integration",
+    "seed": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON prisma/seed/index.ts",
+    "backfill:name-search-latin": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON prisma/backfill/name-search-latin.ts",
+    "routes": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/print-routes.ts",
+    "platform:admin": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/create-platform-admin.ts"
+  },
+  "dependencies": {
+    "@nestjs/common": "11.2.1",
+    "@nestjs/core": "11.2.1",
+    "@nestjs/platform-express": "11.2.1",
+    "@nestjs/throttler": "6.4.0",
+    "@node-rs/argon2": "2.1.0",
+    "@prisma/adapter-pg": "7.9.1",
+    "@prisma/client": "7.9.1",
+    "class-transformer": "0.5.1",
+    "class-validator": "0.14.2",
+    "cookie-parser": "1.4.7",
+    "dotenv": "17.4.2",
+    "jose": "6.2.10",
+    "libphonenumber-js": "1.12.24",
+    "pg": "8.23.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "uuidv7": "1.2.1"
+  },
+  "devDependencies": {
+    "@swc/core": "1.16.1",
+    "@swc/jest": "0.2.39",
+    "@types/cookie-parser": "1.4.9",
+    "@types/express": "5.0.6",
+    "@types/jest": "30.0.0",
+    "@types/node": "26.2.0",
+    "jest": "30.4.2",
+    "prisma": "7.9.1",
+    "typescript": "7.0.2"
+  }
+}

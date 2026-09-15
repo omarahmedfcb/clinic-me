@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1
+
+# The web app and its reverse proxy in one image.
+#
+# apps/web compiles to static files, so it needs a web server rather than a runtime -- and the
+# deployment already needs a reverse proxy in front of the API for TLS. Those are the same job, so
+# Caddy does both: it serves the SPA, proxies /api to the API container, and obtains and renews a
+# certificate on its own.
+#
+# The consequence worth knowing: the SPA and the API are then SAME-ORIGIN, so the browser sends no
+# cross-origin requests and CORS is not involved at all. That is a deliberate simplification -- it
+# also means the refresh cookie is same-site by construction rather than by configuration.
+
+ARG NODE_IMAGE=node:24.13.0-bookworm-slim
+# Pinned. Caddy changes its automatic-HTTPS behaviour between minors, and "it renewed itself
+# differently after a rebuild" is not a thing to debug on a clinical system.
+ARG CADDY_IMAGE=caddy:2.10.2-alpine
+
+
+FROM ${NODE_IMAGE} AS build
+WORKDIR /app
+COPY apps/web/package.json apps/web/package-lock.json ./
+RUN npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000
+COPY apps/web/ ./
+RUN npm run build
+
+
+FROM ${CADDY_IMAGE} AS runtime
+
+COPY docker/Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /app/dist /srv
+
+# Caddy's own image runs as root so it can bind 80/443 and write its certificate store. That is
+# the supported configuration; dropping privileges here breaks ACME renewal. The container has no
+# application code in it and no database credentials -- see DEPLOY.md.
+
+EXPOSE 80 443

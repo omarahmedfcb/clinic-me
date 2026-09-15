@@ -1,0 +1,3 @@
+# .nvmrc must check out with LF even on Windows. nvm reads this file as a bare version string,
+# and a trailing CR makes it read as "24\r", which does not match any installed version.
+.nvmrc text eol=lf
