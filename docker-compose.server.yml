@@ -65,10 +65,36 @@ services:
       # bypasses every RLS policy, and client.ts throws on startup rather than falling back to it.
       APP_DATABASE_URL: ${APP_DATABASE_URL:?set APP_DATABASE_URL}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      # Signs slot tokens. Read lazily, at the first booking rather than at boot, so a missing one
+      # used to surface as a failed booking in a clinic instead of a container that would not start.
+      # `:?` moves it to `docker compose up`, which is the only place it is cheap.
+      SLOT_TOKEN_SECRET: ${SLOT_TOKEN_SECRET:?set SLOT_TOKEN_SECRET}
       PORT: 3000
+
+      # Attachments. "local" writes to the volume mounted below; "s3" writes to object storage in
+      # the region the clinic's data lives in (docs/HOSTING.md). The API refuses to start when the
+      # backend is s3 and any setting below is empty, naming the variable — so these are forwarded
+      # unconditionally and the refusal happens once, in one place.
+      ATTACHMENTS_STORAGE_BACKEND: ${ATTACHMENTS_STORAGE_BACKEND:-local}
+      ATTACHMENTS_STORAGE_ROOT: ${ATTACHMENTS_STORAGE_ROOT:-/srv/clinic-os/attachments}
+      ATTACHMENTS_S3_ENDPOINT: ${ATTACHMENTS_S3_ENDPOINT:-}
+      ATTACHMENTS_S3_BUCKET: ${ATTACHMENTS_S3_BUCKET:-}
+      ATTACHMENTS_S3_REGION: ${ATTACHMENTS_S3_REGION:-}
+      ATTACHMENTS_S3_ACCESS_KEY_ID: ${ATTACHMENTS_S3_ACCESS_KEY_ID:-}
+      ATTACHMENTS_S3_SECRET_ACCESS_KEY: ${ATTACHMENTS_S3_SECRET_ACCESS_KEY:-}
+      ATTACHMENTS_S3_PREFIX: ${ATTACHMENTS_S3_PREFIX:-}
       # Behind Caddy, so the client IP arrives in X-Forwarded-For. Without this the audit trail
       # records the proxy's address on every row. See DEPLOY.md -- this is correctness, not config.
       TRUST_PROXY: "1"
+    # The local backend's files. A named volume, not a bind mount into the repository: a patient's
+    # scan inside the checkout is a scan a later `git add -A` commits, and DEPLOY.md §7 already
+    # records that `pg_dump` does not cover this — the backup archives it separately.
+    #
+    # Mounted whichever backend is selected. With "s3" nothing is written here, and an empty volume
+    # costs nothing; making the mount conditional would need two compose files to diverge, which is
+    # how the two drift.
+    volumes:
+      - attachments:/srv/clinic-os/attachments
     depends_on:
       postgres:
         condition: service_healthy
@@ -105,3 +131,4 @@ volumes:
   postgres_data:
   caddy_data:
   caddy_config:
+  attachments:

@@ -1,3 +1,4 @@
+import { BRAND } from "../../brand/brand.ts";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import { useSession } from "../auth/session.tsx";
 
@@ -43,6 +44,9 @@ export function SupportLink() {
   if (digits === "") return null;
 
   const message = t("shell.support.message")
+    // `{product}` rather than the name in the string table: the display name is spelled once, in
+    // `brand/brand.ts`, and `brand.spec.ts` fails when a second copy appears.
+    .replace("{product}", BRAND.name)
     .replace("{clinic}", me.memberships.find((m) => m.tenantId === me.tenantId)?.tenantName ?? "")
     .replace("{tenantId}", me.tenantId);
 

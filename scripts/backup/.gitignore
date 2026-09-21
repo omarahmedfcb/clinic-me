@@ -1,0 +1,6 @@
+# Artefacts the drill creates locally. An age identity in particular must never reach the repository,
+# so the pattern is by shape rather than by the one filename a script happened to use.
+drill-attachments/
+*-identity.txt
+*identity*.key
+*.age

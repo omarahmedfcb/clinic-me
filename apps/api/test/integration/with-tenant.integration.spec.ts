@@ -3,6 +3,7 @@ import { prisma } from "../../src/prisma/client.ts";
 import { injected } from "../../src/prisma/injected.ts";
 import { withTenant } from "../../src/prisma/with-tenant.ts";
 import { actorFor, createTestTenant, createTestUser, deleteTestTenant, deleteTestUser } from "./fixtures.ts";
+import { generateFixturePhone } from "../fixture-phone.ts";
 
 /**
  * Ports the withTenant() smoke script run by hand across the last three sessions (id/tenantId
@@ -41,7 +42,7 @@ describe("withTenant end-to-end", () => {
       tx.patient.create({
         data: injected({
           fullNameAr: "Patient A",
-          phoneE164: `+2012${randomUUID().replace(/-/g, "").slice(0, 8)}`,
+          phoneE164: generateFixturePhone(),
           relationshipToContact: "SELF",
           status: "ACTIVE",
         }),
@@ -58,7 +59,7 @@ describe("withTenant end-to-end", () => {
         tx.patient.create({
           data: injected({
             fullNameAr: "Sneaky",
-            phoneE164: `+2013${randomUUID().replace(/-/g, "").slice(0, 8)}`,
+            phoneE164: generateFixturePhone(),
             relationshipToContact: "SELF",
             status: "ACTIVE",
             // @ts-expect-error -- deliberate. injected() rejects a caller-supplied tenantId at
@@ -83,7 +84,7 @@ describe("withTenant end-to-end", () => {
         tx.patient.create({
           data: injected({
             fullNameAr: "Patient For Generated Column",
-            phoneE164: `+2014${randomUUID().replace(/-/g, "").slice(0, 8)}`,
+            phoneE164: generateFixturePhone(),
             relationshipToContact: "SELF",
             status: "ACTIVE",
             nameSearchAr: "written by hand",
@@ -99,7 +100,7 @@ describe("withTenant end-to-end", () => {
         tx.patient.create({
           data: injected({
             fullNameAr: "Nested Patient",
-            phoneE164: `+2015${randomUUID().replace(/-/g, "").slice(0, 8)}`,
+            phoneE164: generateFixturePhone(),
             relationshipToContact: "SELF",
             status: "ACTIVE",
             // @ts-expect-error -- deliberate, for the same reason as the tenantId case above: a

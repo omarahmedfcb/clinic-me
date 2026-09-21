@@ -1,3 +1,4 @@
+import { BRAND } from "../../brand/brand.ts";
 import { Card } from "../../design-system/display.tsx";
 import { ButtonsSection, FieldsSection, SpinnerSection } from "./sections/ControlsSection.tsx";
 import { BadgesSection, EmptyStateSection, EmptyTableSection, TableSection } from "./sections/DataSection.tsx";
@@ -16,7 +17,7 @@ export function GalleryPage() {
     <div className="min-h-screen bg-surface-sunken">
       <header className="border-b border-border bg-surface">
         <div className="mx-auto flex max-w-5xl flex-col gap-1 px-6 py-6">
-          <p className="text-xs font-medium text-primary">معرض المكونات — Clinic OS</p>
+          <p className="text-xs font-medium text-primary">{`معرض المكونات — ${BRAND.name}`}</p>
           <h1 className="text-xl font-bold text-ink">{CLINIC_NAME}</h1>
           <p className="text-sm text-ink-muted">{CLINIC_ADDRESS}</p>
           <p className="mt-1 text-xs text-ink-subtle">

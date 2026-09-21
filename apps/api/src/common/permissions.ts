@@ -28,10 +28,14 @@ import type { MembershipRole } from "../generated/prisma/client.ts";
  * failing test is the point: the first person to grant AI_AGENT anything has to delete an
  * assertion that says why they should not, which is where the conversation belongs.
  *
- * Note also that `patients.write` is too coarse for that eventual conversation. §12's registry
- * needs `find_patient_by_phone()` -- a read -- but this capability currently guards search, create
- * and read together, so granting the read would grant creation. Splitting it is Phase 7's problem,
- * recorded here because that is where someone will hit it.
+ * **This paragraph used to say `patients.write` guards search, create and read together, and it has
+ * been wrong since bbdabe1 (2026-09-06)** — the split it asked for happened then. Search and single
+ * patient reads are `patients.read`; `patients.write` is desk work: create, edit, relations,
+ * insurance. The stale note was read as current on 2026-09-18 and nearly bought a second split.
+ *
+ * What is still true is the reason it was written. A bot needs `find_patient_by_phone` and must not
+ * get `patients.read`, which also grants name search and any patient by id. That is a capability of
+ * its own, not a loosening of these — `patients-capability-boundary.spec.ts` pins the shape.
  */
 export const CAPABILITIES = [
   "clinicSettings.manage",
@@ -62,6 +66,15 @@ export const CAPABILITIES = [
   "payments.adjust",
   "reports.financial",
   "auditLog.read",
+  // The bot set, ruled 2026-09-18 (docs/WHATSAPP-BOT-CONTRACT.md §3). Held by AI_AGENT alone.
+  "bot.findPatientByPhone",
+  "bot.createProvisionalPatient",
+  "bot.listSlots",
+  "bot.book",
+  "bot.reschedule",
+  "bot.cancel",
+  "bot.readAppointmentStatus",
+  "bot.recordConsent",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -254,6 +267,27 @@ const MATRIX: Record<Capability, Record<MembershipRole, PermissionLevel>> = {
   "payments.adjust": { OWNER: FULL, ADMIN: FULL, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: NONE },
   "reports.financial": { OWNER: FULL, ADMIN: FULL, DOCTOR: OWN, RECEPTIONIST: NONE, AI_AGENT: NONE },
   "auditLog.read": { OWNER: FULL, ADMIN: FULL, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: NONE },
+
+  /**
+   * The bot set — `AI_AGENT` and nobody else, ruled 2026-09-18.
+   *
+   * **Not reused staff capabilities, and that is the decision.** `patients.read` would have covered
+   * the lookup, and it also grants name search and any patient by id; the contract forbids both, so
+   * the bot gets a capability that does one thing. Every row below is `NONE` for every human role
+   * for the same reason in reverse: a receptionist reaching a bot endpoint would be a second path
+   * to the same act with different refusals, and two paths drift.
+   *
+   * What the bot cannot hold is enforced by these rows being the only ones it has: no
+   * `visits.readContent`, no `prescriptions.*`, no `payments.*`, no `patients.browse`.
+   */
+  "bot.findPatientByPhone": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
+  "bot.createProvisionalPatient": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
+  "bot.listSlots": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
+  "bot.book": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
+  "bot.reschedule": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
+  "bot.cancel": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
+  "bot.readAppointmentStatus": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
+  "bot.recordConsent": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
 };
 
 export function permissionLevel(role: MembershipRole, capability: Capability): PermissionLevel {

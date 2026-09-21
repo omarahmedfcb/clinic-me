@@ -1,6 +1,7 @@
 // The structured blocks every printed sheet is built from — Q45's clinical-form layout.
 // English throughout and `dir="ltr"`: the paper does not follow the interface language.
 
+import { PoweredBy } from "../../brand/Logo.tsx";
 import { ageInYears } from "../../domain/age.ts";
 import type { ClinicIdentity, DoctorPrintIdentity } from "./clinic-identity-api.ts";
 import type { PatientHeader } from "./draft-api.ts";
@@ -138,10 +139,23 @@ export function PrintFooter({ clinic }: { clinic: ClinicIdentity | null }) {
       : `Comm. Reg. ${clinic.commercialRegisterNumber}`,
   ].filter((part) => part !== null);
 
-  if (parts.length === 0) return null;
+  /*
+   * **The credit line renders even when the clinic has filled in neither registration number.**
+   *
+   * Before the rebrand this whole block returned null in that case, which was right when it held
+   * only the clinic's own numbers. It now also carries "Powered by NOMED OS" (item 6), and a credit
+   * that appears only on sheets from clinics with a commercial register is a credit that is missing
+   * from most of them.
+   *
+   * The ordering is the point: the clinic's registrations lead, ours is a small line beneath. A
+   * prescription is from a patient's doctor, not from us.
+   */
   return (
-    <p className="mt-3 border-t border-neutral-400 pt-2 text-center text-[10px] text-neutral-600">
-      {parts.join("   ·   ")}
-    </p>
+    <div className="mt-3 border-t border-neutral-400 pt-2 text-center">
+      {parts.length > 0 && <p className="text-[10px] text-neutral-600">{parts.join("   ·   ")}</p>}
+      <p className={parts.length > 0 ? "mt-1" : ""}>
+        <PoweredBy />
+      </p>
+    </div>
   );
 }

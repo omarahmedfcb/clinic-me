@@ -137,7 +137,9 @@ describe("the autosave indicator", () => {
 
     confirmSave();
     await waitFor(() => expect(stateOf()).toBe("saved"));
-  });
+    // Nine keystrokes through jsdom do not fit the 5s default on a loaded machine: green alone and
+    // in `npm test`, timed out in both `npm run verify` runs on 2026-09-16. Budget, not behaviour.
+  }, 20_000);
 
   test("a failed save never says saved, and the text stays on the device", async () => {
     // The failure mode Q4 names: an indicator that reassures while the text exists nowhere but here.

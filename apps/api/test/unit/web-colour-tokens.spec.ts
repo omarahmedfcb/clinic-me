@@ -47,6 +47,12 @@ const NOT_A_TOKEN = new Set([
   "ellipsis", "clip", "middle", "top", "bottom", "baseline",
   // border-*/outline-* widths and styles
   "solid", "dashed", "dotted", "double", "hidden", "separate", "collapse",
+  // bg-* gradient directions. Tailwind v4 spells these `bg-linear-to-*`; the v3 `bg-gradient-to-*`
+  // is a deprecated alias, and this sweep caught one being written on 2026-09-15 — which is the
+  // whole point of it, since an unrecognised utility generates no CSS and fails silently.
+  "linear-to-t", "linear-to-b", "linear-to-l", "linear-to-r",
+  "linear-to-tl", "linear-to-tr", "linear-to-bl", "linear-to-br",
+  "radial", "conic",
   // bg-* positioning and sizing
   "cover", "contain", "fixed", "local", "scroll", "repeat", "gradient", "linear", "radial", "conic",
 ]);

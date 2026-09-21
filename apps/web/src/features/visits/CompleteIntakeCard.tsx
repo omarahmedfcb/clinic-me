@@ -119,6 +119,7 @@ export function CompleteIntakeCard({
             <TextInput
               label={t("intake.field.phone")}
               numeric
+              type="tel"
               inputMode="tel"
               value={phone}
               data-testid="intake-phone"

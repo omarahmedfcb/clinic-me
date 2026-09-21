@@ -11,6 +11,8 @@ export interface AuthenticatedUser {
   isPlatformAdmin: boolean;
   /** PR 10: a temporary password is outstanding, so every route but the change refuses. */
   mustChangePassword: boolean;
+  /** Whether a second factor is confirmed. Null for everyone who has never enrolled one. */
+  totpConfirmedAt: Date | null;
 }
 
 export interface ActiveMembership {
@@ -58,6 +60,7 @@ export async function verifyCredentials(identifier: string, password: string): P
     email: user.email,
     isPlatformAdmin: user.isPlatformAdmin,
     mustChangePassword: user.mustChangePassword,
+    totpConfirmedAt: user.totpConfirmedAt,
   };
 }
 

@@ -1,3 +1,4 @@
+import { ThrottlingModule } from "../../src/common/throttling.module.ts";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +24,7 @@ import { prisma } from "../../src/prisma/client.ts";
 import { injected } from "../../src/prisma/injected.ts";
 import { withTenant } from "../../src/prisma/with-tenant.ts";
 import { actorFor, createTestUser, seedClinic, teardownClinic, type ClinicFixture } from "./fixtures.ts";
+import { generateFixturePhone } from "../fixture-phone.ts";
 
 /**
  * **No reception-facing endpoint returns clinical content. All of them, in one place.**
@@ -46,6 +48,8 @@ import { actorFor, createTestUser, seedClinic, teardownClinic, type ClinicFixtur
  * file — an endpoint nobody adds is an endpoint nobody sweeps.
  */
 @Module({
+  // A rate-limited route lives here (4b), so its guard needs the throttler options in scope.
+  imports: [ThrottlingModule],
   controllers: [
     AttachmentsController,
     AttachmentsSummaryController,
@@ -128,7 +132,7 @@ describe("no reception-facing endpoint returns clinical content", () => {
         data: injected({
           id: patientId,
           fullNameAr: "مريض الاختبار",
-          phoneE164: `+2019${patientId.replace(/-/g, "").slice(0, 7)}`,
+          phoneE164: generateFixturePhone(),
           relationshipToContact: "SELF",
           status: "ACTIVE",
         }),

@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { ThrottlingModule } from "./common/throttling.module.ts";
 import { APP_INTERCEPTOR } from "@nestjs/core";
 import { ActorContextInterceptor } from "./common/actor-context.interceptor.ts";
 import { MembershipFreshnessInterceptor } from "./common/membership-freshness.interceptor.ts";
@@ -8,6 +9,7 @@ import { AuthModule } from "./modules/auth/auth.module.ts";
 import { BillingModule } from "./modules/billing/billing.module.ts";
 import { HealthModule } from "./modules/health/health.module.ts";
 import { AppointmentsModule } from "./modules/appointments/appointments.module.ts";
+import { BotModule } from "./modules/bot/bot.module.ts";
 import { AttachmentsModule } from "./modules/attachments/attachments.module.ts";
 import { ClinicIdentityModule } from "./modules/clinic-identity/clinic-identity.module.ts";
 import { DoctorsModule } from "./modules/doctors/doctors.module.ts";
@@ -34,6 +36,9 @@ import { PrismaModule } from "./prisma/prisma.module.ts";
  */
 @Module({
   imports: [
+    // Every named throttler, once — see common/throttling.module.ts for why it is a wrapper.
+    ThrottlingModule,
+    
     PrismaModule,
     BillingModule,
     HealthModule,
@@ -44,6 +49,7 @@ import { PrismaModule } from "./prisma/prisma.module.ts";
     ServicesModule,
     SchedulesModule,
     AppointmentsModule,
+    BotModule,
     QueueModule,
     TransfersModule,
     InsuranceModule,

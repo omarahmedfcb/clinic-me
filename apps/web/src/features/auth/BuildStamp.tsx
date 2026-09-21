@@ -5,6 +5,14 @@ const COMMIT = import.meta.env.VITE_BUILD_COMMIT ?? "";
 const BUILT_AT = import.meta.env.VITE_BUILD_TIME ?? "";
 const BRANCH = import.meta.env.VITE_BUILD_BRANCH ?? "";
 
+/**
+ * The short form for the sidebar's foot — the commit alone, or nothing.
+ *
+ * Deliberately not the full stamp: the login footer has room for branch, commit and build time, and
+ * a sidebar does not. The commit is the part a clinic can read back over the phone.
+ */
+export const BUILD_VERSION = COMMIT === "" ? "" : `build ${COMMIT}`;
+
 export function BuildStamp() {
   if (COMMIT === "" && BUILT_AT === "" && BRANCH === "") return null;
 

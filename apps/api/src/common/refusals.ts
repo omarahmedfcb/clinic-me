@@ -63,12 +63,60 @@ export interface RefusalParams {
    * have lost that.
    */
   windows?: string[];
+  /**
+   * Which field a validation refusal is about. An enum member, not a label: the client owns the
+   * Arabic for each, the same way `resource` works.
+   */
+  field?: FieldName;
 }
+
+/**
+ * The fields a validation refusal can name.
+ *
+ * Only the platform console's, because it is the only surface whose client turns a validation
+ * failure into a sentence — every other screen validates the same rules before it sends. Adding a
+ * surface here means adding its field names and their Arabic, which the conformance spec enforces.
+ */
+export const FIELD_NAMES = [
+  "name",
+  "slug",
+  "timezone",
+  "country",
+  "currency",
+  "address",
+  "phone",
+  "adminFullName",
+  "adminPhone",
+  "contactName",
+  "contactPhone",
+  "contactEmail",
+  "contactRole",
+  "agreedMonthlyMinor",
+  "discountPercent",
+  "notes",
+  "startsOn",
+  "endsOn",
+  "renewalOn",
+  "operatorRole",
+  "fullName",
+  "totpCode",
+  // Patient intake, 2026-09-16: the first non-console surface here, because a phone that does not
+  // parse is now refused rather than stored as typed.
+  "phoneE164",
+  "secondaryPhone",
+  // A10, 2026-09-19: a webhook URL that is not HTTPS, or that resolves into our own network.
+  "webhookUrl",
+] as const;
+
+export type FieldName = (typeof FIELD_NAMES)[number];
 
 /** The nouns `NOT_FOUND` can be about. The client keeps the Arabic for each. */
 export const RESOURCE_NAMES = [
   "appointment",
   "attachment",
+  // A clinic, as the platform console names one. Distinct from "tenant", which is the schema's word
+  // for it: the operator's screen says clinic, and so should the sentence they read.
+  "clinic",
   // A visit's bill. Distinct from "visit": credit is applied to the charge, and a reader told the
   // visit was not found would look for the wrong thing.
   "charge",
@@ -76,6 +124,9 @@ export const RESOURCE_NAMES = [
   "doctor",
   "exception",
   "insuranceCompany",
+  // The clinic's WhatsApp bot credential (2026-09-18). One live one per clinic, so both "already
+  // issued" and "not found" need to be able to name it.
+  "botCredential",
   "membership",
   "patient",
   "policy",
@@ -137,6 +188,12 @@ export const REFUSAL_CODES = [
   "ALREADY_OPEN",
   // Two patients are already linked as kin (Q30). Different action: remove the link or pick another.
   "ALREADY_LINKED",
+  // ---- the clinic's bot credential -------------------------------------------------------
+  // One live credential per clinic: the next action is to revoke the one that exists.
+  "ALREADY_ISSUED",
+  // A wrong secret, a revoked credential and an id that never existed, deliberately as one code:
+  // which of the three it was is not the caller's business, and a code says so without a sentence.
+  "INVALID_CREDENTIAL",
   // One code for every way a transfer request is no longer answerable, with `status` saying which:
   // ACCEPTED and REJECTED were answered by a person, LAPSED closed itself when the appointment
   // ended. Ruled 2026-09-07, folding in the former NO_LONGER_OPEN.
@@ -199,6 +256,33 @@ export const REFUSAL_CODES = [
   // A day or a month that is neither. Different action from a malformed request: ask for a real
   // period, rather than a shape the server never offered.
   "INVALID_PERIOD",
+  // ---- the platform console, pilot-readiness 0b-0g --------------------------------------------
+  // That short name is already a clinic's. Different action from DUPLICATE_PHONE: choose another.
+  "SLUG_TAKEN",
+  // Suspending a suspended clinic, or reactivating a live one. Nothing to do rather than refused.
+  "ALREADY_IN_THAT_STATE",
+  // A field the DTO refused, with `field` saying which. Added 2026-09-15 after the founder read
+  // "a system error occurred" for a typing mistake: a ValidationPipe rejection carries no code, and
+  // a client that has no code renders its generic apology — which blames the server for the user.
+  "INVALID_FIELD",
+  // ---- the platform back-office, 2026-09-15 ---------------------------------------------------
+  // Only the operator OWNER seats operators. Different action from NOT_PERMITTED: ask the owner.
+  "NOT_OPERATOR_OWNER",
+  // The operator has no confirmed authenticator yet. The action is to enrol, and nothing else works.
+  "TOTP_ENROLMENT_REQUIRED",
+  // A six-digit code that is not the current one. Different action: read the app again.
+  "TOTP_INVALID",
+  // An authenticator is already confirmed for this account; re-enrolling would lock the old one out.
+  "TOTP_ALREADY_ENROLLED",
+  // Replacing the authenticator is only for a session a recovery code opened. An operator who still
+  // has their authenticator wants `recovery-codes/regenerate`, which demands it and keeps the secret.
+  "NOT_RECOVERY_SESSION",
+  // A contract whose end is not after its start, or a renewal before the contract begins.
+  "INVALID_DATE_RANGE",
+  // A discount outside 0-100, or an agreed price below zero. Different action: correct the number.
+  "INVALID_AMOUNT",
+  // A clinic already has a client file. It is edited, not created twice.
+  "CLIENT_FILE_EXISTS",
 ] as const;
 
 export type RefusalCode = (typeof REFUSAL_CODES)[number];

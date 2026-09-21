@@ -12,6 +12,7 @@ import { writeChargeForVisit } from "../../src/modules/billing/charge-from-visit
 import { prisma } from "../../src/prisma/client.ts";
 import { injected } from "../../src/prisma/injected.ts";
 import { withTenant } from "../../src/prisma/with-tenant.ts";
+import { ThrottlingModule } from "../../src/common/throttling.module.ts";
 import {
   actorFor,
   createTestUser,
@@ -36,6 +37,8 @@ import {
  */
 
 @Module({
+  // Recording a payment is rate-limited (4b), so its guard needs the throttler options in scope.
+  imports: [ThrottlingModule],
   controllers: [ClinicalController, BillingController, BillingActionsController],
   providers: [{ provide: APP_INTERCEPTOR, useClass: ActorContextInterceptor }],
 })

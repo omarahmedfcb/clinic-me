@@ -1,21 +1,41 @@
+import { ThrottlingModule } from "../../src/common/throttling.module.ts";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { Module, ValidationPipe } from "@nestjs/common";
+import { Module } from "@nestjs/common";
 import { APP_INTERCEPTOR, NestFactory } from "@nestjs/core";
 import { ThrottlerModule } from "@nestjs/throttler";
 import type { NestExpressApplication } from "@nestjs/platform-express";
+import { apiRoutes } from "../../scripts/route-capabilities.ts";
 import { ActorContextInterceptor } from "../../src/common/actor-context.interceptor.ts";
+import { refusingValidationPipe } from "../../src/common/validation-pipe.ts";
 import { issueAccessToken } from "../../src/modules/auth/jwt.ts";
 import { hashPassword } from "../../src/modules/auth/password.ts";
 import { AuthController } from "../../src/modules/auth/auth.controller.ts";
 import { PatientsController } from "../../src/modules/patients/patients.controller.ts";
+import { LocalFilesystemStorageProvider } from "../../src/modules/attachments/storage/local-filesystem.provider.ts";
+import { STORAGE_PROVIDER } from "../../src/modules/attachments/storage/storage-provider.ts";
+import { PlatformClientFileController } from "../../src/modules/platform/platform-client-file.controller.ts";
+import { PlatformClinicsController } from "../../src/modules/platform/platform-clinics.controller.ts";
+import { PlatformOperatorsController } from "../../src/modules/platform/platform-operators.controller.ts";
 import { PlatformController } from "../../src/modules/platform/platform.controller.ts";
 import { issuePlatformToken } from "../../src/modules/platform/platform-token.ts";
+import { totpCode } from "../../src/modules/platform/totp.ts";
 import { prisma } from "../../src/prisma/client.ts";
 import { injected } from "../../src/prisma/injected.ts";
 import { withPlatformActor, withTenant } from "../../src/prisma/with-tenant.ts";
-import { actorFor, createTestUser, seedClinic, teardownClinic, type ClinicFixture } from "./fixtures.ts";
+import {
+  actorFor,
+  createTestUser,
+  FIXTURE_TOTP_SECRET,
+  makeOperator,
+  seedClinic,
+  teardownClinic,
+  type ClinicFixture,
+} from "./fixtures.ts";
 
 /**
  * The platform console's wall — pilot-readiness 0a.
@@ -32,17 +52,65 @@ import { actorFor, createTestUser, seedClinic, teardownClinic, type ClinicFixtur
  */
 
 @Module({
-  imports: [ThrottlerModule.forRoot([{ name: "default", ttl: 60_000, limit: 1_000 }])],
-  controllers: [PlatformController, PatientsController, AuthController],
-  providers: [{ provide: APP_INTERCEPTOR, useClass: ActorContextInterceptor }],
+  // The patients controller is mounted here for the leak sweep, and its intake route is
+  // rate-limited (4b) — so this module needs the application's own throttler options, not a
+  // stand-in: a second `forRoot` is global and would erase every named bucket.
+  imports: [ThrottlingModule],
+  controllers: [
+    PlatformController,
+    PlatformClinicsController,
+    PlatformOperatorsController,
+    PlatformClientFileController,
+    PatientsController,
+    AuthController,
+  ],
+  providers: [
+    { provide: APP_INTERCEPTOR, useClass: ActorContextInterceptor },
+    // The client-file controller streams contract PDFs, so it needs the seam. A temp directory:
+    // nothing in this file uploads, and the sweep only reads.
+    {
+      provide: STORAGE_PROVIDER,
+      useFactory: () => new LocalFilesystemStorageProvider(mkdtempSync(path.join(tmpdir(), "platform-iso-"))),
+    },
+  ],
 })
 class PlatformTestModule {}
 
 const OPERATOR_PASSWORD = "operator-only-not-a-real-password";
 const SENTINEL = "SENTINEL-DIAGNOSIS-the-operator-must-never-see-this";
 
-/** Every `/platform/*` route. **Add one here when you add one to the product.** */
-const PLATFORM_ROUTES: { name: string; path: string }[] = [{ name: "who the operator is", path: "/platform/me" }];
+/**
+ * Every `/platform/*` route that reads, **derived from the controllers** rather than listed here.
+ *
+ * `:tenantId` is substituted with the seeded clinic's id — the clinic that holds the sentinel — so
+ * each route is asked the one question that could leak: give me everything you have about the
+ * clinic whose visit carries a diagnosis.
+ *
+ * It was a hand-written list until 2026-09-19, and before 2026-09-15 that list held `/platform/me`
+ * alone while its own comment claimed to be every route. A list nobody updates is a sweep that
+ * passes while checking almost nothing, and the route that gets added is exactly the one nobody
+ * thinks to add here.
+ */
+const PLATFORM_ROUTES: { name: string; path: string }[] = apiRoutes(
+  path.resolve(__dirname, "..", "..", "src"),
+  path.resolve(__dirname, "..", "..", "..", ".."),
+)
+  .filter((route) => route.method === "GET" && route.path.startsWith("/platform"))
+  .map((route) => ({ name: route.path, path: route.path }));
+
+/**
+ * The four this list held by hand, kept as the floor.
+ *
+ * Not as the list — as the proof that the derivation above found something. A scanner that quietly
+ * stopped matching would return an empty array, sweep nothing, and pass: the exact shape of green
+ * guard this project keeps finding.
+ */
+const ROUTES_THAT_MUST_BE_SWEPT = [
+  "/platform/me",
+  "/platform/clinics",
+  "/platform/operators",
+  "/platform/clinics/:tenantId/file",
+];
 
 /** The tables an operator must be unable to read a single row of. */
 const FORBIDDEN_TABLES = [
@@ -121,12 +189,7 @@ describe("the platform console reads no clinic data", () => {
     // Through `withPlatformActor`: `users_audit` refuses an UPDATE with no actor bound (D16), and
     // the operator has no tenant to bind one through. That helper is the operator's session shape.
     const hashed = await hashPassword(OPERATOR_PASSWORD);
-    await withPlatformActor(actorFor(operatorId), (tx) =>
-      tx.user.update({
-        where: { id: operatorId },
-        data: { isPlatformAdmin: true, status: "ACTIVE", passwordHash: hashed },
-      }),
-    );
+    await makeOperator(operatorId, { passwordHash: hashed });
 
     // The control for the flag check: a real clinic account, ACTIVE, with an active membership and
     // the *same* password as the operator. The only difference is `is_platform_admin`.
@@ -149,7 +212,9 @@ describe("the platform console reads no clinic data", () => {
     });
 
     app = await NestFactory.create<NestExpressApplication>(PlatformTestModule, { logger: false });
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+    // The production pipe, not a lookalike: its exceptionFactory is what turns a DTO rejection into
+    // a refusal code, and a test module with a plain one would assert a shape the app never sends.
+    app.useGlobalPipes(refusingValidationPipe());
     await app.listen(0, "127.0.0.1");
     baseUrl = `http://127.0.0.1:${((app.getHttpServer() as Server).address() as AddressInfo).port}`;
 
@@ -172,7 +237,29 @@ describe("the platform console reads no clinic data", () => {
       password: OPERATOR_PASSWORD,
     });
     expect(signedIn.status).toBe(200);
-    expect(JSON.parse(signedIn.text)).toMatchObject({ accessToken: expect.any(String) });
+    // **A pending token, not an access token.** The password alone opens nothing from 2026-09-15 —
+    // asserted on the field name, because a rename back to `accessToken` would be the change that
+    // quietly makes the second factor optional again.
+    expect(JSON.parse(signedIn.text)).toMatchObject({
+      pendingToken: expect.any(String),
+      totpEnrolled: true,
+    });
+    expect(signedIn.text).not.toContain("accessToken");
+
+    // And it is refused everywhere: the guard demands `full`, so a route added later is behind the
+    // second factor by default rather than by being remembered.
+    const pending = (JSON.parse(signedIn.text) as { pendingToken: string }).pendingToken;
+    expect((await call("GET", "/platform/me", pending)).status).toBe(401);
+
+    // The second factor is what opens it, and the code is computed from the fixture's own secret.
+    const code = totpCode(FIXTURE_TOTP_SECRET, Math.floor(Date.now() / 1000));
+    const answered = await call("POST", "/platform/totp/verify", pending, { totpCode: code });
+    expect({ status: answered.status, hasToken: answered.text.includes("accessToken") }).toEqual({
+      status: 200,
+      hasToken: true,
+    });
+    const full = (JSON.parse(answered.text) as { accessToken: string }).accessToken;
+    expect((await call("GET", "/platform/me", full)).status).toBe(200);
 
     // The point of the separate door, asserted rather than inferred: the clinic login requires an
     // active membership, and this account has none, so it refuses a perfectly valid operator.
@@ -180,7 +267,20 @@ describe("the platform console reads no clinic data", () => {
       identifier: phone,
       password: OPERATOR_PASSWORD,
     });
-    expect(refusedByClinic.status).toBe(401);
+    /**
+     * The status **and the body**, because this assertion failed once on 2026-09-15 in a full-suite
+     * run and passed alone and in three subsequent full runs. A bare `toBe(401)` says only
+     * "received 200" or "received 429", and those are different faults: 200 would mean the operator
+     * somehow holds a membership, 429 that an earlier spec exhausted the per-IP login limit —
+     * `throttle-isolation` sends 61 logins from 127.0.0.1 against a limit of 60.
+     *
+     * Unreproduced, so not diagnosed and not claimed fixed. What this does is make the next
+     * occurrence name itself instead of costing another three runs.
+     */
+    expect({ status: refusedByClinic.status, body: refusedByClinic.text.slice(0, 120) }).toEqual({
+      status: 401,
+      body: expect.stringContaining("Invalid credentials"),
+    });
   });
 
   /**
@@ -211,13 +311,34 @@ describe("the platform console reads no clinic data", () => {
     expect(visible.visits).toBeGreaterThan(0);
   });
 
+  test("the sweep is derived from the route table, and covers the routes it used to list", () => {
+    // The list this replaced was maintained by hand, and its own comment claimed to be every route
+    // while holding one. Derived now — and asserted non-empty, because an empty sweep is silent.
+    expect(PLATFORM_ROUTES.length).toBeGreaterThanOrEqual(ROUTES_THAT_MUST_BE_SWEPT.length);
+    for (const path of ROUTES_THAT_MUST_BE_SWEPT) {
+      expect(PLATFORM_ROUTES.map((route) => route.path)).toContain(path);
+    }
+  });
+
   test("every /platform/* route answers, and none of them carries clinical content", async () => {
     const findings: { name: string; status: number; leaked: boolean }[] = [];
     for (const { name, path } of PLATFORM_ROUTES) {
-      const reply = await call("GET", path, operatorToken);
+      // Ids this fixture knows are substituted; anything else gets a well-formed id that exists
+      // nowhere, so the route is still *called* and its answer still read for a leak.
+      const url = path
+        .replace(":tenantId", clinic.tenantId)
+        .replace(":userId", operatorId)
+        .replace(/:[A-Za-z]+/g, randomUUID());
+      const reply = await call("GET", url, operatorToken);
       findings.push({ name, status: reply.status, leaked: reply.text.includes(SENTINEL) });
     }
-    expect(findings).toEqual(PLATFORM_ROUTES.map(({ name }) => ({ name, status: 200, leaked: false })));
+
+    // Nothing leaks, whatever it answers.
+    expect(findings.filter((finding) => finding.leaked)).toEqual([]);
+    // And the addressable ones answer, so "everything 404s" cannot pass this.
+    expect(
+      findings.filter((finding) => ROUTES_THAT_MUST_BE_SWEPT.includes(finding.name)).map((f) => f.status),
+    ).toEqual(ROUTES_THAT_MUST_BE_SWEPT.map(() => 200));
   });
 
   describe("the two tokens cannot be exchanged", () => {
@@ -254,14 +375,14 @@ describe("the platform console reads no clinic data", () => {
     const stillValid = await issuePlatformToken(operatorId);
     expect((await call("GET", "/platform/me", stillValid)).status).toBe(200);
 
+    // The role goes with the flag: a CHECK refuses one without the other, which is the constraint
+    // added with the operator seats on 2026-09-15.
     await withPlatformActor(actorFor(operatorId), (tx) =>
-      tx.user.update({ where: { id: operatorId }, data: { isPlatformAdmin: false } }),
+      tx.user.update({ where: { id: operatorId }, data: { isPlatformAdmin: false, platformRole: null } }),
     );
     // Same token, same ten-minute life, and it stops working immediately.
     expect((await call("GET", "/platform/me", stillValid)).status).toBe(401);
 
-    await withPlatformActor(actorFor(operatorId), (tx) =>
-      tx.user.update({ where: { id: operatorId }, data: { isPlatformAdmin: true } }),
-    );
+    await makeOperator(operatorId);
   });
 });

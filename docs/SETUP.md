@@ -105,6 +105,12 @@ SLOT_TOKEN_SECRET="<a second 48-byte secret>"
 ATTACHMENTS_STORAGE_ROOT="<an absolute path outside this repository>"
 ```
 
+A laptop always uses the **local** storage backend, which is the default and needs nothing beyond
+the variable above. The S3 one (`ATTACHMENTS_STORAGE_BACKEND=s3`, added 2026-09-18 for Huawei OBS in
+Cairo — `docs/HOSTING.md`) is a server concern; `apps/api/.env.example` lists its settings, and
+`node scripts/backup/s3-attachments-drill.mjs` exercises it against MinIO in Docker if you want to
+see it work.
+
 `ATTACHMENTS_STORAGE_ROOT` is not a secret, and it is the one variable here that is a **path rather
 than a credential**. It has no default on purpose (`PHASE-4.md` Q11): the API refuses to start
 without it, because every plausible default fails silently — `./uploads` ends up committed by a

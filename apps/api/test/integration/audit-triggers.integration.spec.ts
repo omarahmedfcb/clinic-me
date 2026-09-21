@@ -6,6 +6,7 @@ import { prisma } from "../../src/prisma/client.ts";
 import { injected } from "../../src/prisma/injected.ts";
 import { withTenant } from "../../src/prisma/with-tenant.ts";
 import { actorFor, type ClinicFixture, seedClinic, teardownClinic } from "./fixtures.ts";
+import { generateFixturePhone } from "../fixture-phone.ts";
 
 /**
  * SCHEMA-DECISIONS.md D16: audit is a database guarantee, not an application convention.
@@ -140,7 +141,7 @@ describe("audit triggers", () => {
         data: injected({
           id: patientId,
           fullNameAr: "Audited On Create",
-          phoneE164: `+2019${patientId.replace(/-/g, "").slice(0, 8)}`,
+          phoneE164: generateFixturePhone(),
           relationshipToContact: "SELF",
           status: "ACTIVE",
         }),
@@ -166,7 +167,7 @@ describe("audit triggers", () => {
         data: injected({
           id: patientId,
           fullNameAr: "Audited On Delete",
-          phoneE164: `+2018${patientId.replace(/-/g, "").slice(0, 8)}`,
+          phoneE164: generateFixturePhone(),
           relationshipToContact: "SELF",
           status: "ACTIVE",
         }),
@@ -208,7 +209,7 @@ describe("audit triggers", () => {
           data: injected({
             id: patientId,
             fullNameAr: "Written By The Nightly Job",
-            phoneE164: `+2017${patientId.replace(/-/g, "").slice(0, 8)}`,
+            phoneE164: generateFixturePhone(),
             relationshipToContact: "SELF",
             status: "ACTIVE",
           }),
@@ -301,7 +302,18 @@ describe("audit triggers", () => {
     // which could only be recovered by decoding a UUIDv7 out of a storage key.
     // 45 as of 2026-09-13: `patient_credits` (ruling 5). Money that outlives the appointment it came
     // from is exactly the kind of row an audit trail is kept for.
-    expect(Number(counted[0]?.n)).toBe(45);
+    // 48 as of 2026-09-15: the three back-office tables. They carry RLS, so this test's own rule
+    // demanded a trigger — and they could not use `audit_row_change()`, which stamps the row with
+    // `NEW.tenant_id` and would have put the vendor's agreed discount and sales notes into the
+    // clinic's own audit trail, readable on the screen shipped in #107.
+    // `audit_platform_row_change()` writes `tenant_id = NULL` instead, which the D17 policy makes
+    // visible to no tenant session at all.
+    // 49 as of 2026-09-18: `bot_credentials`. Its trigger is `audit_bot_credential_change()`, which
+    // redacts `secret_hash` and fires on the columns that change the credential — never on
+    // `last_used_at`, or every call the bot makes would write an audit row.
+    // 50 as of 2026-09-18: `webhook_deliveries`. Its trigger fires only when a delivery is given up
+    // on — an audit row per retry would bury the clinic history under our retry schedule.
+    expect(Number(counted[0]?.n)).toBe(50);
   });
 
   /**

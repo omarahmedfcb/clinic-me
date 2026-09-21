@@ -139,6 +139,7 @@ export function MyDetailsPage({
           <TextInput
             label={t("staff.field.phone")}
             numeric
+            type="tel"
             inputMode="tel"
             value={myPhone}
             data-testid="my-phone"

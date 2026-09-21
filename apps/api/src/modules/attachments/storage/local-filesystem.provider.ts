@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { isSafeBrandingKey } from "../domain/branding-key.ts";
 import { isSafePhotoKey } from "../domain/photo-key.ts";
 import { isSafeStorageKey } from "../domain/storage-key.ts";
+import { isSafeContractKey } from "../../platform/contract-key.ts";
 import {
   ObjectAlreadyExists,
   ObjectNotFound,
@@ -55,10 +56,10 @@ export class LocalFilesystemStorageProvider implements StorageProvider {
    */
   private resolvePath(key: string): string {
     // Any shape this system emits: an attachment key, a branding key (Q28), or a profile photo.
-    // Three validators rather than one widened regex, so no read path's guard can be loosened by
+    // Four validators rather than one widened regex, so no read path's guard can be loosened by
     // another's requirements — each read checks its own, and this is the last-resort path check
     // underneath all of them.
-    if (!isSafeStorageKey(key) && !isSafeBrandingKey(key) && !isSafePhotoKey(key)) {
+    if (!isSafeStorageKey(key) && !isSafeBrandingKey(key) && !isSafePhotoKey(key) && !isSafeContractKey(key)) {
       throw new ObjectNotFound(key);
     }
     const path = resolve(join(this.root, key));

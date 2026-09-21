@@ -59,6 +59,8 @@
  * constraint — `bookAppointment` and `rescheduleAppointment` — and nowhere else.
  */
 
+import { driverCause } from "./driver-error.ts";
+
 /** Postgres serialization-failure class: deadlock detected. */
 const DEADLOCK_DETECTED = "40P01";
 
@@ -66,16 +68,12 @@ const DEADLOCK_DETECTED = "40P01";
  * Did Postgres kill this transaction to break a deadlock?
  *
  * The shape is measured, not assumed, and is pinned to a real Postgres deadlock by
- * `booking-deadlock.integration.spec.ts` rather than to a hand-built object. Prisma 7 with the `pg`
- * adapter raises `PrismaClientKnownRequestError` with its own code `P2039` and buries the SQLSTATE
- * two levels down — the same burial that made the first version of `isDoubleBookingViolation`
- * wrong.
+ * `booking-deadlock.integration.spec.ts` rather than to a hand-built object. Prisma buries the
+ * SQLSTATE two levels down and has already renamed it once — `driverCause` reads both spellings, so
+ * this asks only the question it is for.
  */
 export function isDeadlock(error: unknown): boolean {
-  const cause = (
-    error as { meta?: { driverAdapterError?: { cause?: { code?: unknown } } } } | null
-  )?.meta?.driverAdapterError?.cause;
-  return cause?.code === DEADLOCK_DETECTED;
+  return driverCause(error).code === DEADLOCK_DETECTED;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString, IsUUID, MaxLength, MinLength } from "class-validator";
+import { IsNotEmpty, IsString, IsUUID, MaxLength, MinLength, IsBoolean, IsOptional } from "class-validator";
 
 /**
  * Request bodies for the auth endpoints.
@@ -26,6 +26,16 @@ export class LoginDto {
   @IsNotEmpty()
   @MaxLength(MAX_FIELD)
   identifier!: string;
+
+  /**
+   * «تذكرني» — keep the session on this device across browser restarts.
+   *
+   * A request, not a decision: the controller grants it only for a DOCTOR or a RECEPTIONIST, and
+   * an ADMIN, an OWNER or an operator sending `true` gets a session cookie anyway.
+   */
+  @IsOptional()
+  @IsBoolean()
+  rememberMe?: boolean;
 
   /**
    * Argon2id is deliberately slow, so an unbounded password is a cheap way to make the server do

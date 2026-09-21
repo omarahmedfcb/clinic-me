@@ -921,6 +921,57 @@ Every deferred module has a defined seam already present in the design:
 | **Total to pilot-ready** | | **12–16 weeks** | ≈ mid-November to mid-December 2026 |
 | **PILOT** | Deploy, seed, train, run 3–5 clinics | 4–6 wk | Daily active use; measured paper displacement |
 | 6+ | WhatsApp → AI → automation → reports → hardening | — | Sequenced after pilot findings |
+| After 6 | Specialty modules, dental first — see below | — | Order set by the first pilot clinics' specialties |
+| After pilot | **Framework majors** — React 19, NestJS 12 — see below | — | Ruled 2026-09-19: not before a clinic is live |
+
+### Framework majors are a post-pilot item (ruled 2026-09-19)
+
+**React 19 (#154) and NestJS 12 (#155) wait until after the pilot**, labelled `after-pilot` and left
+open rather than closed, so the work is visible and the decision is not re-taken every Monday.
+
+The reason is what a major costs at this moment rather than what it costs in general. A framework
+major is a day of unknown length: React 19 changes how effects and refs behave in ways a test suite
+does not always catch, and NestJS 12 moves the ground every guard, interceptor and module in this
+codebase stands on. Spending that day *before* a clinic is using the product buys nothing a pilot
+needs, and spending it *during* a pilot risks the one thing the pilot is for — a receptionist and a
+doctor getting through a clinic day.
+
+Security advisories are not covered by this deferral. They arrive through the weekly audit job and
+carry their own deadlines (`docs/SECURITY-REVIEW.md` A06: critical within 7 days, high within 30),
+and an advisory that can only be fixed by a major bump is a decision taken then, on its merits.
+
+Patch and minor updates keep flowing: `.github/dependabot.yml` groups them separately from majors
+exactly so that the small, safe group can merge weekly while these two sit still.
+
+### Specialty modules — after Phase 6, dental first (recorded 2026-09-17)
+
+Backlog, not scheduled work. **Dental first:** an interactive tooth chart in FDI notation, tied to
+`VisitProcedure` and the service catalogue (`Service`); treatment plans in phases, with cost and a
+printable quote; x-rays attached per tooth; lab orders; recall reminders.
+
+**Then, in an order the first pilot clinics' specialties decide:**
+
+| Specialty | Module |
+|---|---|
+| Dermatology / aesthetics | Before/after photo timeline on a body map; session packages |
+| Ophthalmology | Exam fields; optical prescription |
+| Paediatrics | WHO growth charts; the Egyptian vaccination schedule |
+| OB/GYN | Pregnancy timeline |
+| Internal medicine | Lab trend charts |
+| Physiotherapy | Session packages |
+
+**Two rules, fixed before any of it is built:**
+
+1. **Clinical parts are English-only.** Doctors chart in English, so a tooth chart, an exam form or a
+   growth chart is an LTR island inside the RTL screen — the same treatment as a phone number. The
+   surrounding screen stays Arabic-first.
+2. **A specialty is a property of the clinic that enables screens and fields, never a separate copy
+   of the product.** One codebase, one schema, one deploy; a dental clinic is a clinic with the
+   dental module switched on.
+
+**What exists today, because it changes the design:** specialty is `doctors.specialty`, free text on
+the doctor, and nothing on `tenants` records it. The clinic-level property in rule 2 does not exist
+yet, and a polyclinic (dental and dermatology under one roof) means it is a set, not a single value.
 
 ### Working rules that protect this timeline
 

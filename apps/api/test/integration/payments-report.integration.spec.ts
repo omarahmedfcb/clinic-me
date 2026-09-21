@@ -1,3 +1,4 @@
+import { ThrottlingModule } from "../../src/common/throttling.module.ts";
 import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -26,6 +27,8 @@ import { actorFor, createTestUser, seedClinic, teardownClinic, type ClinicFixtur
  */
 
 @Module({
+  // A rate-limited route lives here (4b), so its guard needs the throttler options in scope.
+  imports: [ThrottlingModule],
   controllers: [BillingActionsController],
   providers: [{ provide: APP_INTERCEPTOR, useClass: ActorContextInterceptor }],
 })

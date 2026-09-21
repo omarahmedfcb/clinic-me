@@ -10,10 +10,17 @@ import { waitForHealth } from "./wait-for-health.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const API = path.join(ROOT, "apps", "api");
 const WEB = path.join(ROOT, "apps", "web");
+const MARKETING = path.join(ROOT, "apps", "marketing");
 
 const REVIEW_DB = "clinic_os_review";
 const PORT_API = 3100;
 const PORT_WEB = 4173;
+// The marketing site's own `npm run preview` port, so both URLs are the ones its README names.
+const PORT_MARKETING = 4180;
+// Where the sandbox's webhook receiver listens, and how often the outbox is swept for it. A minute
+// is right for cron on a server and wrong for somebody watching a conversation.
+const PORT_WEBHOOK_ECHO = 5183;
+const WEBHOOK_INTERVAL_MS = 5000;
 
 /**
  * `allowFailure` returns the output instead of throwing.
@@ -155,6 +162,10 @@ console.log(`\n  develop is current. Review target: ${REVIEW_DB}\n`);
 step("npm", ["ci"], { cwd: API, shell: true });
 step("npm", ["ci"], { cwd: WEB, shell: true });
 
+// Decided after any checkout, because `--pr` may bring the marketing app in or leave it out.
+const hasMarketing = existsSync(path.join(MARKETING, "package.json"));
+if (hasMarketing) step("npm", ["ci"], { cwd: MARKETING, shell: true });
+
 // --- the review database -----------------------------------------------------------------------
 // Created if absent. Nothing else in the project migrates it, which is how it was once found two
 // migrations behind -- every transfers screen would have failed at the database, looking like a UI bug.
@@ -265,6 +276,7 @@ step("npm", ["run", "build"], {
     VITE_BUILD_BRANCH: builtBranch,
   },
 });
+if (hasMarketing) step("npm", ["run", "build"], { cwd: MARKETING, shell: true });
 
 // --- serve -------------------------------------------------------------------------------------
 // Outside the repository, per CLAUDE.md: a storage root inside it gets committed by a later `git add -A`.
@@ -282,6 +294,20 @@ const api = spawn(process.execPath, ["-r", "dotenv/config", path.join(API, "dist
     DATABASE_URL: reviewSuper,
     PORT: String(PORT_API),
     ATTACHMENTS_STORAGE_ROOT: attachments,
+    // The sandbox is a review-build fact, and the API refuses to boot with it under production.
+    BOT_SANDBOX: "on",
+    /*
+     * The operator's second factor is off in a review build — 2026-09-15.
+     *
+     * A reviewer has no authenticator loaded with the seeded operator's secret, so the code prompt
+     * cannot be satisfied and the console is unreachable. `assertOperatorTotpAllowed` refuses to
+     * boot with this set when `NODE_ENV=production`, so it is a review convenience that physically
+     * cannot follow a build to a server.
+     *
+     * `OPERATOR_TOTP=on npm run preview -- --reseed` turns it on without editing this file: the seed
+     * enrols no authenticator, so the first operator sign-in lands on enrolment, then recovery codes.
+     */
+    OPERATOR_TOTP: process.env["OPERATOR_TOTP"] ?? "off",
   },
 });
 
@@ -292,9 +318,64 @@ const web = spawn("npx", ["vite", "preview", "--port", String(PORT_WEB), "--stri
   env: { ...process.env, VITE_API_TARGET: `http://localhost:${PORT_API}` },
 });
 
+// A separate app with no API client, so it needs nothing from the stack above and is started beside it.
+const marketing = hasMarketing
+  ? spawn("npx", ["vite", "preview", "--port", String(PORT_MARKETING), "--strictPort"], {
+      cwd: MARKETING,
+      stdio: "inherit",
+      shell: true,
+    })
+  : null;
+
+/**
+ * The bot sandbox: a credential for the first seeded clinic, a receiver that logs and verifies each
+ * delivery, and a sweep often enough to watch. `BOT_SANDBOX=on` is what turns all three on, and the
+ * API and both scripts refuse it under `NODE_ENV=production` — so this cannot follow a build to a
+ * server.
+ */
+const sandboxEnv = { ...process.env, DATABASE_URL: reviewSuper, APP_DATABASE_URL: reviewApp, BOT_SANDBOX: "on" };
+let sandbox = null;
+try {
+  sandbox = JSON.parse(
+    run(process.execPath, ["--disable-warning=MODULE_TYPELESS_PACKAGE_JSON", "scripts/sandbox-bot.ts"], {
+      cwd: API,
+      env: { ...sandboxEnv, SANDBOX_WEBHOOK_URL: `http://localhost:${PORT_WEBHOOK_ECHO}/webhook` },
+    }),
+  );
+} catch (error) {
+  // A review build without a bot is still a review build: the founder reviews screens here, and the
+  // sandbox is for the external developer. Say so and carry on rather than refusing the whole stack.
+  console.log(`\n  No bot sandbox this run: ${String(error.message ?? error).split("\n")[0]}\n`);
+}
+
+const webhookEcho =
+  sandbox === null
+    ? null
+    : spawn(process.execPath, ["--disable-warning=MODULE_TYPELESS_PACKAGE_JSON", "scripts/webhook-echo.ts"], {
+        cwd: API,
+        stdio: "inherit",
+        env: {
+          ...sandboxEnv,
+          SANDBOX_WEBHOOK_PORT: String(PORT_WEBHOOK_ECHO),
+          SANDBOX_WEBHOOK_SECRET: sandbox.webhookSecret,
+        },
+      });
+
+const webhookDispatch =
+  sandbox === null
+    ? null
+    : spawn(process.execPath, ["--disable-warning=MODULE_TYPELESS_PACKAGE_JSON", "scripts/webhook-dispatch.ts"], {
+        cwd: API,
+        stdio: "inherit",
+        env: { ...sandboxEnv, WEBHOOK_DISPATCH_INTERVAL_MS: String(WEBHOOK_INTERVAL_MS) },
+      });
+
 const shutdown = () => {
   api.kill();
   web.kill();
+  marketing?.kill();
+  webhookEcho?.kill();
+  webhookDispatch?.kill();
   process.exit(0);
 };
 process.on("SIGINT", shutdown);
@@ -309,6 +390,9 @@ const unhealthy = await waitForHealth({
 if (unhealthy !== null) {
   api.kill();
   web.kill();
+  marketing?.kill();
+  webhookEcho?.kill();
+  webhookDispatch?.kill();
   refuse(
     "the API never became healthy",
     `${unhealthy}\n\nThe web build is fine; nothing behind it is answering. The API's own output is\n` +
@@ -316,10 +400,50 @@ if (unhealthy !== null) {
   );
 }
 
+// Waited for too, and for the same reason as the API: READY must not print over a site not answering.
+if (marketing !== null) {
+  const deadline = Date.now() + 60_000;
+  let answered = false;
+  while (!answered && Date.now() < deadline && marketing.exitCode === null) {
+    answered = await fetch(`http://localhost:${PORT_MARKETING}`).then((r) => r.ok, () => false);
+    if (!answered) await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  if (!answered) {
+    api.kill();
+    web.kill();
+    marketing.kill();
+    refuse(
+      `the marketing site never answered on :${PORT_MARKETING}`,
+      "Its own output is above this line. Another process holding the port is the usual cause.",
+    );
+  }
+}
+
 {
   const rule = "─".repeat(72);
+  const marketingLine = marketing === null ? "" : `      http://localhost:${PORT_MARKETING}   (marketing site)\n`;
+  // Printed once, because there is no second chance: the secrets are hashed at rest and the only
+  // way back to them is to revoke and re-issue, which is what the next `npm run preview` does.
+  const sandboxBlock =
+    sandbox === null
+      ? ""
+      : `\n  BOT SANDBOX  (${sandbox.clinicName})\n\n` +
+        `      credential id   ${sandbox.credentialId}\n` +
+        `      secret          ${sandbox.secret}\n` +
+        `      webhook secret  ${sandbox.webhookSecret}\n` +
+        `      webhook         ${sandbox.webhookUrl}   (echo receiver, verifies each signature)\n` +
+        `      token           POST http://localhost:${PORT_API}/bot/auth/token {credentialId, secret}\n` +
+        `      test phone      ${sandbox.phone ?? "(none seeded)"}\n` +
+        `\n      The acceptance suite of WHATSAPP-BOT-CONTRACT.md §9, for the developer to run:\n\n` +
+        `      cd apps/api && npm run bot:acceptance -- \\\n` +
+        `        --base-url http://localhost:${PORT_API} --credential-id ${sandbox.credentialId} \\\n` +
+        `        --secret ${sandbox.secret} --phone ${sandbox.phone ?? ""} \\\n` +
+        `        --doctor-id ${sandbox.doctorId ?? ""} --service-id ${sandbox.serviceId ?? ""} \\\n` +
+        `        --foreign-appointment-id ${sandbox.foreignAppointmentId ?? ""} \\\n` +
+        `        --webhook-secret ${sandbox.webhookSecret} --json acceptance.json\n\n` +
+        `      Shown once. The next preview revokes this credential and issues another.\n`;
   console.log(
-    `\n${rule}\n  REVIEW BUILD READY\n\n      http://localhost:${PORT_WEB}\n\n` +
+    `\n${rule}\n  REVIEW BUILD READY\n\n      http://localhost:${PORT_WEB}\n${marketingLine}${sandboxBlock}\n` +
       `  branch ${builtBranch}${prLabel}\n` +
       `  commit ${commit}   built ${builtAt}\n  database ${REVIEW_DB}   api :${PORT_API}\n\n` +
       `  The login footer shows that branch and commit. If it shows anything else you are\n` +

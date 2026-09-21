@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   DEVELOPER_FACING,
+  FIELD_NAMES,
   REFUSAL_CODES,
   RESOURCE_NAMES,
   type RefusalCode,
@@ -62,6 +63,20 @@ describe("every refusal code has Arabic on the client", () => {
     const missing = RESOURCE_NAMES.filter((name) => !KEYS.has(`resource.${name}`));
     expect(missing).toEqual([]);
     expect(KEYS.has("resource.unknown")).toBe(true);
+  });
+
+  /**
+   * The same hole `resource` had, in the param added 2026-09-15.
+   *
+   * `INVALID_FIELD` is one code with a `field` param, so its sentence is only as complete as this
+   * table — and it is the sentence an operator reads instead of "a system error occurred", which is
+   * the whole reason the code exists. A field with no Arabic renders `field.slug` inside an Arabic
+   * sentence, which is worse than the generic apology it replaced.
+   */
+  test("every field name a refusal can name has Arabic, plus the unknown fallback", () => {
+    const missing = FIELD_NAMES.filter((name) => !KEYS.has(`field.${name}`));
+    expect(missing).toEqual([]);
+    expect(KEYS.has("field.unknown")).toBe(true);
   });
 
   test("every code and every resource noun has a row in REFUSAL-CODES.md", () => {

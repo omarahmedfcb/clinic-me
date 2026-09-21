@@ -4,6 +4,7 @@ import { LoginPage } from "./features/auth/LoginPage.tsx";
 import { SessionProvider, fetchMe, type CurrentUser } from "./features/auth/session.tsx";
 import { ChangePasswordScreen } from "./features/staff/ChangePasswordScreen.tsx";
 import { GalleryPage } from "./features/gallery/GalleryPage.tsx";
+import { PlatformConsole } from "./features/platform/PlatformConsole.tsx";
 import { AppShell } from "./features/shell/AppShell.tsx";
 
 /**
@@ -22,6 +23,9 @@ import { AppShell } from "./features/shell/AppShell.tsx";
  * Without this, F5 would sign a receptionist out. With it, the fifteen-minute access token is
  * invisible to her, which is the entire point of having a refresh token at all.
  */
+
+/** The operator's console. One definition, because two checks would drift the first time one moved. */
+export const isPlatformPath = (): boolean => window.location.pathname.startsWith("/platform");
 
 type Screen =
   | { kind: "loading" }
@@ -48,6 +52,11 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
 
+    // The operator's console is not a clinic session, and asking for one on its behalf produces a
+    // 401 in the browser console on every load — noise that reads as a fault during a review. The
+    // early return below cannot prevent this: hooks run before it.
+    if (isPlatformPath()) return;
+
     void (async () => {
       try {
         const response = await fetch("/api/auth/refresh", { method: "POST", credentials: "include" });
@@ -70,6 +79,16 @@ export function App() {
 
   // Kept reachable for review; it is not part of the application's own navigation.
   if (window.location.pathname.startsWith("/gallery")) return <GalleryPage />;
+
+  /**
+   * **The operator's console, outside the clinic application entirely** — pilot-readiness 0b–0f.
+   *
+   * Checked before the session logic below, and never inside `AppShell`: the shell is built around a
+   * membership, and the operator holds none in any clinic. Its own login, its own token, and a
+   * sidebar it never appears in — a link to it from a clinic's navigation would be describing a
+   * person the product does not have.
+   */
+  if (isPlatformPath()) return <PlatformConsole />;
 
   if (screen.kind === "loading") {
     return (

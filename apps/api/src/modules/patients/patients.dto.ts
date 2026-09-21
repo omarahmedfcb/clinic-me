@@ -92,9 +92,13 @@ export class CreatePatientDto {
   fullNameEn?: string;
 
   /**
-   * E.164. Normalising a typed number to this shape is the caller's job at the edge — the same
-   * `normalisePhone` the login screen uses — because the tenant's country is the hint and this DTO
-   * has no tenant.
+   * Accepted as typed and normalised to E.164 by `patients.service.ts`, against the clinic's own
+   * `tenants.country` — which this DTO cannot see, and which is why normalisation is not here. A
+   * number that does not parse is refused with `INVALID_FIELD` naming this field.
+   *
+   * It said the opposite until 2026-09-16: that normalising was "the caller's job at the edge".
+   * No caller did it, so phones were stored exactly as typed and one family with one number became
+   * two households.
    */
   @IsString()
   @MinLength(5)

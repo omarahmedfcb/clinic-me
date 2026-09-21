@@ -6,6 +6,9 @@ import cookieParser from "cookie-parser";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "./app.module.ts";
 import { assertTimezoneDataAvailable } from "./common/timezone-support.ts";
+import { assertBotSandboxAllowed } from "./modules/bot/sandbox-policy.ts";
+import { assertOperatorTotpAllowed } from "./modules/platform/totp-policy.ts";
+import { refusingValidationPipe } from "./common/validation-pipe.ts";
 
 /**
  * Reads a boolean-ish environment variable. Anything other than an explicit truthy value is false,
@@ -25,6 +28,20 @@ async function bootstrap(): Promise<void> {
    * start, because the second kind gets noticed.
    */
   assertTimezoneDataAvailable();
+
+  /**
+   * And before any port is bound: `OPERATOR_TOTP=off` must never reach production.
+   *
+   * Same argument as the line above. The flag exists so a development and review build can reach
+   * the console without an authenticator; a `.env` copied to a server, or a stale deployment
+   * variable, is how a setting like that arrives somewhere it was never meant to be. Refusing to
+   * start is loud; an operator surface quietly accepting a password alone is not.
+   */
+  assertOperatorTotpAllowed();
+
+  // And for the same reason: a sandbox prints a bot credential and points a clinic's webhook at a
+  // logging receiver, which is fine on a laptop and is a data leak on a server.
+  assertBotSandboxAllowed();
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
@@ -86,16 +103,9 @@ async function bootstrap(): Promise<void> {
    * `transform` turns a plain body into an instance of the DTO class, so declared types are real at
    * runtime rather than whatever JSON.parse produced.
    */
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      // Without this, every numeric or boolean field arriving as a string from a query parameter
-      // needs its own @Type decorator, and the one that is forgotten fails at the database instead.
-      transformOptions: { enableImplicitConversion: true },
-    }),
-  );
+  // The settings moved to `common/validation-pipe.ts` with the `exceptionFactory` that gives a
+  // rejection a refusal code — see that file for why `message` is kept alongside it.
+  app.useGlobalPipes(refusingValidationPipe());
 
   /**
    * Graceful shutdown. Without this, SIGTERM kills the process with the Prisma pool still holding

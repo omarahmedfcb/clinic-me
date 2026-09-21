@@ -191,8 +191,14 @@ export function apiRoutes(apiSrcDirectory: string, repoRoot: string): RouteEntry
     const source = path.relative(repoRoot, file).split(path.sep).join("/");
     const found = decorators(text);
 
-    const controller = found.find((decorator) => decorator.name === "Controller");
-    const prefix = controller === undefined ? "" : (firstString(controller.args) ?? "");
+    // Every `@Controller` in the file, not the first: two controllers in one file is a real shape
+    // here (`bot-credential.controller.ts`), and taking the first gave the second one's routes a
+    // path the API does not serve — a manifest that disagrees with the server it describes.
+    const controllers = found.filter((decorator) => decorator.name === "Controller");
+    const prefixAt = (position: number): string => {
+      const owning = controllers.filter((decorator) => decorator.end <= position).at(-1);
+      return owning === undefined ? "" : (firstString(owning.args) ?? "");
+    };
 
     // A method declaration: `async list(`, `list(`, `private caller(`. Attaching decorators by
     // position rather than by proximity is what makes an extra decorator between them harmless.
@@ -217,7 +223,7 @@ export function apiRoutes(apiSrcDirectory: string, repoRoot: string): RouteEntry
       const permission = mine.find((decorator) => decorator.name === "RequirePermission");
       out.push({
         method: HTTP_DECORATORS[verb.name] as HttpMethod,
-        path: joinPath(prefix, firstString(verb.args) ?? ""),
+        path: joinPath(prefixAt(start), firstString(verb.args) ?? ""),
         capability: permission === undefined ? null : firstString(permission.args),
         source,
       });

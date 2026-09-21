@@ -21,9 +21,11 @@ import {
   nationalIdDisagreements,
   parseEgyptianNationalId,
 } from "../../domain/egyptian-national-id.ts";
+import { refusalText } from "../platform/refusal-text.ts";
 import {
   createPatient,
   loadHousehold,
+  type FieldRefusal,
   type Household,
   type NewPatient,
   type Relationship,
@@ -75,6 +77,7 @@ export function NewPatientDialog({
   const [mismatch, setMismatch] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<TranslationKey | null>(null);
+  const [refusal, setRefusal] = useState<FieldRefusal | null>(null);
   const [showRequired, setShowRequired] = useState(false);
 
   // The three parts drive the ISO value. "Not finished choosing" is not a format error — the
@@ -155,6 +158,7 @@ export function NewPatientDialog({
     }
     setSaving(true);
     setError(null);
+    setRefusal(null);
     const body: NewPatient = {
       fullNameAr: fullNameAr.trim(),
       phoneE164: phoneE164.trim(),
@@ -178,6 +182,12 @@ export function NewPatientDialog({
       onCreated(result.patient.id);
       return;
     }
+    // A refusal that names a field belongs on that control; the banner is the fallback for the
+    // ones that do not name one.
+    if (result.reason === "INVALID" && result.refusal?.field != null) {
+      setRefusal(result.refusal);
+      return;
+    }
     setError(
       result.reason === "DUPLICATE_ID"
         ? "intake.duplicateId"
@@ -188,6 +198,15 @@ export function NewPatientDialog({
   }
 
   const required = (value: string) => (showRequired && value.trim() === "" ? t("intake.required") : undefined);
+
+  /**
+   * The API's refusal, shown on the control it names.
+   *
+   * Generic on purpose: the server sends `INVALID_FIELD` with the DTO property, so a field that
+   * gains validation later needs no change here beyond passing its own name.
+   */
+  const fieldError = (name: string): string | undefined =>
+    refusal?.field === name ? refusalText(t, refusal.code, { field: name }) : undefined;
 
   return (
     <Modal
@@ -212,15 +231,17 @@ export function NewPatientDialog({
           label={t("intake.field.fullNameAr")}
           required
           value={fullNameAr}
-          error={required(fullNameAr)}
+          error={fieldError("fullNameAr") ?? required(fullNameAr)}
           onChange={(e) => setFullNameAr(e.target.value)}
         />
         <TextInput
           label={t("intake.field.phone")}
           required
           numeric
+          type="tel"
+          inputMode="tel"
           value={phoneE164}
-          error={required(phoneE164)}
+          error={fieldError("phoneE164") ?? required(phoneE164)}
           onChange={(e) => setPhone(e.target.value)}
         />
 
@@ -323,7 +344,10 @@ export function NewPatientDialog({
             <TextInput
               label={t("intake.field.secondaryPhone")}
               numeric
+              type="tel"
+              inputMode="tel"
               value={secondaryPhone}
+              error={fieldError("secondaryPhone")}
               onChange={(e) => setSecondaryPhone(e.target.value)}
             />
             <TextInput

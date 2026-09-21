@@ -11,6 +11,7 @@ import { issueAccessToken } from "../../src/modules/auth/jwt.ts";
 import { injected } from "../../src/prisma/injected.ts";
 import { withTenant } from "../../src/prisma/with-tenant.ts";
 import { actorFor, type ClinicFixture, seedClinic, teardownClinic } from "./fixtures.ts";
+import { generateFixturePhone } from "../fixture-phone.ts";
 
 /**
  * The audit chain, closed end to end over real HTTP:
@@ -62,7 +63,7 @@ class TenantScopedWriteController {
         data: injected({
           id: body.patientId,
           fullNameAr: "مريض عبر الوسيط",
-          phoneE164: `+2018${body.patientId.replace(/-/g, "").slice(0, 8)}`,
+          phoneE164: generateFixturePhone(),
           relationshipToContact: "SELF",
           status: "ACTIVE",
         }),

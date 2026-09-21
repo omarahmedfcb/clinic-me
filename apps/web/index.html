@@ -20,7 +20,32 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>معرض المكونات — Clinic OS</title>
+    <title>NOMED OS</title>
+
+    <!--
+      The mark, at the three sizes a browser and a home screen ask for. SVG first: a tab that can
+      take a vector gets one, and the PNGs are the fallback and the PWA's.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/brand/nomed-mark.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/brand/icon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/brand/icon-16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/brand/icon-180.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0b7a80" />
+
+    <!--
+      The two brand faces, preloaded.
+
+      Self-hosted, so there is no `preconnect` to a CDN here any more: the old build fetched Cairo
+      from fonts.googleapis.com on every load, which is a third party watching every sign-in, a
+      render-blocking round trip from Cairo, and a dependency on a network a clinic may not have.
+      `brand.spec.ts` fails if either host comes back.
+
+      Only the 400 weights are preloaded. Preloading all eight would fetch 360 KB before the first
+      paint to save a few milliseconds on text that is not on screen yet.
+    -->
+    <link rel="preload" href="/fonts/inter-400-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/plex-arabic-400-arabic.woff2" as="font" type="font/woff2" crossorigin />
 
     <!--
       Pre-paint direction stamp (SCHEMA-DECISIONS.md D20).
@@ -56,9 +81,6 @@
       })();
     </script>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap" rel="stylesheet" />
   </head>
   <body>
     <div id="root"></div>

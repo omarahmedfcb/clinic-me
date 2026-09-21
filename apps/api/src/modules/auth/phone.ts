@@ -61,11 +61,31 @@ export function toLatinDigits(input: string): string {
  * controller can fold into the same response as "no such user" — not an exception with its own
  * shape and its own status code.
  */
+/** Formatting a human adds, and nothing else: spaces, dashes, parentheses, dots. */
+const FORMATTING = /[\s\-().]/g;
+
+/** What is left must be digits, optionally behind one leading `+`. Anything else is not a phone. */
+const PHONE_SHAPE = /^\+?\d+$/;
+
 export function normalisePhone(input: string, defaultCountry: "EG" | "SA" | "AE"): string | null {
   const latin = toLatinDigits(input).trim();
   if (latin.length === 0) return null;
 
-  const parsed = parsePhoneNumberFromString(latin, defaultCountry);
+  // An email is an identifier, not a phone, and must never be rewritten into one.
+  if (latin.includes("@")) return null;
+
+  const stripped = latin.replace(FORMATTING, "");
+  const candidate = stripped.startsWith("00") ? `+${stripped.slice(2)}` : stripped;
+
+  /*
+   * The shape is checked before parsing, because libphonenumber is lenient: given
+   * `+2010128538ff` it extracts the valid numeric prefix and returns `+2010128538`, silently
+   * authenticating a different number from the one typed. Ruled 2026-09-16 after that leniency
+   * made 2.27% of fixture users unreachable through their own login.
+   */
+  if (!PHONE_SHAPE.test(candidate)) return null;
+
+  const parsed = parsePhoneNumberFromString(candidate, defaultCountry);
   return parsed?.isValid() ? parsed.number : null;
 }
 

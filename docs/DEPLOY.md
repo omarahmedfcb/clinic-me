@@ -18,7 +18,7 @@ project, and this one has not met that machine yet.
 | The stack starts, and `/health` answers through Caddy | ✅ `{"status":"ok","database":"reachable"}`, plus the SPA and a deep link at 200 |
 | Caddy sets `X-Forwarded-For` to the client address | ✅ upstream saw the client's address while the connection arrived from Caddy's |
 | Express resolves that header into `req.ip`, and that value reaches `audit_logs` | ✅ `forwarded-ip-audit.integration.spec.ts` |
-| An HTTP request end-to-end producing an audit row | ❌ **not possible yet** — no controller writes anything; `GET /health` is the only route. Closes with the auth endpoints |
+| An HTTP request end-to-end producing an audit row | ✅ closed in #12 — `audit-chain-http.integration.spec.ts`, forwarded client address included. Tested in-process, not yet through Caddy on a host |
 | The migrator applies migrations to an empty database, as a non-root user | ✅ 13 migrations, uid 1000 |
 | `clinic_os_app` is `rolsuper=f`, `rolbypassrls=f` after provisioning | ✅ |
 | The API container never receives `DATABASE_URL`, and no database port is published | ✅ both confirmed on the running stack |
@@ -26,7 +26,9 @@ project, and this one has not met that machine yet.
 | Any of it on a Linux host, or on the eventual provider | ❌ **not verified** |
 | The restore drill in §7 | ✅ run 2026-08-27 — 5s, counts identical to live |
 | Recovery into a *fresh* cluster (§7c) | ✅ proven, including that the obvious order silently half-restores |
-| The nightly backup script on a cron | ❌ **written, never scheduled** — the drill was run by hand |
+| The backup script and restore drill, in the repository | ✅ `scripts/backup/` — #116, #117, #124; exercised against a throwaway database, a MinIO bucket and, read-only, the review data |
+| The backup on a server cron, and the nightly restore with an alert | ❌ **not scheduled anywhere** — there is no server yet (PILOT-READINESS 1c, 2c) |
+| WAL archiving and point-in-time recovery (§15, production) | ❌ **not built** — the script takes nightly dumps only |
 
 Nothing here is marked verified until it has been watched to happen. Treat
 step timings as estimates, and report anything that does not match — including the parts marked
@@ -251,6 +253,18 @@ intended: `depends_on: service_completed_successfully` is the gate.
 
 **This is the section that did not exist before, and the one to get right.** ARCHITECTURE.md §15
 sets the requirements; this is the concrete implementation for a single-host deployment.
+
+> **Attachments may live in object storage rather than on the disk** (2026-09-18). With
+> `ATTACHMENTS_STORAGE_BACKEND=s3` the API writes them to a bucket, and both `backup.mjs` and
+> `restore-drill.mjs` read that bucket instead of the volume — the artefact and the per-key check are
+> unchanged, so the §7 reasoning below holds either way. A backup left on `local` while the API
+> writes to a bucket is caught by the size floor: it archives an empty directory and is refused.
+>
+> **Use `scripts/backup/`, not the inline scripts below** (#116, #117, #124). `backup.mjs` encrypts
+> the dump and the attachment archive to an age public key and uploads both off-machine;
+> `restore-drill.mjs` restores into a scratch database and checks every file each storage-key
+> column references. The shell below is kept as the reasoning behind them — the ordering, the size
+> floors and the attachments gap still apply.
 
 ### What backs up
 
@@ -530,8 +544,8 @@ holds no application code and no database credentials.
 deployment builds from source on the host, which is fine for staging and wrong for production —
 production wants an image built once, tested, and promoted, not rebuilt per environment.
 
-**Rate limiting on auth endpoints is required by PHASE-1 §1 and does not exist.** Neither do the
-auth endpoints yet. Both land together.
+**Rate limiting covers auth only.** Login (#12) and change-password (#118) are limited; no route
+outside auth is (PILOT-READINESS 4b).
 
 **Auth rate limiting counts in memory, which makes this a single-instance deployment.**
 `@nestjs/throttler`'s default store is per-process. With one API container that is correct and
@@ -553,7 +567,9 @@ them. Acceptable for staging; name it now so it is not mistaken for done.
 which this provides. A service worker can serve stale application code, which in a clinical system
 is a design decision rather than a plugin default.
 
-**The provider is not chosen.** ARCHITECTURE.md §14 still carries "Decision required", and PDPL
+**The provider is not chosen.** `docs/HOSTING.md` holds the comparison and a recommendation
+(Huawei Cloud AF-Cairo, with LightNode Cairo as the fallback); nothing is contracted.
+ARCHITECTURE.md §14 still carries "Decision required", and PDPL
 residency (§2, §5) constrains production to Egypt while staging with synthetic data is unconstrained.
 §18b's portability requirement is what makes that a deploy change rather than a rewrite: nothing
 here is provider-specific except the DNS record and the object storage the backup script writes to.

@@ -5,6 +5,7 @@ import { prisma } from "../../src/prisma/client.ts";
 import { injected } from "../../src/prisma/injected.ts";
 import { withTenant } from "../../src/prisma/with-tenant.ts";
 import { actorFor, seedClinic, teardownClinic, type ClinicFixture } from "./fixtures.ts";
+import { generateFixturePhone } from "../fixture-phone.ts";
 
 /**
  * Insurance on the queue row. `PHASE-3.md` Q18, founder's ruling 2026-09-02.
@@ -41,7 +42,7 @@ describe("insurance on the queue row", () => {
     await withTenant(clinic.tenantId, actorFor(clinic.userId), async (tx) => {
       contactId = randomUUID();
       await tx.contact.create({
-        data: injected({ id: contactId, phoneE164: `+2017${contactId.replace(/-/g, "").slice(0, 7)}` }),
+        data: injected({ id: contactId, phoneE164: generateFixturePhone() }),
       });
     });
   });
@@ -62,7 +63,7 @@ describe("insurance on the queue row", () => {
           id: patientId,
           contactId,
           fullNameAr: name,
-          phoneE164: `+2018${patientId.replace(/-/g, "").slice(0, 7)}`,
+          phoneE164: generateFixturePhone(),
           relationshipToContact: "SELF",
           status: "ACTIVE",
         }),

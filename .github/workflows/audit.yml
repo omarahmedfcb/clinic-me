@@ -1,0 +1,44 @@
+# A06: a weekly look for advisories in what we already ship. Ruled 2026-09-19.
+#
+# Separate from `ci.yml` on purpose. CI answers "is this change sound"; this answers "did the world
+# change under code that was already merged", which is a different question with a different
+# cadence. Running it on every push would also mean a new advisory turns an unrelated pull request
+# red, which teaches people to merge past it.
+#
+# `--audit-level=high` is the threshold, not the policy: the policy is in docs/SECURITY-REVIEW.md
+# A06 — critical acted on within 7 days, high within 30.
+name: Audit
+
+on:
+  schedule:
+    # 04:00 UTC Monday — 06:00 in Cairo, before the clinic day and before anybody is working.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    strategy:
+      # Every workspace is audited even when an earlier one fails: "the API has an advisory" must
+      # not hide "the web app has two".
+      fail-fast: false
+      matrix:
+        workspace: [apps/api, apps/web]
+        # apps/marketing joins this list when that app lands on develop (#115). Listing a directory
+        # that is not in the repository would fail the job for a reason that is not an advisory,
+        # which is how a security job gets muted.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # `npm audit` needs the lockfile, not the tree, so nothing is installed. It is also why this
+      # job takes seconds and can afford to run on a schedule nobody tunes.
+      - name: Advisories at high or above
+        run: npm audit --audit-level=high
+        working-directory: ${{ matrix.workspace }}
+
+      # **Never `npm audit fix --force`.** Its remediation downgrades Prisma to 6.x and breaks the
+      # exact-version pin D10 requires. The fix for an advisory here is a considered bump, which is
+      # what Dependabot's weekly pull request is for.

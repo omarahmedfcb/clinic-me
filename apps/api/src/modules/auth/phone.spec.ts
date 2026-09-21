@@ -68,6 +68,26 @@ describe("normalisePhone", () => {
     expect(normalisePhone("050 123 4567", "SA")).toBe("+966501234567");
   });
 
+  test("never rewrites a non-phone into a phone", () => {
+    // Ruled 2026-09-16. libphonenumber is lenient: given trailing junk it extracts the valid
+    // numeric prefix, so `+2010128538ff` came back as `+2010128538` — a DIFFERENT number, which
+    // the login then looked up and did not find. The shape is now checked before parsing.
+    expect(normalisePhone("+2010128538ff", "EG")).toBeNull();
+    expect(normalisePhone("+201001234567-drop-this", "EG")).toBeNull();
+    expect(normalisePhone("+2010a1b2c3d4", "EG")).toBeNull();
+  });
+
+  test("an email is an identifier, not a phone, and is never normalised", () => {
+    // The controller falls back to the raw string, so email login still works — it just does not
+    // travel through a phone parser on the way.
+    expect(normalisePhone("amira@clinic.example", "EG")).toBeNull();
+    expect(normalisePhone("+201001234567@clinic.example", "EG")).toBeNull();
+  });
+
+  test("still accepts the international prefix written as 00", () => {
+    expect(normalisePhone("00201001234567", "EG")).toBe(EXPECTED);
+  });
+
   test("an Egyptian mobile typed with the country code and a leading zero still resolves", () => {
     // +20 0100... is a common paste artefact: the country code kept and the trunk zero not dropped.
     expect(normalisePhone("+20 0100 123 4567", "EG")).toBe(EXPECTED);

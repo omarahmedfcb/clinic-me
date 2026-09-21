@@ -62,8 +62,9 @@ somebody at the desk could act on. The code goes to the console; the user gets `
 | `NO_VISIT_YET` | — | The appointment exists; no visit has been recorded against it. Different action: wait | 404 |
 | `NO_CONTACT_RECORD` | — | No household to attach a policy to. Different action: add contact details first | 422 |
 
-`resource` is one of: `appointment`, `attachment`, `charge`, `coverage`, `doctor`, `exception`,
-`insuranceCompany`, `membership`, `patient`, `policy`, `procedure`, `service`, `transfer`, `visit`.
+`resource` is one of: `appointment`, `attachment`, `botCredential`, `charge`, `clinic`,
+`coverage`, `doctor`, `exception`, `insuranceCompany`, `membership`, `patient`, `policy`,
+`procedure`, `service`, `transfer`, `visit`.
 An unknown value renders a generic
 noun rather than leaving a hole in the sentence.
 
@@ -80,6 +81,13 @@ noun rather than leaving a hole in the sentence.
 | Code | params | What it means | HTTP |
 |---|---|---|---|
 | `ALREADY_LINKED` | — | These two patients are already linked as kin (Q30). Different action: remove the link, or pick another patient | 409 |
+
+### The clinic's bot credential
+
+| Code | params | What it means | HTTP |
+|---|---|---|---|
+| `ALREADY_ISSUED` | — | This clinic already has a live bot credential, and it may hold only one. Different action: revoke the one that exists, then issue | 409 |
+| `INVALID_CREDENTIAL` | `resource` | What `POST /bot/auth/token` answers to a wrong secret, a revoked credential and an id that never existed alike — which of the three it was is not the caller's business | 401 |
 
 ### Permission and the care relationship
 
@@ -129,6 +137,17 @@ the code.
 | `REFUND_REASON_REQUIRED` | — | A refund is given on request **with a reason**; the reason is not optional | 400 |
 | `AMOUNT_NOT_POSITIVE` | — | Zero is not a movement. Money is integer minor units | 400 |
 | `INVALID_PERIOD` | — | A report period that is neither a day nor a month. Ask for a real one | 422 |
+| `SLUG_TAKEN` | `name` | That short name is already a clinic's. Choose another | 400 |
+| `ALREADY_IN_THAT_STATE` | `status` | Suspending a suspended clinic, or reactivating a live one | 422 |
+| `INVALID_FIELD` | `field` | A field the DTO refused, with `field` saying which. Added 2026-09-15: a `ValidationPipe` rejection carries no code, and a client with no code renders its generic apology — so a mistyped short name reached the operator as "a system error occurred" | 400 |
+| `NOT_OPERATOR_OWNER` | — | Seating an operator, changing a seat, or clearing a second factor. The platform OWNER alone. Different action from `NOT_PERMITTED`: ask the owner | 422 |
+| `TOTP_ENROLMENT_REQUIRED` | — | The operator has no confirmed authenticator. The action is to enrol, and nothing else works until they do | 403 |
+| `TOTP_INVALID` | — | Six digits that are not the current code. Different action: read the app again | 422 |
+| `TOTP_ALREADY_ENROLLED` | — | An authenticator is confirmed already; re-enrolling would lock the old one out. It is reset, not replaced quietly | 422 |
+| `NOT_RECOVERY_SESSION` | — | Replacing the authenticator is only for a session a recovery code opened. An operator who still has theirs wants `recovery-codes/regenerate`, which demands it | 403 |
+| `INVALID_DATE_RANGE` | `field` | A contract that ends before it starts, or a date that is not one | 422 |
+| `INVALID_AMOUNT` | `field` | A discount outside 0–100, or an agreed price below zero | 422 |
+| `CLIENT_FILE_EXISTS` | — | A clinic has one client file. It is edited, not created twice | 422 |
 | `DUPLICATE_PHONE` | — | That number is already somebody's login. It parses; it is taken | 409 |
 | `NOT_EDITABLE_HERE` | `name` | A doctor's record belongs to the Doctors tab, not the users list | 422 |
 | `OWNER_ROLE_FIXED` | — | The owner's role is not changed from the users list; ownership transfer needs its own screen | 422 |

@@ -1,3 +1,4 @@
+import { ThrottlingModule } from "../../src/common/throttling.module.ts";
 import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -11,6 +12,7 @@ import { prisma } from "../../src/prisma/client.ts";
 import { injected } from "../../src/prisma/injected.ts";
 import { withTenant } from "../../src/prisma/with-tenant.ts";
 import { actorFor, seedClinic, teardownClinic, type ClinicFixture } from "./fixtures.ts";
+import { generateFixturePhone } from "../fixture-phone.ts";
 
 /**
  * The patient book — `PHASE-4.md`, ruled by the founder on 2026-09-03.
@@ -32,6 +34,8 @@ import { actorFor, seedClinic, teardownClinic, type ClinicFixture } from "./fixt
  * English-named patients to the top and reads as a bug.
  */
 @Module({
+  // A rate-limited route lives here (4b), so its guard needs the throttler options in scope.
+  imports: [ThrottlingModule],
   controllers: [PatientsController],
   providers: [{ provide: APP_INTERCEPTOR, useClass: ActorContextInterceptor }],
 })
@@ -186,7 +190,7 @@ describe("the patient book", () => {
         await tx.contact.create({
           data: injected({
             id: contactId,
-            phoneE164: `+2015${contactId.replace(/-/g, "").slice(0, 7)}`,
+            phoneE164: generateFixturePhone(),
             whatsappOptIn: false,
           }),
         });

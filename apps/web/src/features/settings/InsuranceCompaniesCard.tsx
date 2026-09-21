@@ -182,6 +182,8 @@ export function InsuranceCompaniesCard({ authFetch }: { authFetch: AuthFetch }) 
             <TextInput
               label={t("settings.insurers.phone")}
               numeric
+              type="tel"
+              inputMode="tel"
               value={draft.phone ?? ""}
               onChange={(event) => setDraft({ ...draft, phone: orNull(event.target.value) })}
             />

@@ -1,3 +1,4 @@
+import { ThrottlingModule } from "../../src/common/throttling.module.ts";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import type { Server } from "node:http";
@@ -23,6 +24,7 @@ import {
   teardownClinic,
   type ClinicFixture,
 } from "./fixtures.ts";
+import { generateFixturePhone } from "../fixture-phone.ts";
 
 /**
  * `GET /appointments/:id/visit` — `PHASE-4.md` Q18, **as revised 2026-09-05**.
@@ -42,6 +44,8 @@ import {
 let storageRoot = "";
 
 @Module({
+  // The upload route is rate-limited (4b), so its guard needs the throttler options in scope.
+  imports: [ThrottlingModule],
   controllers: [ClinicalController, AttachmentsController],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: ActorContextInterceptor },
@@ -220,7 +224,7 @@ describe("GET /appointments/:id/visit", () => {
         data: injected({
           id: movedOnPatientId,
           fullNameAr: "مريض سابق",
-          phoneE164: `+2013${movedOnPatientId.replace(/-/g, "").slice(0, 7)}`,
+          phoneE164: generateFixturePhone(),
           relationshipToContact: "SELF",
           status: "ACTIVE",
         }),
@@ -243,7 +247,7 @@ describe("GET /appointments/:id/visit", () => {
         data: injected({
           id: strangerPatientId,
           fullNameAr: "مريض طبيب آخر",
-          phoneE164: `+2013${strangerPatientId.replace(/-/g, "").slice(0, 7)}`,
+          phoneE164: generateFixturePhone(),
           relationshipToContact: "SELF",
           status: "ACTIVE",
         }),

@@ -11,6 +11,7 @@ import {
   seedClinic,
   teardownClinic,
 } from "./fixtures.ts";
+import { generateFixturePhone } from "../fixture-phone.ts";
 
 /**
  * SCHEMA-DECISIONS.md D17: RLS on audit_logs.
@@ -25,11 +26,15 @@ import {
  * product, because the trigger is part of the writing statement.
  */
 
-function superuserUrl(): string {
-  // The migration role, which is a superuser and therefore bypasses RLS unconditionally (D12).
-  // Used here only to observe rows the policy is supposed to hide -- a test that checked
-  // invisibility using a connection that cannot see them either would prove nothing.
-  const url = process.env["DATABASE_URL"];
+function observerUrl(): string {
+  // A connection that sees rows the policy hides, used only to observe them -- a test that checked
+  // invisibility from a connection that cannot see them either would prove nothing.
+  //
+  // TEST_OBSERVER_URL when the drill sets one: `scripts/rls-ownership-drill.mjs` runs this suite
+  // against a database with no superuser, where the migration role is subject to its own policies.
+  // Observing is the test harness's problem, not the product's, so the drill supplies a role for it
+  // rather than the product relying on a superuser existing.
+  const url = process.env["TEST_OBSERVER_URL"] ?? process.env["DATABASE_URL"];
   if (!url) throw new Error("DATABASE_URL must be set (see setup-env.ts)");
   return url;
 }
@@ -40,8 +45,8 @@ function appUrl(): string {
   return url;
 }
 
-async function asSuperuser<T>(fn: (client: Client) => Promise<T>): Promise<T> {
-  const client = new Client({ connectionString: superuserUrl() });
+async function asObserver<T>(fn: (client: Client) => Promise<T>): Promise<T> {
+  const client = new Client({ connectionString: observerUrl() });
   await client.connect();
   try {
     return await fn(client);
@@ -64,10 +69,12 @@ describe("audit_logs row-level security", () => {
     await prisma.user.create({
       data: {
         id: platformAdminId,
-        phoneE164: `+2016${platformAdminId.replace(/-/g, "").slice(0, 8)}`,
+        phoneE164: generateFixturePhone(),
         passwordHash: "test-hash-not-real",
         fullName: "Platform Admin",
         isPlatformAdmin: true,
+        // A CHECK refuses the flag without a seat, from 2026-09-15.
+        platformRole: "OWNER",
         status: "ACTIVE",
       },
     });
@@ -76,10 +83,10 @@ describe("audit_logs row-level security", () => {
     // that is now blocked outright, and the FK action that would have produced it could never
     // have fired anyway. It is reached by platform-level events (the BREAK_GLASS_ACCESS rows
     // further down are the live example) and by whatever anonymisation process D14 calls for.
-    // Inserted here as the superuser, standing in for such a row, because the policy correctly
-    // makes it unwritable by any ordinary session -- which is itself asserted below.
+    // Inserted through the observer connection, standing in for such a row, because the policy
+    // correctly makes it unwritable by any ordinary session -- which is itself asserted below.
     orphanRowId = randomUUID();
-    await asSuperuser(async (client) => {
+    await asObserver(async (client) => {
       await client.query(
         `INSERT INTO audit_logs (id, tenant_id, actor_user_id, actor_role, action, entity_type,
                                  entity_id, previous_state, new_state, ip_address, user_agent, created_at)
@@ -91,7 +98,7 @@ describe("audit_logs row-level security", () => {
   });
 
   afterAll(async () => {
-    await asSuperuser(async (client) => {
+    await asObserver(async (client) => {
       // audit_logs is append-only (D5) for every role including this one, so the rows this file
       // created stay. Harmless and confined to the disposable test database -- the same
       // best-effort cleanup posture fixtures.ts documents.
@@ -114,7 +121,7 @@ describe("audit_logs row-level security", () => {
         data: injected({
           id: patientId,
           fullNameAr: "Written Under RLS",
-          phoneE164: `+2015${patientId.replace(/-/g, "").slice(0, 8)}`,
+          phoneE164: generateFixturePhone(),
           relationshipToContact: "SELF",
           status: "ACTIVE",
         }),
@@ -123,7 +130,7 @@ describe("audit_logs row-level security", () => {
 
     // Observed from outside RLS, so this asserts the row was really committed rather than merely
     // being visible to the session that wrote it.
-    const rows = await asSuperuser(async (client) =>
+    const rows = await asObserver(async (client) =>
       client.query("SELECT tenant_id, action FROM audit_logs WHERE entity_id = $1::uuid", [patientId]),
     );
 
@@ -135,7 +142,7 @@ describe("audit_logs row-level security", () => {
   test("a session bound to tenant A cannot read tenant B's audit rows", async () => {
     // Both clinics have audit history: seedClinic() writes a membership, doctor, service and
     // patient through withTenant(), every one of which fired the trigger.
-    const totalForB = await asSuperuser(async (client) =>
+    const totalForB = await asObserver(async (client) =>
       client.query("SELECT count(*)::int AS n FROM audit_logs WHERE tenant_id = $1::uuid", [clinicB.tenantId]),
     );
     expect(totalForB.rows[0].n).toBeGreaterThan(0);
@@ -177,7 +184,7 @@ describe("audit_logs row-level security", () => {
     expect(Number(unbound[0]?.n)).toBe(0);
 
     // The row does exist -- the two assertions above are about visibility, not absence.
-    const actual = await asSuperuser(async (client) =>
+    const actual = await asObserver(async (client) =>
       client.query("SELECT count(*)::int AS n FROM audit_logs WHERE id = $1::uuid", [orphanRowId]),
     );
     expect(actual.rows[0].n).toBe(1);
@@ -234,7 +241,7 @@ describe("audit_logs row-level security", () => {
       // The disclosure is itself in the record. Read as the superuser because the row it wrote is
       // NULL-tenant, and therefore invisible to every ordinary session by the same policy that
       // made the break-glass path necessary in the first place.
-      const events = await asSuperuser(async (client2) =>
+      const events = await asObserver(async (client2) =>
         client2.query(
           `SELECT actor_user_id, actor_role, action, entity_type, new_state
            FROM audit_logs
@@ -274,7 +281,7 @@ describe("audit_logs row-level security", () => {
           data: injected({
             id: patientId,
             fullNameAr: "Registered Then Removed",
-            phoneE164: `+2014${patientId.replace(/-/g, "").slice(0, 8)}`,
+            phoneE164: generateFixturePhone(),
             relationshipToContact: "SELF",
             status: "ACTIVE",
           }),
@@ -282,16 +289,16 @@ describe("audit_logs row-level security", () => {
         await tx.patient.delete({ where: { id: patientId } });
       });
 
-      const remaining = await asSuperuser(async (client) =>
+      const remaining = await asObserver(async (client) =>
         client.query("SELECT count(*)::int AS n FROM patients WHERE tenant_id = $1::uuid", [tenantId]),
       );
-      const audited = await asSuperuser(async (client) =>
+      const audited = await asObserver(async (client) =>
         client.query("SELECT count(*)::int AS n FROM audit_logs WHERE tenant_id = $1::uuid", [tenantId]),
       );
       expect(remaining.rows[0].n).toBe(0);
       expect(audited.rows[0].n).toBeGreaterThan(0);
 
-      const failure = await asSuperuser(async (client) =>
+      const failure = await asObserver(async (client) =>
         client
           .query("DELETE FROM tenants WHERE id = $1", [tenantId])
           .then(() => null)

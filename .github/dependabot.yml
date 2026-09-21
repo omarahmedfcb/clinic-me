@@ -1,0 +1,72 @@
+# A06: something watches for new advisories. Ruled 2026-09-19.
+#
+# Every ecosystem in the repository, because a gap is whichever one nobody listed: the two apps that
+# ship, and the Actions this repository's CI is built from. A supply-chain problem in a workflow
+# action reaches the same secrets the pipeline holds. (`/apps/marketing` when #115 lands — see below.)
+#
+# **Two groups per ecosystem, split by update type.** Ruled 2026-09-19, after the first week arrived
+# as one group of fifteen containing a NestJS major: a group merges as one commit and cannot be
+# half-taken, so a single major made fourteen safe bumps unmergeable. The `-safe` group carries
+# patch and minor and merges on green under the standing rule; the `-majors` group accumulates the
+# rest in one pull request that waits for a ruling, instead of a new one each Monday.
+#
+# Weekly rather than daily: a pull request nobody reads is worse than none, and this repository has
+# one reviewer with ten to fifteen hours a week.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /apps/api
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 4
+    groups:
+      api-safe:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      api-majors:
+        patterns: ["*"]
+        update-types: ["major"]
+    # Prisma's version is pinned by SCHEMA-DECISIONS.md D10 and a major bump is a decision, not an
+    # update. Security advisories still arrive — those come through the audit job, which does not
+    # propose a downgrade the way `npm audit fix --force` does.
+    ignore:
+      - dependency-name: prisma
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@prisma/*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: npm
+    directory: /apps/web
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 4
+    groups:
+      web-safe:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      web-majors:
+        patterns: ["*"]
+        update-types: ["major"]
+
+  # **`/apps/marketing` is deliberately absent, and goes back when #115 lands on develop.** It was
+  # listed here from the start on the belief that Dependabot skips a directory it cannot find; it
+  # does not — it aborts the job with "/apps/marketing/package.json not found", which it did on
+  # every run from the day this file was written. A scheduled job that is always red is a job
+  # nobody reads.
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      actions-safe:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      actions-majors:
+        patterns: ["*"]
+        update-types: ["major"]

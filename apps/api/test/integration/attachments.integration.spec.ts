@@ -24,6 +24,8 @@ import {
   teardownClinic,
   type ClinicFixture,
 } from "./fixtures.ts";
+import { generateFixturePhone } from "../fixture-phone.ts";
+import { ThrottlingModule } from "../../src/common/throttling.module.ts";
 
 /**
  * Attachments end to end — `PHASE-4.md` Q10, Q11, and the "Attachments" block of the Definition of
@@ -41,6 +43,8 @@ import {
 let storageRoot = "";
 
 @Module({
+  // The upload route is rate-limited (4b), so its guard needs the throttler options in scope.
+  imports: [ThrottlingModule],
   controllers: [AttachmentsController, AttachmentsSummaryController],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: ActorContextInterceptor },
@@ -278,7 +282,7 @@ describe("attachments", () => {
           data: injected({
             id: strangerId,
             fullNameAr: "مريض آخر",
-            phoneE164: `+2012${strangerId.replace(/-/g, "").slice(0, 7)}`,
+            phoneE164: generateFixturePhone(),
             relationshipToContact: "SELF",
             status: "ACTIVE",
           }),

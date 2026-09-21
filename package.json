@@ -11,6 +11,7 @@
   "scripts": {
     "preview": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/review.mjs",
     "hooks:install": "git config core.hooksPath .githooks",
+    "release:gate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/release-gate.mjs",
     "verify": "npm run verify:api && npm run verify:web",
     "verify:api": "npm --prefix apps/api run typecheck && npm --prefix apps/api test && npm --prefix apps/api run test:integration && npm --prefix apps/api run test:no-dotenv && npm --prefix apps/api run test:integration:no-dotenv",
     "verify:web": "npm --prefix apps/web run typecheck && npm --prefix apps/web test"

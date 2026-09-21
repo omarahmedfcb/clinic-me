@@ -4,6 +4,7 @@ import { injected } from "../../prisma/injected.ts";
 import type { RefusalParams } from "../../common/refusals.ts";
 import { withTenant, type ActorContext, type TransactionClient } from "../../prisma/with-tenant.ts";
 import { DeadlockExhaustedError, retryOnDeadlock } from "../../prisma/deadlock-retry.ts";
+import { driverCause } from "../../prisma/driver-error.ts";
 import { describeDay, type DayDescription } from "./domain/describe-day.ts";
 import { generateSlots } from "./domain/generate-slots.ts";
 import {
@@ -135,6 +136,10 @@ const DOUBLE_BOOKING_CONSTRAINT = "no_double_booking";
  *                                          violates exclusion constraint \"no_double_booking\"" } } } }
  * ```
  *
+ * **That burial is read by `driverCause` rather than here**, because the field names move: 7.10.0
+ * dropped `cause.code` for `cause.originalCode` and broke `isDeadlock`, which had the same path
+ * written out longhand. This classifier asks for a code and a message and is told them.
+ *
  * That mistake failed loudly — the concurrency test threw instead of returning `SLOT_TAKEN` — but
  * it is worth noting that it would have failed *silently in production*: every loser of a race
  * would have become a 500 while the suite was green, because nothing but a concurrency test ever
@@ -146,12 +151,10 @@ const DOUBLE_BOOKING_CONSTRAINT = "no_double_booking";
  * as "that time was just taken" would be a confident lie. Anything else is rethrown.
  */
 function isDoubleBookingViolation(error: unknown): boolean {
-  const cause = (
-    error as { meta?: { driverAdapterError?: { cause?: { code?: unknown; message?: unknown } } } } | null
-  )?.meta?.driverAdapterError?.cause;
+  const cause = driverCause(error);
 
-  if (cause?.code !== EXCLUSION_VIOLATION) return false;
-  return String(cause.message ?? "").includes(DOUBLE_BOOKING_CONSTRAINT);
+  if (cause.code !== EXCLUSION_VIOLATION) return false;
+  return (cause.message ?? "").includes(DOUBLE_BOOKING_CONSTRAINT);
 }
 
 /**

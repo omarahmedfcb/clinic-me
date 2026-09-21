@@ -15,6 +15,9 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { linkPatients, listRelations, unlinkPatients } from "./patient-relations.ts";
+import { SkipThrottle } from "@nestjs/throttler";
+import { RetryAfterThrottlerGuard, SkipAllThrottlers, ThrottleOnly } from "../../common/throttlers.ts";
+import { INTAKE_THROTTLER, WRITE_THROTTLE_LIMITS } from "../../common/write-throttle.ts";
 import { AuthGuard, type AuthenticatedRequest } from "../../common/auth.guard.ts";
 import { PermissionGuard } from "../../common/permission.guard.ts";
 import { RequirePermission } from "../../common/require-permission.decorator.ts";
@@ -67,7 +70,9 @@ import {
  * that has been open since Phase 1.
  */
 @Controller("patients")
-@UseGuards(AuthGuard, TenantGuard, PermissionGuard)
+@UseGuards(AuthGuard, TenantGuard, PermissionGuard, RetryAfterThrottlerGuard)
+// Off by default, on per route: every registered throttler applies otherwise, login buckets included.
+@SkipAllThrottlers()
 export class PatientsController {
   /** Identity for the service layer, taken only from the validated token and the bound actor. */
   private caller(request: AuthenticatedRequest): CallerContext {
@@ -80,8 +85,10 @@ export class PatientsController {
     return searchPatients(this.caller(request), query.q, query.limit);
   }
 
+  // 4b: a script registering patients in a loop is the abuse this bounds, keyed on the membership.
   @Post()
   @RequirePermission("patients.write")
+  @ThrottleOnly(INTAKE_THROTTLER, WRITE_THROTTLE_LIMITS.intake, WRITE_THROTTLE_LIMITS.windowMs)
   async create(@Req() request: AuthenticatedRequest, @Body() body: CreatePatientDto) {
     return createPatient(this.caller(request), {
       ...body,
@@ -204,6 +211,7 @@ export class PatientsController {
    * `null` because the row is not visible, never because a comparison failed.
    */
   @Patch(":id")
+  @ThrottleOnly(INTAKE_THROTTLER, WRITE_THROTTLE_LIMITS.intake, WRITE_THROTTLE_LIMITS.windowMs)
   @RequirePermission("patients.write")
   async update(
     @Req() request: AuthenticatedRequest,

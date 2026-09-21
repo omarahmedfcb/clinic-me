@@ -1,3 +1,4 @@
+import { BRAND } from "../../brand/brand.ts";
 import type { WeekDay } from "./schedules-api.ts";
 
 /**
@@ -94,7 +95,9 @@ export function weekToIcs(input: CalendarInput): string {
   const lines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//Rahal Group//Clinic OS//AR",
+    // The product name a calendar app shows as the source. The UID below keeps `clinic-os`: it is
+    // an identifier, and changing it would make every re-import duplicate instead of update.
+    `PRODID:-//Rahal Group//${BRAND.name}//AR`,
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
     `X-WR-CALNAME:${escapeText(`${input.doctorName} — ${input.clinicName}`)}`,

@@ -1,7 +1,9 @@
+import { Client } from "pg";
 import { randomUUID } from "node:crypto";
+import { generateFixturePhone } from "../fixture-phone.ts";
 import { prisma } from "../../src/prisma/client.ts";
 import { injected } from "../../src/prisma/injected.ts";
-import { type ActorContext, withTenant } from "../../src/prisma/with-tenant.ts";
+import { type ActorContext, withPlatformActor, withTenant } from "../../src/prisma/with-tenant.ts";
 
 /** withTenant() now requires an actor (D16); this is the one place tests build that value, always
  * from a real, already-created user id -- the row exists once the audit trigger's FK constraint
@@ -45,6 +47,8 @@ export async function createTestTenant(): Promise<string> {
       slug: `test-tenant-${id}`,
       phone: "+201000000000",
       address: "Cairo",
+      // The phone-parsing hint §18b has always assumed, and now a column (pilot-readiness 0b).
+      country: "EG",
       locale: "ar",
       currency: "EGP",
       status: "ACTIVE",
@@ -63,7 +67,7 @@ export async function createTestUser(): Promise<string> {
   await prisma.user.create({
     data: {
       id,
-      phoneE164: `+2010${shortDigits(id)}`,
+      phoneE164: generateFixturePhone(),
       passwordHash: "test-hash-not-real",
       fullName: "Test User",
       status: "ACTIVE",
@@ -72,8 +76,77 @@ export async function createTestUser(): Promise<string> {
   return id;
 }
 
+/**
+ * A fixed authenticator seed for fixtures, so a spec can produce a live code for a known instant.
+ *
+ * Not a secret in any sense that matters: it exists only in `clinic_os_test`, which the integration
+ * suite recreates, and the production path (`create-platform-admin.ts`) never supplies one.
+ */
+export const FIXTURE_TOTP_SECRET = "KRSXG5CTMVRXEZLUKRSXG5CTMVRXEZLU";
+
+/**
+ * Turns an existing user into an operator that can actually sign in.
+ *
+ * All three of role, flag and a **confirmed second factor** are required from 2026-09-15: a CHECK
+ * refuses the flag without a role, and `PlatformAuthGuard` refuses an operator with no confirmed
+ * authenticator. Written once here because three specs were each setting two of the three.
+ */
+export async function makeOperator(
+  userId: string,
+  options: { platformRole?: string; passwordHash?: string } = {},
+): Promise<void> {
+  await withPlatformActor(actorFor(userId), (tx) =>
+    tx.user.update({
+      where: { id: userId },
+      data: {
+        isPlatformAdmin: true,
+        platformRole: options.platformRole ?? "OWNER",
+        status: "ACTIVE",
+        totpSecret: FIXTURE_TOTP_SECRET,
+        totpConfirmedAt: new Date("2026-09-15T00:00:00.000Z"),
+        ...(options.passwordHash === undefined ? {} : { passwordHash: options.passwordHash }),
+      },
+    }),
+  );
+}
+
 export async function deleteTestUser(userId: string): Promise<void> {
   await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
+}
+
+/**
+ * Reads `audit_logs` as the **superuser**, for rows a tenant session can never see.
+ *
+ * **Do not assert an operator's audit rows through `prisma`.** An operator holds no membership, so
+ * their rows carry `tenant_id = NULL`, and D17's policy shows a NULL-tenant row to no tenant
+ * session at all — which is the point: the vendor's trail is deliberately absent from every
+ * clinic's audit screen. `clinic_os_app` is NOBYPASSRLS, so a query through the application client
+ * returns an empty array and the assertion passes a far weaker claim than it appears to.
+ *
+ * That is exactly what happened on 2026-09-16: two assertions on
+ * `OPERATOR_RECOVERY_CODE_USED` found nothing, and the rows were there the whole time. This helper
+ * exists so the next person does not rediscover it.
+ *
+ * `where` is a SQL fragment with `$1`-style placeholders, so the caller still parameterises.
+ */
+export async function readPlatformAuditRows(
+  where: string,
+  params: readonly unknown[],
+): Promise<Record<string, unknown>[]> {
+  const client = new Client({ connectionString: process.env["TEST_DATABASE_URL"] });
+  await client.connect();
+  try {
+    const result = await client.query(
+      `SELECT action, entity_type, entity_id, tenant_id, actor_user_id, actor_role, new_state
+         FROM audit_logs
+        WHERE ${where}
+        ORDER BY created_at ASC`,
+      [...params],
+    );
+    return result.rows as Record<string, unknown>[];
+  } finally {
+    await client.end();
+  }
 }
 
 /** Seeds one tenant with a doctor (and the user/membership behind it), a service, and a patient. */
@@ -115,7 +188,7 @@ export async function seedClinic(): Promise<ClinicFixture> {
       data: injected({
         id: patientId,
         fullNameAr: "Test Patient",
-        phoneE164: `+2011${shortDigits(patientId)}`,
+        phoneE164: generateFixturePhone("+2011"),
         relationshipToContact: "SELF",
         status: "ACTIVE",
       }),
@@ -141,6 +214,10 @@ export async function teardownClinic(fixture: ClinicFixture): Promise<void> {
   // rather than trying to catch and continue past individual statements within one transaction.
   try {
     await withTenant(fixture.tenantId, actorFor(fixture.userId), async (tx) => {
+      // First, and the reason it is here: the dispatcher's due-list is cross-tenant by design, so a
+      // delivery left behind by a torn-down clinic is a row every later run finds and tries to send.
+      await tx.webhookDelivery.deleteMany();
+      await tx.botCredential.deleteMany();
       await tx.payment.deleteMany();
       await tx.visitProcedure.deleteMany();
       await tx.visit.deleteMany();

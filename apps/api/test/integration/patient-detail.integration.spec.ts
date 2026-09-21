@@ -1,4 +1,6 @@
+import { ThrottlingModule } from "../../src/common/throttling.module.ts";
 import { randomUUID } from "node:crypto";
+import { generateFixturePhone } from "../fixture-phone.ts";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Module, ValidationPipe } from "@nestjs/common";
@@ -29,6 +31,8 @@ import { actorFor, createTestUser, seedClinic, teardownClinic, type ClinicFixtur
  * shown to be unable to reach it.
  */
 @Module({
+  // A rate-limited route lives here (4b), so its guard needs the throttler options in scope.
+  imports: [ThrottlingModule],
   controllers: [PatientsController, InsuranceController, ClinicalController],
   providers: [{ provide: APP_INTERCEPTOR, useClass: ActorContextInterceptor }],
 })
@@ -78,7 +82,7 @@ describe("patient detail — Q18", () => {
       // A household contact, because a policy hangs off `contacts` rather than `patients`.
       const contactId = randomUUID();
       await tx.contact.create({
-        data: injected({ id: contactId, phoneE164: `+2010${contactId.replace(/-/g, "").slice(0, 7)}` }),
+        data: injected({ id: contactId, phoneE164: generateFixturePhone("+2011") }),
       });
 
       patientId = randomUUID();
@@ -88,7 +92,7 @@ describe("patient detail — Q18", () => {
           contactId,
           fullNameAr: "محمد أحمد",
           nameSearchLatin: latinSearchKey("محمد أحمد", null),
-          phoneE164: `+2011${patientId.replace(/-/g, "").slice(0, 7)}`,
+          phoneE164: generateFixturePhone(),
           relationshipToContact: "SELF",
           status: "ACTIVE",
         }),
@@ -451,7 +455,7 @@ describe("patient detail — Q18", () => {
             id: siblingId,
             contactId: contact.contactId,
             fullNameAr: "سارة محمود",
-            phoneE164: `+2016${siblingId.replace(/-/g, "").slice(0, 7)}`,
+            phoneE164: generateFixturePhone(),
             relationshipToContact: "SIBLING",
             status: "ACTIVE",
           }),

@@ -1,5 +1,6 @@
 import { Body, Controller, Get, HttpCode, Post, Req, Res, UnauthorizedException, UseGuards } from "@nestjs/common";
-import { ThrottlerGuard } from "@nestjs/throttler";
+import { SkipThrottle, ThrottlerGuard } from "@nestjs/throttler";
+import { skipAllExcept } from "../../common/throttlers.ts";
 import type { Request, Response } from "express";
 import { actorContext } from "../../common/actor-context.ts";
 import { AuthGuard, type AuthenticatedRequest } from "../../common/auth.guard.ts";
@@ -7,6 +8,7 @@ import { permissionSummary } from "../../common/permissions.ts";
 import { prisma } from "../../prisma/client.ts";
 import { withTenant } from "../../prisma/with-tenant.ts";
 import { AllowsPasswordChange } from "../../common/password-change.guard.ts";
+import { IDENTIFIER_THROTTLER, IP_THROTTLER, PASSWORD_THROTTLER } from "./auth-throttle.ts";
 import { ChangePasswordDto, LoginDto, SwitchTenantDto } from "./auth.dto.ts";
 import { hashPassword, verifyPasswordHash } from "./password.ts";
 import { loginCountry, normalisePhone } from "./phone.ts";
@@ -50,24 +52,68 @@ import { listActiveMemberships, verifyCredentials } from "./user-lookup.ts";
  */
 
 const REFRESH_COOKIE = "clinic_os_refresh";
+// The name keeps `clinic_os`: it is an identifier, and renaming it signs every open session out.
+const REMEMBER_COOKIE = "clinic_os_remember";
 const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const COOKIE_PATH = "/api/auth";
 
 /** The same message for every authentication failure. Callers must not be able to tell them apart. */
 const INVALID_CREDENTIALS = "Invalid credentials.";
 
-function setRefreshCookie(response: Response, token: string): void {
-  response.cookie(REFRESH_COOKIE, token, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "strict",
-    path: COOKIE_PATH,
-    maxAge: REFRESH_TTL_MS,
-  });
+/**
+ * **Who may ask to be remembered on a device — and who may not.**
+ *
+ * Ruled 2026-09-15 with the login redesign. A doctor's and a receptionist's machine is the one they
+ * sit at all day in a room with a door; an administrator's or an owner's account can change prices,
+ * suspend staff and read the whole clinic's money, and the operator's can create and suspend
+ * clinics. A thirty-day cookie on a browser somebody walks away from is a different trade for those
+ * two groups, so the product does not offer it to the second.
+ *
+ * Enforced on the **server**, from the membership's own role, not from what the client asked for:
+ * a checkbox hidden in the UI is a suggestion, and `POST /auth/login` is reachable without it.
+ */
+const REMEMBERABLE_ROLES: readonly string[] = ["DOCTOR", "RECEPTIONIST"];
+
+/**
+ * `remember` decides only whether the cookie **persists across browser restarts**.
+ *
+ * The stored token's own thirty-day expiry is unchanged either way, and that is deliberate rather
+ * than an oversight: rotation, revocation and the `refresh_tokens` row are the security boundary,
+ * and a session cookie is about not leaving a signed-in browser behind on a shared machine. Said
+ * plainly so nobody later reads "remember me" as a claim about token lifetime.
+ */
+function setRefreshCookie(response: Response, token: string, remember: boolean): void {
+  const shared = { httpOnly: true, secure: true, sameSite: "strict" as const, path: COOKIE_PATH };
+  response.cookie(REFRESH_COOKIE, token, { ...shared, ...(remember ? { maxAge: REFRESH_TTL_MS } : {}) });
+
+  /*
+   * A marker so a rotation keeps the choice.
+   *
+   * `POST /auth/refresh` receives a cookie and cannot tell whether the browser was told to persist
+   * it — so without this, the first token rotation would silently downgrade a remembered session to
+   * a session cookie, and the checkbox would appear to work until the user closed the browser a
+   * fortnight later. The alternative was a `remembered` column on `refresh_tokens`, which is a
+   * migration for one boolean that belongs to the device rather than to the token family.
+   *
+   * It carries no authority: it says how long to persist a cookie, not whether to accept one.
+   */
+  if (remember) response.cookie(REMEMBER_COOKIE, "1", { ...shared, maxAge: REFRESH_TTL_MS });
+  else response.clearCookie(REMEMBER_COOKIE, shared);
 }
 
+/** Whether this browser was told to persist its session. Read on rotation, never trusted for auth. */
+function wasRemembered(request: Request): boolean {
+  return (request.cookies as Record<string, string> | undefined)?.[REMEMBER_COOKIE] === "1";
+}
+
+/** Whether this sign-in may be remembered: the caller asked, **and** the role is one that may. */
+export const mayRemember = (asked: boolean | undefined, role: string): boolean =>
+  asked === true && REMEMBERABLE_ROLES.includes(role);
+
 function clearRefreshCookie(response: Response): void {
-  response.clearCookie(REFRESH_COOKIE, { httpOnly: true, secure: true, sameSite: "strict", path: COOKIE_PATH });
+  const shared = { httpOnly: true, secure: true, sameSite: "strict" as const, path: COOKIE_PATH };
+  response.clearCookie(REFRESH_COOKIE, shared);
+  response.clearCookie(REMEMBER_COOKIE, shared);
 }
 
 function readRefreshCookie(request: Request): string {
@@ -91,6 +137,7 @@ export class AuthController {
   @Post("login")
   @HttpCode(200)
   @UseGuards(ThrottlerGuard)
+  @SkipThrottle(skipAllExcept(IDENTIFIER_THROTTLER, IP_THROTTLER))
   async login(
     @Body() body: LoginDto,
     @Req() request: Request,
@@ -116,7 +163,9 @@ export class AuthController {
     // list means by it, and a column touched on every call would be a write per request.
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
-    setRefreshCookie(response, pair.refreshToken);
+    // The role decides, not the checkbox: `mayRemember` refuses an ADMIN, an OWNER or anyone else
+    // outside the two roles that may, however the request was shaped.
+    setRefreshCookie(response, pair.refreshToken, mayRemember(body.rememberMe, first.role));
     // The client sends the holder of a temporary password to the change screen; every other route
     // refuses them anyway (`PasswordChangeGuard`), so this is a courtesy and not the enforcement.
     return {
@@ -135,7 +184,8 @@ export class AuthController {
    */
   @Post("password")
   @HttpCode(200)
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, ThrottlerGuard)
+  @SkipThrottle(skipAllExcept(PASSWORD_THROTTLER))
   @AllowsPasswordChange()
   async changePassword(
     @Req() request: AuthenticatedRequest,
@@ -163,7 +213,7 @@ export class AuthController {
     // of changing it.
     const facts = clientFacts(request);
     const pair = await issueSession(userId, membershipId, facts.ip, facts.userAgent);
-    setRefreshCookie(response, pair.refreshToken);
+    setRefreshCookie(response, pair.refreshToken, wasRemembered(request));
     return { accessToken: pair.accessToken };
   }
 
@@ -171,6 +221,7 @@ export class AuthController {
   @Post("refresh")
   @HttpCode(200)
   @UseGuards(ThrottlerGuard)
+  @SkipThrottle(skipAllExcept(IDENTIFIER_THROTTLER, IP_THROTTLER))
   async refresh(
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
@@ -180,7 +231,7 @@ export class AuthController {
 
     try {
       const pair = await rotateRefreshToken(presented, facts.ip, facts.userAgent);
-      setRefreshCookie(response, pair.refreshToken);
+      setRefreshCookie(response, pair.refreshToken, wasRemembered(request));
       return { accessToken: pair.accessToken };
     } catch (error) {
       // Every failure clears the cookie. A client holding a token that has been revoked -- including
@@ -217,6 +268,7 @@ export class AuthController {
   @Post("switch-tenant")
   @HttpCode(200)
   @UseGuards(ThrottlerGuard)
+  @SkipThrottle(skipAllExcept(IDENTIFIER_THROTTLER, IP_THROTTLER))
   async switchTenant(
     @Body() body: SwitchTenantDto,
     @Req() request: Request,
@@ -227,7 +279,7 @@ export class AuthController {
 
     try {
       const pair = await switchTenant(presented, body.membershipId, facts.ip, facts.userAgent);
-      setRefreshCookie(response, pair.refreshToken);
+      setRefreshCookie(response, pair.refreshToken, wasRemembered(request));
       return { accessToken: pair.accessToken };
     } catch (error) {
       if (error instanceof MembershipNotActiveError) {

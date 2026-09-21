@@ -137,6 +137,8 @@ export interface ClinicBlueprint {
   address: string;
   addressEn: string;
   timezone: string;
+  /** ISO 3166-1 alpha-2 — the phone-parsing hint for this clinic (ARCHITECTURE.md §18b). */
+  country: "EG" | "SA" | "AE";
   locale: LocaleCode;
   currency: string;
   /** Deterministic PRNG seed, so each clinic generates its own stable data. */
@@ -188,6 +190,7 @@ const NILE_FAMILY: ClinicBlueprint = {
   address: "١٢ شارع النصر، المعادي، القاهرة",
   addressEn: "12 El-Nasr St, Maadi, Cairo",
   timezone: "Africa/Cairo",
+  country: "EG",
   locale: "ar",
   currency: "EGP",
   randomSeed: 20260823,
@@ -358,6 +361,7 @@ const SHIFA_DERM: ClinicBlueprint = {
   address: "٤٥ شارع فوزي معاذ، سموحة، الإسكندرية",
   addressEn: "45 Fawzy Moaz St, Smouha, Alexandria",
   timezone: "Africa/Cairo",
+  country: "EG",
   locale: "ar",
   currency: "EGP",
   randomSeed: 77120264,
@@ -462,7 +466,12 @@ export const PLATFORM_ADMIN = {
   fullName: "مشغّل المنصة",
   phoneE164: "+201000000000",
   email: "operator@clinic-os.example",
+  platformRole: "OWNER",
 } as const;
+
+// A fixed authenticator secret lived here until 2026-09-15, so a review build would be
+// signable-into. It did the opposite — a pre-enrolled operator put the console behind a code prompt
+// the reviewer could not answer — and `OPERATOR_TOTP=off` replaced it. The seed now enrols nobody.
 
 // Removed 2026-09-09 with the membership it named: one person holds one role per clinic, so the
 // seed no longer creates an owner who is also the receptionist. The schema still permits several.

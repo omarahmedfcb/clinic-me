@@ -14,7 +14,7 @@ const connectionString = process.env["APP_DATABASE_URL"];
 if (!connectionString) {
   throw new Error(
     "APP_DATABASE_URL is not set. The application must never fall back to DATABASE_URL -- that " +
-      "role is a Postgres superuser and bypasses Row-Level Security. See SCHEMA-DECISIONS.md D12.",
+    "role is a Postgres superuser and bypasses Row-Level Security. See SCHEMA-DECISIONS.md D12.",
   );
 }
 

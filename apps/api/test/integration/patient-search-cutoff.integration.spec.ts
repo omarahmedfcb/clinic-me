@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { generateFixturePhone } from "../fixture-phone.ts";
 import { latinSearchKey } from "../../src/modules/patients/domain/transliterate.ts";
 import { searchPatients, type CallerContext } from "../../src/modules/patients/patients.service.ts";
 import { prisma } from "../../src/prisma/client.ts";
@@ -48,7 +49,7 @@ describe("patient search suppresses weak matches only when a strong one exists",
           id,
           fullNameAr,
           nameSearchLatin: latinSearchKey(fullNameAr, null),
-          phoneE164: `+2010${id.replace(/-/g, "").slice(0, 7)}`,
+          phoneE164: generateFixturePhone("+2011"),
           relationshipToContact: "SELF",
           status: "ACTIVE",
         }),

@@ -63,6 +63,9 @@ export function activeNavKey(path: string): TranslationKey | null {
 export const UNMAPPED_ROUTES: readonly string[] = [
   // The account menu, not a section of the clinic (Q38).
   "/me",
+  // «مساعدة», 2026-09-15. A static page in the sidebar's foot, below the rule — not a section, and
+  // deliberately not in NAV_ITEMS: the brief for the rebrand was that the sections stay as they are.
+  "/help",
   // The desk is charge-scoped and opens from a payments row; it is «المدفوعات» and is listed as
   // owned there, so it does not appear here.
 ];

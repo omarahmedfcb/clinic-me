@@ -6,6 +6,7 @@ import { prisma } from "../../src/prisma/client.ts";
 import { injected } from "../../src/prisma/injected.ts";
 import { withTenant } from "../../src/prisma/with-tenant.ts";
 import { actorFor, type ClinicFixture, seedClinic, teardownClinic } from "./fixtures.ts";
+import { generateFixturePhone } from "../fixture-phone.ts";
 
 /**
  * The client IP recorded in `audit_logs`, end to end: what Express resolves from a proxied request,
@@ -109,7 +110,7 @@ describe("forwarded client IP reaches the audit trail", () => {
           data: injected({
             id: patientId,
             fullNameAr: "مريض من خلف الوسيط",
-            phoneE164: `+2016${patientId.replace(/-/g, "").slice(0, 8)}`,
+            phoneE164: generateFixturePhone(),
             relationshipToContact: "SELF",
             status: "ACTIVE",
           }),
@@ -137,7 +138,7 @@ describe("forwarded client IP reaches the audit trail", () => {
           data: injected({
             id: patientId,
             fullNameAr: "مريض آخر",
-            phoneE164: `+2017${patientId.replace(/-/g, "").slice(0, 8)}`,
+            phoneE164: generateFixturePhone(),
             relationshipToContact: "SELF",
             status: "ACTIVE",
           }),

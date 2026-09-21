@@ -259,7 +259,12 @@ describe("the manifest itself is legible", () => {
        * They are listed here rather than exempted by a pattern, so that a *third* `/platform/*`
        * route cannot become ungoverned without somebody adding a line to this list.
        */
+      "GET /platform/clinics",
+      // 2026-09-15, the back office. Same reasoning, one line each so a new one is a visible edit.
+      "GET /platform/clinics/:tenantId/contracts/:contractId/content",
+      "GET /platform/clinics/:tenantId/file",
       "GET /platform/me",
+      "GET /platform/operators",
       "POST /auth/login",
       "POST /auth/logout",
       // PR 10. Deliberately ungoverned: it is the one route a holder of a temporary password may
@@ -268,7 +273,34 @@ describe("the manifest itself is legible", () => {
       "POST /auth/password",
       "POST /auth/refresh",
       "POST /auth/switch-tenant",
+      // The bot's door, and a door cannot be behind its own lock: a credential is exchanged for a
+      // token here, so there is no membership yet to ask a capability of. Throttled on the
+      // credential id instead (bot-throttle.ts), and it grants nothing but an AI_AGENT token.
+      "POST /bot/auth/token",
+      "POST /platform/clinics",
+      "POST /platform/clinics/:tenantId/admins/:userId/password",
+      "POST /platform/clinics/:tenantId/contacts",
+      "POST /platform/clinics/:tenantId/contacts/:contactId/remove",
+      "POST /platform/clinics/:tenantId/contracts",
+      "POST /platform/clinics/:tenantId/file",
+      "POST /platform/clinics/:tenantId/suspension",
       "POST /platform/login",
+      "POST /platform/operators",
+      "POST /platform/operators/:userId/role",
+      "POST /platform/operators/:userId/totp/reset",
+      // The three second-factor routes. `PendingPlatformGuard` governs the first two and they act
+      // only on the account in the token — a capability would be asking which clinic a person may
+      // enrol their own authenticator in, which is the same non-question as `POST /auth/password`.
+      // 2026-09-16, recovery codes. `regenerate` is behind `PlatformAuthGuard` and demands the
+      // password and a live code again; `recovery` is behind `PendingPlatformGuard` and is the
+      // lost-authenticator path. Both act only on the account in the token.
+      "POST /platform/recovery-codes/regenerate",
+      "POST /platform/totp/confirm",
+      "POST /platform/totp/enrol",
+      "POST /platform/totp/recovery",
+      "POST /platform/totp/replace",
+      "POST /platform/totp/replace/confirm",
+      "POST /platform/totp/verify",
     ]);
   });
 });

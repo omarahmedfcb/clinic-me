@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { ThrottlingModule } from "../../common/throttling.module.ts";
+import { WRITE_THROTTLERS } from "../../common/write-throttle.ts";
 import { PatientsController } from "./patients.controller.ts";
 
 /**
@@ -6,5 +8,7 @@ import { PatientsController } from "./patients.controller.ts";
  * provider, because the AI tool layer (ARCHITECTURE.md §12) calls it without a Nest container —
  * a `@Injectable()` service would make the tool registry construct a module to reach it.
  */
-@Module({ controllers: [PatientsController] })
+@Module({
+  imports: [ThrottlingModule],
+  controllers: [PatientsController] })
 export class PatientsModule {}

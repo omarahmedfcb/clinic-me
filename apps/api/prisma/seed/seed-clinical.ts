@@ -71,7 +71,11 @@ export async function seedClinical(
 
   const patients = generatePatients(clinic, rng, phoneBase);
 
-  await inChunks(patients, tenantId, actor, async (tx, batch) => {
+  // One contact per household, not per patient: a quarter of these patients share somebody else's
+  // number, and inserting the contact once per member would fail on the primary key.
+  const contacts = [...new Map(patients.map((patient) => [patient.contactId, patient])).values()];
+
+  await inChunks(contacts, tenantId, actor, async (tx, batch) => {
     await tx.contact.createMany({
       data: batch.map((patient) =>
         injected({
@@ -98,7 +102,7 @@ export async function seedClinical(
           phoneE164: patient.phoneE164,
           gender: patient.gender,
           address: patient.address,
-          relationshipToContact: "SELF",
+          relationshipToContact: patient.relationshipToContact,
           status: "ACTIVE",
         }),
       ),

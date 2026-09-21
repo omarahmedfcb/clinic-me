@@ -1,4 +1,11 @@
-import { AUTH_THROTTLERS, AUTH_THROTTLE_LIMITS, identifierTracker, ipTracker } from "./auth-throttle.ts";
+import {
+  AUTH_THROTTLERS,
+  AUTH_THROTTLE_LIMITS,
+  PASSWORD_THROTTLER,
+  identifierTracker,
+  ipTracker,
+  passwordUserTracker,
+} from "./auth-throttle.ts";
 
 /**
  * The two rate-limit buckets are separate on purpose, and the reason is visible only in these
@@ -67,8 +74,12 @@ describe("auth rate-limit keys", () => {
       expect(identifierTracker(request)).not.toBe(ipTracker(request));
     });
 
-    test("both throttlers are registered, named, and share one window", () => {
-      expect(AUTH_THROTTLERS.map((t) => t.name).sort()).toEqual(["auth-identifier", "auth-ip"]);
+    test("all three throttlers are registered, named, and share one window", () => {
+      expect(AUTH_THROTTLERS.map((t) => t.name).sort()).toEqual([
+        "auth-identifier",
+        "auth-ip",
+        PASSWORD_THROTTLER,
+      ]);
       expect(AUTH_THROTTLERS.every((t) => t.ttl === AUTH_THROTTLE_LIMITS.windowMs)).toBe(true);
     });
 
@@ -76,6 +87,38 @@ describe("auth rate-limit keys", () => {
       // If the IP limit were the tighter one, a busy reception desk would hit it first and the
       // per-identifier control -- the one that actually stops guessing -- would never engage.
       expect(AUTH_THROTTLE_LIMITS.ip).toBeGreaterThan(AUTH_THROTTLE_LIMITS.identifier);
+    });
+  });
+
+  describe("the change-password bucket", () => {
+    test("keys on the authenticated user, not the address", () => {
+      // The whole point: a clinic is one public IP. Keyed on the address, one member of staff
+      // exhausting the limit would lock the reception desk out of changing passwords.
+      const shared = { ip: "203.0.113.10" };
+      const amira = passwordUserTracker({ ...shared, authClaims: { sub: "user-amira" } });
+      const hossam = passwordUserTracker({ ...shared, authClaims: { sub: "user-hossam" } });
+
+      expect(amira).toBe("user:user-amira");
+      expect(amira).not.toBe(hossam);
+    });
+
+    test("the same user from two devices shares one bucket", () => {
+      const first = passwordUserTracker({ ip: "203.0.113.10", authClaims: { sub: "user-amira" } });
+      const second = passwordUserTracker({ ip: "198.51.100.4", authClaims: { sub: "user-amira" } });
+      expect(first).toBe(second);
+    });
+
+    test("falls back to the address when there are no claims, never to a constant", () => {
+      // Unreachable behind AuthGuard, but a fallback that keyed everyone together would let one
+      // caller deny the endpoint to every user at once.
+      expect(passwordUserTracker({ ip: "203.0.113.10" })).toBe("ip:203.0.113.10");
+      expect(passwordUserTracker({ ip: "203.0.113.10", authClaims: { sub: 42 } })).toBe("ip:203.0.113.10");
+      expect(passwordUserTracker({ ip: "203.0.113.10" })).not.toBe(passwordUserTracker({ ip: "198.51.100.4" }));
+    });
+
+    test("is tighter than the login bucket", () => {
+      // A signed-in user knows their own password. Guessing it is what this limit is for.
+      expect(AUTH_THROTTLE_LIMITS.password).toBeLessThan(AUTH_THROTTLE_LIMITS.identifier);
     });
   });
 });

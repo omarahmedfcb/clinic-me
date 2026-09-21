@@ -113,6 +113,8 @@ export function ClinicSettingsPage({ authFetch }: { authFetch: AuthFetch }) {
           <TextInput
             label={t("settings.clinic.phone")}
             numeric
+            type="tel"
+            inputMode="tel"
             value={phone}
             onChange={(event) => {
               setPhone(event.target.value);
@@ -124,6 +126,8 @@ export function ClinicSettingsPage({ authFetch }: { authFetch: AuthFetch }) {
           <TextInput
             label={t("settings.clinic.secondaryPhone")}
             numeric
+            type="tel"
+            inputMode="tel"
             hint={t("settings.clinic.phoneHint")}
             value={secondaryPhone}
             onChange={(event) => {

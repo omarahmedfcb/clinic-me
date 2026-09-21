@@ -21,6 +21,9 @@ import {
 import { FileInterceptor } from "@nestjs/platform-express";
 import type { Response } from "express";
 import { actorContext } from "../../common/actor-context.ts";
+import { SkipThrottle } from "@nestjs/throttler";
+import { RetryAfterThrottlerGuard, SkipAllThrottlers, ThrottleOnly } from "../../common/throttlers.ts";
+import { UPLOAD_THROTTLER, WRITE_THROTTLE_LIMITS } from "../../common/write-throttle.ts";
 import { AuthGuard, type AuthenticatedRequest } from "../../common/auth.guard.ts";
 import { PermissionGuard } from "../../common/permission.guard.ts";
 import { RequirePermission } from "../../common/require-permission.decorator.ts";
@@ -72,7 +75,9 @@ interface UploadedMultipartFile {
 }
 
 @Controller()
-@UseGuards(AuthGuard, TenantGuard, PermissionGuard)
+@UseGuards(AuthGuard, TenantGuard, PermissionGuard, RetryAfterThrottlerGuard)
+// Off by default, on per route — see write-throttle.ts.
+@SkipAllThrottlers()
 export class AttachmentsController {
   constructor(@Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider) {}
 

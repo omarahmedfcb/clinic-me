@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { DayKpis } from "./DayKpis.tsx";
+import { summariseDay } from "./day-kpis.ts";
 import { Button } from "../../design-system/Button.tsx";
 import { Card, EmptyState, StatusBadge } from "../../design-system/display.tsx";
 import { Select, TextInput } from "../../design-system/fields.tsx";
@@ -252,7 +254,15 @@ export function DayViewPage() {
       {!loading && failed && <EmptyState title={t("day.loadFailed")} message={t("day.loadFailed")} />}
 
       {!loading && !failed && day !== null && (
-        <DayBody day={day} clock={clock} calendarDay={calendarDay} onOpenAppointment={setOpenId} />
+        <>
+          {/*
+            The four cards, from `day.busy` — the same array `DayBody` draws the bars from, so a
+            card and a bar cannot disagree. `new Date()` is passed in here rather than read inside
+            `summariseDay`, which is what makes `late` testable.
+          */}
+          <DayKpis summary={summariseDay(day.busy, new Date())} />
+          <DayBody day={day} clock={clock} calendarDay={calendarDay} onOpenAppointment={setOpenId} />
+        </>
       )}
 
       <AppointmentDetailPanel

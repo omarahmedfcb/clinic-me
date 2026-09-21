@@ -37,7 +37,12 @@ $$;
 GRANT USAGE ON SCHEMA public TO clinic_os_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO clinic_os_app;
 
--- Future tables created by the superuser role (via further Prisma migrations) grant the same
--- privileges to clinic_os_app automatically -- otherwise every new table needs a follow-up GRANT.
-ALTER DEFAULT PRIVILEGES FOR ROLE clinic_os IN SCHEMA public
+-- Future tables created by the migration role grant the same privileges to clinic_os_app
+-- automatically -- otherwise every new table needs a follow-up GRANT.
+--
+-- No FOR ROLE clause: it defaults to the role running the migration, which is the role that then
+-- creates the tables. Naming a role here hardcoded this machine's POSTGRES_USER, and a managed
+-- PostgreSQL (whose migration role is its own "root") refused it outright -- 42501, permission
+-- denied to change default privileges.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO clinic_os_app;

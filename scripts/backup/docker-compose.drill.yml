@@ -1,0 +1,73 @@
+# A throwaway stack for exercising the backup job: MinIO standing in for the object store, and the
+# backup image itself. Never pointed at a review or development database — the drill creates its own.
+
+name: clinic-os-backup-drill
+
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: drilluser
+      MINIO_ROOT_PASSWORD: drillpassword
+    ports:
+      - "9000:9000"
+    volumes:
+      - drill_objects:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  backup:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      BACKUP_DATABASE_URL: ${BACKUP_DATABASE_URL}
+      ATTACHMENTS_STORAGE_ROOT: /attachments
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT}
+      BACKUP_S3_ENDPOINT: http://minio:9000
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-clinic-os-backups}
+      BACKUP_S3_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: drilluser
+      AWS_SECRET_ACCESS_KEY: drillpassword
+      BACKUP_WORK_DIR: /tmp
+    volumes:
+      - ./drill-attachments:/attachments:ro
+
+  drill:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["node", "/opt/backup/restore-drill.mjs"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      BACKUP_S3_ENDPOINT: http://minio:9000
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-clinic-os-backups}
+      BACKUP_S3_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: drilluser
+      AWS_SECRET_ACCESS_KEY: drillpassword
+      BACKUP_AGE_IDENTITY_FILE: /identity/key.txt
+      DRILL_DATABASE_URL: ${DRILL_DATABASE_URL}
+      SOURCE_DATABASE_URL: ${SOURCE_DATABASE_URL}
+      DRILL_APP_DATABASE_URL: ${DRILL_APP_DATABASE_URL}
+      SOURCE_ATTACHMENTS_ROOT: /attachments
+      DRILL_WORK_DIR: /tmp
+    volumes:
+      - ./drill-attachments:/attachments:ro
+      - ./drill-identity.txt:/identity/key.txt:ro
+
+volumes:
+  drill_objects:
+
+networks:
+  default:
+    name: clinic-os_default
+    external: true

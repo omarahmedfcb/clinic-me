@@ -30,13 +30,21 @@ export class ActorContextInterceptor implements NestInterceptor {
     // /auth/login, /health -- has no actor to bind, and nothing it does is tenant-scoped, so
     // there is nothing for the audit trigger to refuse. Pass it straight through rather than
     // inventing an actor for it.
-    const claims = request.authClaims;
-    if (!claims) {
+    // Two kinds of authenticated caller, and both have an actor. `authClaims` is a clinic member,
+    // populated by AuthGuard; `platformAdmin` is the operator, populated by PlatformAuthGuard — who
+    // holds no membership and therefore no claims, but whose every write is audited (0f).
+    const platform = (request as { platformAdmin?: { userId: string } }).platformAdmin;
+    // A third kind, added 2026-09-15: an operator who has passed the password and not yet the second
+    // factor. They act on their own account only (enrol, confirm), and `users_audit` refuses a write
+    // with no actor bound — so enrolment needs one exactly as much as any other write does.
+    const pending = (request as { pendingOperator?: { userId: string } }).pendingOperator;
+    const userId = request.authClaims?.sub ?? platform?.userId ?? pending?.userId;
+    if (userId === undefined) {
       return next.handle();
     }
 
     const actor = {
-      userId: claims.sub,
+      userId,
       ip: request.ip ?? "unknown",
       userAgent: request.headers["user-agent"] ?? "unknown",
     };

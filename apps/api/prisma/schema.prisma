@@ -112,6 +112,12 @@ enum PatientStatus {
   MERGED
 }
 
+/// How a patient record came to exist. Provenance, derived from the caller, never sent by one.
+enum PatientOrigin {
+  DESK
+  WHATSAPP_BOT
+}
+
 enum PatientRelationship {
   SELF
   SPOUSE
@@ -294,6 +300,14 @@ enum AuditAction {
   LOGOUT
   PERMISSION_CHANGE
   BREAK_GLASS_ACCESS
+  /// A console sign-in that used a recovery code instead of the authenticator. Distinct from LOGIN
+  /// on purpose: it is the one path that opens the console without the second factor, so "how often
+  /// does that happen, and to whom" must be answerable without parsing a detail blob.
+  OPERATOR_RECOVERY_CODE_USED
+  /// The operator replaced their authenticator after a recovery login. Its own action for the same
+  /// reason as the one above: a second-factor change on the console must be filterable by column,
+  /// not found by reading a detail blob out of every row.
+  OPERATOR_TOTP_REPLACED
 }
 
 /**
@@ -360,9 +374,16 @@ model Tenant {
   /// a caller to hand the object to a browser and make the capability gate decoration.
   logoStorageKey           String?      @map("logo_storage_key")
   timezone                 String       @default("Africa/Cairo")
+  /// ISO 3166-1 alpha-2, and the parsing hint §18b has always assumed: `libphonenumber` reads a
+  /// typed number against **this clinic's** country, not one process-wide environment variable.
+  country                  String
   locale                   LocaleCode
   currency                 String // ISO 4217, e.g. "EGP" — §18b
   status                   TenantStatus
+  /// Why a clinic is switched off, and when. Set together with SUSPENDED and cleared together with
+  /// it — a CHECK enforces both halves, because `status` alone cannot answer "why" months later.
+  suspensionReason         String?      @map("suspension_reason")
+  suspendedAt              DateTime?    @map("suspended_at") @db.Timestamptz(6)
   settings                 Json
   createdAt                DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -432,6 +453,11 @@ model Tenant {
   visitChargeLines         VisitChargeLine[]
   chargeableMaterials      ChargeableMaterial[]
   patientCredits           PatientCredit[]
+  platformClinicFile       PlatformClinicFile?
+  platformClinicContacts   PlatformClinicContact[]
+  platformClinicContracts  PlatformClinicContract[]
+  botCredentials           BotCredential[]
+  webhookDeliveries        WebhookDelivery[]
 
   @@map("tenants")
 }
@@ -448,6 +474,19 @@ model User {
   /// are different facts, and the D20 resolution chain depends on telling them apart.
   locale             LocaleCode?
   isPlatformAdmin    Boolean     @default(false) @map("is_platform_admin")
+  /// Which of the vendor's people this is. NULL for everyone who is not an operator, and never NULL
+  /// for one — a CHECK keeps it and `is_platform_admin` from disagreeing. Not a `MembershipRole`:
+  /// an operator holds no membership, and reusing that enum would let one of these be written into
+  /// a `memberships` row where nothing would refuse it.
+  platformRole       String?     @map("platform_role")
+  /// The base32 seed of the operator's authenticator, and when they proved they had it. A
+  /// credential: `platform_operator_directory()` cannot return either, by return type.
+  totpSecret         String?     @map("totp_secret")
+  totpConfirmedAt    DateTime?   @map("totp_confirmed_at") @db.Timestamptz(6)
+  /// A candidate authenticator, held while it is being proved, during a replacement after a
+  /// recovery login. Separate from `totpSecret` so the working factor is never destroyed before the
+  /// new one has answered — a half-finished replacement must leave the operator able to sign in.
+  totpPendingSecret  String?     @map("totp_pending_secret")
   /// Set when an admin issues a temporary password. Every route except the change refuses until it
   /// is cleared, so "forced at next login" is enforced rather than asked for by a screen.
   mustChangePassword Boolean     @default(false) @map("must_change_password")
@@ -475,6 +514,7 @@ model User {
   patientCreditsActed       PatientCredit[]
   auditLogsActed            AuditLog[]
   consentsCaptured          Consent[]
+  botCredentialsIssued      BotCredential[]               @relation("BotCredentialIssuer")
   accessGrantsReceived      AccessGrant[]                 @relation("AccessGrantGrantedTo")
   accessGrantsApproved      AccessGrant[]                 @relation("AccessGrantApprovedBy")
   conversationsAssigned     Conversation[]
@@ -484,8 +524,96 @@ model User {
   clinicalProfileEntries    PatientClinicalProfileEntry[]
   patientRelationsCreated   PatientRelation[]
   visitProceduresRecorded   VisitProcedure[]
+  clientFilesOwned          PlatformClinicFile[]          @relation("ClientFileSalesOwner")
+  contractsUploaded         PlatformClinicContract[]
+  recoveryCodes             OperatorRecoveryCode[]
 
   @@map("users")
+}
+
+/// One unused recovery code for one operator. Single-use: consuming it deletes the row, so the
+/// count of rows IS the number of codes left and there is no "used" flag to read stale.
+///
+/// Hashed with the same Argon2id settings as a password, because that is what it is — a credential
+/// that opens the console on its own when the authenticator is gone. The plaintext exists only in
+/// the response that issued it.
+model OperatorRecoveryCode {
+  id        String   @id @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  codeHash  String   @map("code_hash")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("operator_recovery_codes")
+}
+
+/// The vendor's commercial file on a clinic — one row per clinic, readable by an operator and by
+/// nobody else. Carries `tenantId` and is deliberately NOT tenant-scoped: see the `platform`
+/// policy in `tenant-scoped-models.ts`.
+model PlatformClinicFile {
+  id                 String    @id @db.Uuid
+  tenantId           String    @unique @map("tenant_id") @db.Uuid
+  salesOwnerUserId   String?   @map("sales_owner_user_id") @db.Uuid
+  /// What was sold, in the words used on the call. The plan line itself stays computed from
+  /// PRICING.md; this is the human agreement it is read against.
+  agreedPlan         String?   @map("agreed_plan")
+  agreedMonthlyMinor Int?      @map("agreed_monthly_minor")
+  discountPercent    Int?      @map("discount_percent")
+  /// TRIAL | ACTIVE | OVERDUE | SUSPENDED. Not `tenants.status`: a clinic can be live and overdue
+  /// at once, and switching it off is a separate act with its own reason.
+  accountStatus      String    @default("TRIAL") @map("account_status")
+  trialEndsOn        DateTime? @map("trial_ends_on") @db.Date
+  renewalOn          DateTime? @map("renewal_on") @db.Date
+  notes              String?
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant     Tenant @relation(fields: [tenantId], references: [id])
+  salesOwner User?  @relation("ClientFileSalesOwner", fields: [salesOwnerUserId], references: [id])
+
+  @@map("platform_clinic_files")
+}
+
+/// Who we talk to at a clinic. Free-text `role`, because "the owner's brother who pays the bills"
+/// is a real answer and no enum this project could write would have it.
+model PlatformClinicContact {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  fullName  String   @map("full_name")
+  role      String?
+  phoneE164 String?  @map("phone_e164")
+  email     String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@map("platform_clinic_contacts")
+}
+
+/// A signed contract and its term. `storageKey`, never a URL — the same rule
+/// `tenants.logoStorageKey` follows, and for the same reason.
+model PlatformClinicContract {
+  id               String   @id @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  fileName         String   @map("file_name")
+  storageKey       String   @unique @map("storage_key")
+  mimeType         String   @map("mime_type")
+  sizeBytes        Int      @map("size_bytes")
+  startsOn         DateTime @map("starts_on") @db.Date
+  endsOn           DateTime @map("ends_on") @db.Date
+  uploadedByUserId String   @map("uploaded_by_user_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant @relation(fields: [tenantId], references: [id])
+  uploadedByUser User   @relation(fields: [uploadedByUserId], references: [id])
+
+  @@index([tenantId])
+  @@map("platform_clinic_contracts")
 }
 
 // The multi-clinic join.
@@ -511,6 +639,8 @@ model Membership {
   /// desk holds a second membership as RECEPTIONIST and switches to it, so the audit trail records
   /// the role that actually acted. `doctors.membershipId` stays unique, which is what keeps "which
   /// doctor is this caller" answerable by construction.
+  botCredentials BotCredential[]
+
   @@index([tenantId])
   @@map("memberships")
 }
@@ -721,6 +851,9 @@ model Patient {
   emergencyContact      Json?               @map("emergency_contact")
   notes                 String?
   relationshipToContact PatientRelationship @map("relationship_to_contact")
+  /// DESK unless the WhatsApp bot created it. Set server-side from the authenticated actor: a
+  /// provenance field a caller can choose is not provenance (docs/WHATSAPP-BOT-CONTRACT.md §3).
+  createdVia            PatientOrigin       @default(DESK) @map("created_via")
   status                PatientStatus
   mergedIntoPatientId   String?             @map("merged_into_patient_id") @db.Uuid
   createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -751,8 +884,8 @@ model Patient {
   /// When a clinician last confirmed the allergy list. NULL means nobody has asked, which the
   /// safety summary must show differently from "no known allergies" — an empty list alone is
   /// ambiguous, and a blank box reads as reassurance it has not earned.
-  allergiesReviewedAt DateTime?     @map("allergies_reviewed_at") @db.Timestamptz(6)
-  allergiesReviewedBy String?       @map("allergies_reviewed_by") @db.Uuid
+  allergiesReviewedAt DateTime?       @map("allergies_reviewed_at") @db.Timestamptz(6)
+  allergiesReviewedBy String?         @map("allergies_reviewed_by") @db.Uuid
   visitCharges        VisitCharge[]
   patientCredits      PatientCredit[]
 
@@ -945,6 +1078,7 @@ model Appointment {
   payments              Payment[]
   followupTasksResolved FollowupTask[]
   notifications         Notification[]
+  webhookDeliveries     WebhookDelivery[]
 
   @@index([tenantId, doctorId, scheduledStart])
   @@index([tenantId, scheduledStart, status])
@@ -965,9 +1099,10 @@ model AppointmentEvent {
   actorUserId        String               @map("actor_user_id") @db.Uuid
   createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  tenant      Tenant      @relation(fields: [tenantId], references: [id])
-  appointment Appointment @relation(fields: [appointmentId], references: [id])
-  actorUser   User        @relation(fields: [actorUserId], references: [id])
+  tenant            Tenant            @relation(fields: [tenantId], references: [id])
+  appointment       Appointment       @relation(fields: [appointmentId], references: [id])
+  actorUser         User              @relation(fields: [actorUserId], references: [id])
+  webhookDeliveries WebhookDelivery[]
 
   @@index([tenantId, appointmentId, createdAt])
   @@map("appointment_events")
@@ -1298,6 +1433,65 @@ model Consent {
 
   @@index([tenantId])
   @@map("consents")
+}
+
+/// One clinic's WhatsApp bot credential. docs/WHATSAPP-BOT-CONTRACT.md §2.
+model BotCredential {
+  id              String    @id @db.Uuid
+  tenantId        String    @map("tenant_id") @db.Uuid
+  /// The AI_AGENT membership this credential authenticates as: the capability set lives there.
+  membershipId    String    @map("membership_id") @db.Uuid
+  /// Argon2id of the secret. The secret is shown once, at issue, and is never stored.
+  secretHash      String    @map("secret_hash")
+  issuedByUserId  String    @map("issued_by_user_id") @db.Uuid
+  issuedAt        DateTime  @default(now()) @map("issued_at") @db.Timestamptz(6)
+  revokedAt       DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedByUserId String?   @map("revoked_by_user_id") @db.Uuid
+  lastUsedAt      DateTime? @map("last_used_at") @db.Timestamptz(6)
+  /// HTTPS only, enforced by a CHECK: a reminder over plain HTTP is readable by every hop.
+  webhookUrl      String?   @map("webhook_url")
+  /// Stored as it is used, like a TOTP secret: we sign with it, so there is nothing to compare to.
+  webhookSecret   String?   @map("webhook_secret")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+  membership Membership @relation(fields: [membershipId], references: [id])
+  issuedBy   User       @relation("BotCredentialIssuer", fields: [issuedByUserId], references: [id])
+
+  @@index([tenantId])
+  @@map("bot_credentials")
+}
+
+/// One thing the bot is owed. docs/WHATSAPP-BOT-CONTRACT.md §6.
+///
+/// Written by a database trigger on `appointment_events`, delivered later by
+/// `scripts/webhook-dispatch.mjs`. The id is the idempotency key the delivery carries.
+model WebhookDelivery {
+  id            String    @id @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  appointmentId String    @map("appointment_id") @db.Uuid
+  eventType     String    @map("event_type")
+  occurredAt    DateTime  @map("occurred_at") @db.Timestamptz(6)
+  /// The act that caused it. Null for a reminder, which no act causes.
+  sourceEventId String?   @map("source_event_id") @db.Uuid
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @map("next_attempt_at") @db.Timestamptz(6)
+  deliveredAt   DateTime? @map("delivered_at") @db.Timestamptz(6)
+  failedAt      DateTime? @map("failed_at") @db.Timestamptz(6)
+  /// NO_CONSENT, NO_WEBHOOK or PATIENT_GONE: why nothing was sent, when nothing was sent.
+  skippedReason String?   @map("skipped_reason")
+  lastStatus    Int?      @map("last_status")
+  lastError     String?   @map("last_error")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant      Tenant            @relation(fields: [tenantId], references: [id])
+  appointment Appointment       @relation(fields: [appointmentId], references: [id])
+  sourceEvent AppointmentEvent? @relation(fields: [sourceEventId], references: [id])
+
+  @@index([tenantId])
+  @@map("webhook_deliveries")
 }
 
 model AccessGrant {

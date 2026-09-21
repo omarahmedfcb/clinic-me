@@ -1,12 +1,48 @@
 @import "tailwindcss";
+@import "./fonts.css";
 
 /*
- * Design tokens.
+ * Design tokens — NOMED OS.
  *
  * Defined once here as CSS custom properties and consumed through Tailwind's @theme, so a colour
  * decision is changed in one place rather than hunted across components. The palette is
  * deliberately quiet: this is a screen clinic staff look at for eight hours, not a marketing page.
- * Teal reads as clinical without the alarm-red/hospital-green cliché.
+ *
+ * ## The brand colours are sampled, not chosen
+ *
+ * `scripts/brand/pdf-to-svg.mjs` reads the four fills out of the logo's own content stream, and
+ * `scripts/brand/sample-palette.mjs` reads the gradient the flat vector does not carry. Both are
+ * rerunnable, so "deep teal" is a measurement rather than a memory of a screenshot:
+ *
+ *   #003B46  the wordmark's navy      -> --color-ink
+ *   #0B7A80  the swoosh's teal        -> --color-primary
+ *   #23A5A5  the gradient's light end -> --color-primary-light
+ *   #D4A55D  the sun and the dune     -> --color-secondary
+ *
+ * The founder's brief guessed #0E5E5C / #3FA39B / #C9A26B / #0F3341 and said to sample the exact
+ * values. Three of the four landed within a few points; the primary is brighter and more cyan than
+ * the guess, and that difference is the logo's, not a preference.
+ *
+ * ## Where a sampled colour could not be used directly
+ *
+ * **`--color-warning` is a dark gold, not the brand gold.** The brief maps warning onto secondary,
+ * and the brand gold measures **2.25:1** against white — unusable as text at any size. So the
+ * family is kept and the member changes: `--color-secondary` is the fill (dividers, the booked
+ * chip, highlights) and `--color-warning` is the readable one at 5.16:1. Mapping it literally
+ * would have shipped a warning nobody with low vision can read, which is a worse outcome than a
+ * palette that is one shade off a brief.
+ *
+ * **`--color-primary-light` is an accent, never a text background.** At 3.00:1 it clears the 3:1
+ * floor for graphical objects and fails the 4.5:1 one for text, so badges use `primary-soft` with
+ * `primary` ink instead. `web-contrast.spec.ts` asserts every pair that actually renders.
+ *
+ * ## The appointment-status ramp is deliberately untouched
+ *
+ * `--color-green-*`, `--color-amber*` and `--color-active-grey` below are a separately ruled system
+ * whose separations were measured in deltaE after an evenly-spaced-in-L* version collapsed into two
+ * distinguishable greens on screen. Re-tinting them to fit a brand would undo that measurement for
+ * an aesthetic reason, and `status-colour-separation.spec.ts` exists precisely to stop it. The
+ * rebrand changes the chrome; the statuses keep the colours somebody read off a screen and fixed.
  *
  * On greyscale: this comment used to claim every status colour survives a greyscale print, and
  * that was never measured. It is only true of the darker fills. The pale tier -- COMPLETED,
@@ -15,29 +51,56 @@
  * a guarantee nobody re-measures is worse than none: it stops people checking.
  */
 @theme {
-  --font-sans: "Cairo", "Segoe UI", "Tahoma", "Noto Sans Arabic", system-ui, sans-serif;
+  /*
+   * Inter first, then IBM Plex Sans Arabic.
+   *
+   * Order decides which face wins for a character both could set, and the brief is Inter for Latin
+   * and numerals. Arabic is not in Inter's `unicode-range`, so it falls through to Plex — which is
+   * also why Plex's Latin faces are not downloaded at all (`scripts/brand/fetch-fonts.mjs`).
+   * Self-hosted: no CDN request at runtime.
+   */
+  --font-sans: "Inter", "IBM Plex Sans Arabic", "Segoe UI", "Noto Sans Arabic", system-ui, sans-serif;
 
   --color-surface: #ffffff;
-  --color-surface-sunken: #f6f8f9;
+  --color-surface-sunken: #f7faf9;
   --color-surface-raised: #ffffff;
-  --color-border: #e3e8ea;
-  --color-border-strong: #cbd4d8;
+  /* Teal-tinted rather than neutral grey, so a 1px rule belongs to the palette. */
+  --color-border: #dbe7e6;
+  --color-border-strong: #b9cfce;
 
-  --color-ink: #12201f;
-  --color-ink-muted: #5c6b6e;
-  --color-ink-subtle: #8a979a;
+  /*
+   * Only `ink` is the brand navy. The two quieter tiers are **neutral slate, deliberately.**
+   *
+   * They were teal-tinted first (#3d6b75 / #4d767e), which looked right and broke a badge:
+   * `COMPLETED` carries no fill and separates from every other chip by its text colour alone, and
+   * `PAUSED` is `info` — which this brief moves to teal. Two teals at similar lightness measured
+   * **deltaE 13.8**, well under the 25 `status-colour-separation.spec.ts` requires, and the two
+   * chips read as the same thing. Caught by that guard rather than by looking.
+   *
+   * Neutral is also the better answer on its own terms: secondary text should not compete with the
+   * brand colour for attention. #565d64 measures deltaE 26.5 from `info` and 6.36:1 on the page.
+   */
+  --color-ink: #003b46;
+  --color-ink-muted: #565d64;
+  --color-ink-subtle: #697079;
 
-  --color-primary: #0f766e;
-  --color-primary-hover: #115e59;
-  --color-primary-soft: #f0fdfa;
-  --color-primary-ring: #99f6e4;
+  --color-primary: #0b7a80;
+  --color-primary-hover: #086268;
+  --color-primary-light: #23a5a5;
+  --color-primary-soft: #e6f4f3;
+  --color-primary-ring: #9bd6d3;
 
-  --color-danger: #b42318;
-  --color-danger-hover: #912018;
-  --color-danger-soft: #fef3f2;
+  --color-secondary: #d4a55d;
+  --color-secondary-soft: #fbf1df;
+  /* Text on a gold fill. The navy, reused rather than invented: 5.45:1 on --color-secondary. */
+  --color-secondary-ink: #003b46;
 
-  --color-warning: #b54708;
-  --color-warning-soft: #fffaeb;
+  --color-danger: #b23a48;
+  --color-danger-hover: #8f2e3a;
+  --color-danger-soft: #fdf2f3;
+
+  --color-warning: #8a6318;
+  --color-warning-soft: #fbf1df;
 
   /*
    * BOOKED's own colour, and the reason it is not `warning`.
@@ -56,8 +119,9 @@
   --color-amber-soft: #fef6e7;
   --color-amber-ink: #7a4a02;
 
-  --color-success: #067647;
-  --color-success-soft: #ecfdf3;
+  /* success = primary, per the brief. The same teal, so "done" and "the brand" agree. */
+  --color-success: #0b7a80;
+  --color-success-soft: #e6f4f3;
 
   /*
    * The arrival ramp: CONFIRMED -> ARRIVED -> WAITING, one hue getting darker as the patient gets
@@ -107,8 +171,23 @@
    */
   --color-active-grey: #888c8f;
 
-  --color-info: #175cd3;
-  --color-info-soft: #eff8ff;
+  /*
+   * info = the primary-light family, per the brief — but the readable member of it, for the same
+   * reason `warning` is a dark gold: #23a5a5 measures 2.86:1 as text and cannot carry one.
+   *
+   * **Consequence, stated rather than found later: info and primary now read as one family.** A
+   * teal info beside a teal primary is not the distinct signal a blue one was. That is what the
+   * brief asks for; if info has to stand apart it needs its own hue, which is a decision rather
+   * than a tint.
+   *
+   * `--color-info-soft` is the timeline's free-slot background, and `--color-active-grey` above was
+   * placed at the lightest value that still clears 3:1 against it. The tint moved, so that figure
+   * was **re-measured rather than assumed**, and the first teal tried (#e9f5f4) came out at 3.04:1
+   * — inside the rule and with no headroom left. #eef8f7 restores it: **3.13:1**, against 3.15:1
+   * on the blue it replaces. That is the whole reason this token is not simply "a teal version".
+   */
+  --color-info: #117c80;
+  --color-info-soft: #eef8f7;
 
   --radius-card: 0.75rem;
 }

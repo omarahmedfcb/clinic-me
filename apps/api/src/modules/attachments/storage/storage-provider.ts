@@ -51,6 +51,15 @@ export interface StorageProvider {
 
   /** The bytes at `key`. Throws `ObjectNotFound` if there are none. */
   get(key: string): Promise<Buffer>;
+
+  /**
+   * Throws unless this backend is reachable and writable, called once at boot.
+   *
+   * On the interface rather than on one class: the module used to reach for the filesystem provider
+   * with `instanceof` to decide whether to check, which silently skipped the check for any second
+   * implementation — and the second implementation is the one talking to a network.
+   */
+  assertUsable(): Promise<void>;
 }
 
 /** DI token. An interface has no runtime value to inject against. */

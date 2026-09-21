@@ -68,9 +68,9 @@ jobs:
         working-directory: apps/api
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -88,6 +88,14 @@ jobs:
 
       - run: npm run typecheck
 
+      # The compose file the server runs from, checked against the list of variables the API needs.
+      # Before this, `docker-compose.server.yml` passed neither SLOT_TOKEN_SECRET nor any attachment
+      # setting: the container started and the API refused, which is a deploy that fails on the
+      # server rather than here. Nothing in this step needs Docker or a database.
+      - name: The server compose file passes what the API requires
+        run: node scripts/check-server-compose.mjs
+        working-directory: .
+
       - run: npm test
 
       # A literal, not a repo secret, for the same reason POSTGRES_PASSWORD above is one: it signs
@@ -102,6 +110,17 @@ jobs:
           # database and would collide otherwise. Node's default ceiling is ~2 GB and the suite
           # crossed it at 66 suites — aborting with every suite passing, which reads as a flake
           # rather than as a limit. The runner has 16 GB; 4 GB is headroom, not a workaround.
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      # 4d: the gate a release runs on the server, run here too — so a branch that could not be
+      # deployed fails before anybody tries. It re-runs the clinical sweep, which is cheap next to
+      # knowing a leak cannot reach a tag.
+      - name: The release gate
+        run: npm run release:gate
+        working-directory: .
+        env:
+          JWT_SECRET: ci-only-jwt-secret-not-a-secret
+          SLOT_TOKEN_SECRET: ci-only-slot-token-secret-not-a-secret
           NODE_OPTIONS: --max-old-space-size=4096
 
       # The seed is not covered by any test suite, and on 2026-08-26 a migration that added a CHECK
@@ -139,6 +158,61 @@ jobs:
   # `preview:fresh`, `start:fresh` and `PHASE-4.md` §0 are what address it. This job closes a
   # different and previously uncovered class: code that does not build at all, and type errors in a
   # tree nothing was typechecking.
+  # The schema, proven to work with no superuser anywhere — the shape every managed PostgreSQL has.
+  #
+  # FORCE ROW LEVEL SECURITY subjects a table's owner to its own policies, and locally that owner is
+  # a superuser, which bypasses RLS unconditionally and hides the difference. Measured before the
+  # fix: 134 of 734 integration tests failed against a non-superuser-owned database, 156 errors of
+  # them "new row violates row-level security policy for table audit_logs". This job is what stops
+  # that returning; it also refuses a SECURITY DEFINER function left owned by the migration role.
+  rls-ownership:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: clinic_os
+          POSTGRES_PASSWORD: ci-only-password-not-a-secret
+          POSTGRES_DB: clinic_os_ci
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+          POSTGRES_INITDB_ARGS: "--auth-local=scram-sha-256 --auth-host=scram-sha-256"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U clinic_os -d clinic_os_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://clinic_os:ci-only-password-not-a-secret@localhost:5432/clinic_os_ci?schema=public
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: apps/api/package-lock.json
+
+      - run: npm ci
+        working-directory: apps/api
+
+      - run: npx prisma generate
+        working-directory: apps/api
+
+      # Creates its own database and roles, migrates as a NOSUPERUSER NOBYPASSRLS owner, then runs
+      # the whole integration suite against it. The suite's own requirements are the `ci` job's,
+      # for the same reasons stated there: the two literal secrets, and the heap ceiling --runInBand
+      # needs (without it this aborts with status 134, which reads as a flake rather than a limit).
+      - run: node scripts/rls-ownership-drill.mjs
+        env:
+          JWT_SECRET: ci-only-jwt-secret-not-a-secret
+          SLOT_TOKEN_SECRET: ci-only-slot-token-secret-not-a-secret
+          NODE_OPTIONS: --max-old-space-size=4096
+
   web:
     runs-on: ubuntu-latest
 
@@ -147,9 +221,9 @@ jobs:
         working-directory: apps/web
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -216,3 +290,33 @@ jobs:
       #
       # The server builds its own bundle before serving, so this can never test a stale `dist/`.
       - run: npm run smoke
+
+  # A08: what this tag's API image actually is.
+  #
+  # The server builds from a git tag it checked out (SERVER-SETUP.md §11) and nothing verified that
+  # the tag is the one CI passed. It still builds its own image — pushing a registry is a decision
+  # nobody has made — so the artefact here is the **digest**, recorded next to the commit that
+  # produced it. §11 compares the digest it builds against this one before `up`, and
+  # `release:gate` refuses a mismatch when both numbers are available.
+  #
+  # A digest is reproducible only because the Dockerfile is: the same base image, the same lockfile,
+  # the same build. When those differ, the mismatch is the report — not noise to explain away.
+  image-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the API image
+        run: docker build -f docker/Dockerfile.api -t clinic-os-api:${{ github.sha }} .
+
+      - name: Record its digest
+        run: |
+          digest=$(docker image inspect clinic-os-api:${{ github.sha }} --format '{{index .Id}}')
+          printf '%s %s\n' "$digest" "${{ github.sha }}" | tee image-digest.txt
+          echo "The server compares this against its own build before \`up\` — SERVER-SETUP.md §11."
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-digest-${{ github.sha }}
+          path: image-digest.txt
+          retention-days: 90

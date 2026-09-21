@@ -3,6 +3,11 @@ import {
   isDeadlock,
   retryOnDeadlock,
 } from "../../src/prisma/deadlock-retry.ts";
+import {
+  DEADLOCK_7_10_0,
+  DEADLOCK_7_9_1,
+  SLOT_TAKEN_7_9_1,
+} from "./prisma-error-shapes.ts";
 
 /**
  * The retry loop's arithmetic. The *classifier* is pinned to a real Postgres deadlock in
@@ -15,35 +20,19 @@ import {
  * and — the one that matters most — does not retry anything that is not a deadlock.
  */
 
-/** The shape Prisma 7 with the `pg` adapter actually raises, copied from a measured one. */
-const deadlock = (): unknown => ({
-  name: "PrismaClientKnownRequestError",
-  code: "P2039",
-  meta: {
-    modelName: "Appointment",
-    driverAdapterError: {
-      name: "DriverAdapterError",
-      cause: { code: "40P01", message: "deadlock detected", severity: "ERROR" },
-    },
-  },
-});
-
-/** The slot really was taken. An answer, and it must reach the caller on the first occurrence. */
-const slotTaken = (): unknown => ({
-  code: "P2039",
-  meta: {
-    driverAdapterError: {
-      cause: {
-        code: "23P01",
-        message: 'conflicting key value violates exclusion constraint "no_double_booking"',
-      },
-    },
-  },
-});
+/**
+ * Captured from the reproducer rather than written here — see `prisma-error-shapes.ts`. The
+ * hand-built copy this file used to carry agreed with the classifier by construction, and so said
+ * nothing when Prisma 7.10.0 renamed the field underneath both of them.
+ */
+const deadlock = (): unknown => DEADLOCK_7_9_1;
+const deadlockNext = (): unknown => DEADLOCK_7_10_0;
+const slotTaken = (): unknown => SLOT_TAKEN_7_9_1;
 
 describe("isDeadlock recognises 40P01 and nothing else", () => {
-  test("a deadlock is a deadlock", () => {
+  test("a deadlock is a deadlock, on either Prisma version", () => {
     expect(isDeadlock(deadlock())).toBe(true);
+    expect(isDeadlock(deadlockNext())).toBe(true);
   });
 
   test("an exclusion violation is not", () => {

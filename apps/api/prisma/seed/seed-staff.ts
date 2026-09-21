@@ -3,6 +3,7 @@ import { prisma } from "../../src/prisma/client.ts";
 import { hashPassword } from "../../src/modules/auth/password.ts";
 import { injected } from "../../src/prisma/injected.ts";
 import { type ActorContext, withTenant } from "../../src/prisma/with-tenant.ts";
+import { newTenantData } from "../../src/modules/platform/new-clinic.ts";
 import { type ClinicBlueprint, SEED_PASSWORD, WORKING_WEEKDAYS } from "./blueprint.ts";
 import { dateOnly, timeOnly } from "./zoned-time.ts";
 
@@ -75,21 +76,10 @@ export async function seedStaff(
    * would make the two silently drift if that margin ever changed. */
   referenceDate: Date,
 ): Promise<SeededStaff> {
+  // 0g: the same definition the platform console writes, so a column added to a new clinic cannot
+  // reach one path and miss the other. The seed still seats its own staff from the blueprint.
   const tenant = await prisma.tenant.create({
-    data: {
-      id: uuidv7(),
-      name: clinic.name,
-      nameEn: clinic.nameEn,
-      slug: clinic.slug,
-      phone: clinic.phone,
-      address: clinic.address,
-      addressEn: clinic.addressEn,
-      timezone: clinic.timezone,
-      locale: clinic.locale,
-      currency: clinic.currency,
-      status: "ACTIVE",
-      settings: {},
-    },
+    data: newTenantData(clinic),
     select: { id: true },
   });
   const tenantId = tenant.id;

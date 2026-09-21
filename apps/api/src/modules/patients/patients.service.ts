@@ -1,13 +1,16 @@
 import { uuidv7 } from "uuidv7";
 import type { PatientRelationship, PatientStatus } from "../../generated/prisma/client.ts";
 import { injected } from "../../prisma/injected.ts";
-import { withTenant, type ActorContext } from "../../prisma/with-tenant.ts";
+import { withTenant, type ActorContext, type TransactionClient } from "../../prisma/with-tenant.ts";
 import { calendarDayIn } from "../appointments/domain/zoned-time.ts";
 import {
   standingOf,
   type CalendarDay,
   type PolicyStanding,
 } from "../insurance/domain/policy-window.ts";
+import { BadRequestException } from "@nestjs/common";
+import { refusal, type FieldName } from "../../common/refusals.ts";
+import { normalisePhone } from "../auth/phone.ts";
 import { latinSearchKey } from "./domain/transliterate.ts";
 import { missingIntakeFields, type MissingIntakeField } from "./domain/intake-completeness.ts";
 
@@ -47,6 +50,33 @@ import { missingIntakeFields, type MissingIntakeField } from "./domain/intake-co
 export interface CallerContext {
   tenantId: string;
   actor: ActorContext;
+}
+
+type SupportedCountry = "EG" | "SA" | "AE";
+
+/** The clinic's own country, never a fixed "EG" — CLAUDE.md forbids assuming +20. */
+async function tenantCountry(tx: TransactionClient, tenantId: string): Promise<SupportedCountry> {
+  const row = await tx.tenant.findUniqueOrThrow({ where: { id: tenantId }, select: { country: true } });
+  return row.country as SupportedCountry;
+}
+
+/**
+ * A stored phone is E.164 or the write is refused.
+ *
+ * Storing what was typed made `0100 123 4567` and `+201001234567` two different households for one
+ * family, and made a number unreachable by search in any other notation. Phase 6 sends WhatsApp to
+ * this column literally, so a number that is not E.164 is a message that never arrives — which is
+ * why this refuses rather than falls back to the raw string the way the login identifier does.
+ */
+function requireE164(typed: string, country: SupportedCountry, field: FieldName): string {
+  const normalised = normalisePhone(typed, country);
+  if (normalised === null) throw new BadRequestException(refusal("INVALID_FIELD", { field }));
+  return normalised;
+}
+
+/** The same normalisation on the way in to a lookup, so a search matches however it was typed. */
+export function normaliseForSearch(typed: string, country: SupportedCountry): string {
+  return normalisePhone(typed, country) ?? typed;
 }
 
 /**
@@ -246,8 +276,11 @@ export async function householdByPhone(
   phoneE164: string,
 ): Promise<Household | null> {
   return withTenant(ctx.tenantId, ctx.actor, async (tx) => {
+    // Normalised the same way the write was, so the household is found however reception typed it.
+    // Falls back to the raw string rather than refusing: a lookup that cannot parse simply misses.
+    const wanted = normaliseForSearch(phoneE164, await tenantCountry(tx, ctx.tenantId));
     const contact = await tx.contact.findFirst({
-      where: { phoneE164 },
+      where: { phoneE164: wanted },
       select: {
         id: true,
         phoneE164: true,
@@ -373,8 +406,13 @@ export async function searchPatients(
 
   const latin = latinSearchKey(query, null) ?? query.toLowerCase();
 
-  return withTenant(ctx.tenantId, ctx.actor, async (tx) =>
-    withCompleteness(
+  return withTenant(ctx.tenantId, ctx.actor, async (tx) => {
+    // Only the phone comparison uses the normalised form: a name or a national ID must still be
+    // matched as typed. `0100 123 4567` becomes `+201001234567`; a partial like `0100` does not
+    // parse, falls back to the raw string, and keeps working as the substring search it was.
+    const phoneQuery = normaliseForSearch(query, await tenantCountry(tx, ctx.tenantId));
+
+    return withCompleteness(
       await tx.$queryRaw<IntakeJudgeable[]>`
       WITH scored AS (
         SELECT id,
@@ -396,7 +434,7 @@ export async function searchPatients(
                -- false, so OR-ing it makes phone_hit NULL -- and WHERE NOT phone_hit in the outer
                -- query then matches nothing, emptying every name search. Four specs went red.
                coalesce(
-                 phone_e164 ILIKE '%' || ${query} || '%' OR national_id = ${query},
+                 phone_e164 ILIKE '%' || ${phoneQuery} || '%' OR national_id = ${query},
                  false
                ) AS phone_hit,
                greatest(
@@ -407,7 +445,7 @@ export async function searchPatients(
          WHERE tenant_id = ${ctx.tenantId}::uuid
            AND status <> 'MERGED'
            AND (
-                phone_e164 ILIKE '%' || ${query} || '%'
+                phone_e164 ILIKE '%' || ${phoneQuery} || '%'
              OR national_id = ${query}
              OR word_similarity(normalize_arabic_name(${query}), coalesce(name_search_ar, '')) >= ${SIMILARITY_THRESHOLD}
              OR word_similarity(${latin}, coalesce(name_search_latin, '')) >= ${SIMILARITY_THRESHOLD}
@@ -420,8 +458,8 @@ export async function searchPatients(
        ORDER BY score DESC, "fullNameAr" ASC
        LIMIT ${limit}
     `,
-    ),
-  );
+    );
+  });
 }
 
 /**
@@ -454,17 +492,24 @@ export async function createPatient(ctx: CallerContext, input: CreatePatientInpu
   const id = uuidv7();
 
   await withTenant(ctx.tenantId, ctx.actor, async (tx) => {
+    const country = await tenantCountry(tx, ctx.tenantId);
+    const phoneE164 = requireE164(input.phoneE164, country, "phoneE164");
+    const secondaryPhone =
+      input.secondaryPhone === undefined || input.secondaryPhone === null
+        ? null
+        : requireE164(input.secondaryPhone, country, "secondaryPhone");
+
     // The household, found or created, in the same transaction as the patient — D28. `contacts`
     // carries UNIQUE (tenant_id, phone_e164), so two intakes racing on one number cannot both win.
     const existing = await tx.contact.findFirst({
-      where: { phoneE164: input.phoneE164 },
+      where: { phoneE164 },
       select: { id: true },
     });
     const contactId =
       existing?.id ??
       (
         await tx.contact.create({
-          data: injected({ id: uuidv7(), phoneE164: input.phoneE164 }),
+          data: injected({ id: uuidv7(), phoneE164 }),
           select: { id: true },
         })
       ).id;
@@ -478,8 +523,8 @@ export async function createPatient(ctx: CallerContext, input: CreatePatientInpu
         fullNameAr: input.fullNameAr,
         fullNameEn: input.fullNameEn ?? null,
         nameSearchLatin: latinSearchKey(input.fullNameAr, input.fullNameEn ?? null),
-        phoneE164: input.phoneE164,
-        secondaryPhone: input.secondaryPhone ?? null,
+        phoneE164,
+        secondaryPhone,
         gender: input.gender ?? null,
         dateOfBirth: input.dateOfBirth ?? null,
         nationality: input.nationality ?? null,
@@ -558,6 +603,13 @@ export async function updatePatient(
     const existing = await tx.patient.findUnique({ where: { id: patientId } });
     if (existing === null) return null;
 
+    const country = await tenantCountry(tx, ctx.tenantId);
+    const phoneE164 = input.phoneE164 === undefined ? undefined : requireE164(input.phoneE164, country, "phoneE164");
+    const secondaryPhone =
+      input.secondaryPhone === undefined || input.secondaryPhone === null
+        ? input.secondaryPhone
+        : requireE164(input.secondaryPhone, country, "secondaryPhone");
+
     const fullNameAr = input.fullNameAr ?? existing.fullNameAr;
     const fullNameEn = input.fullNameEn === undefined ? existing.fullNameEn : input.fullNameEn;
     const nameChanged = fullNameAr !== existing.fullNameAr || fullNameEn !== existing.fullNameEn;
@@ -570,8 +622,8 @@ export async function updatePatient(
         // Only when a name actually moved. Rewriting it on every save would be harmless but would
         // make the audit trail claim the search key changed when nothing about the name did.
         ...(nameChanged ? { nameSearchLatin: latinSearchKey(fullNameAr, fullNameEn) } : {}),
-        ...(input.phoneE164 === undefined ? {} : { phoneE164: input.phoneE164 }),
-        ...(input.secondaryPhone === undefined ? {} : { secondaryPhone: input.secondaryPhone }),
+        ...(phoneE164 === undefined ? {} : { phoneE164 }),
+        ...(secondaryPhone === undefined ? {} : { secondaryPhone }),
         ...(input.gender === undefined ? {} : { gender: input.gender }),
         ...(input.dateOfBirth === undefined ? {} : { dateOfBirth: input.dateOfBirth }),
         ...(input.nationalId === undefined ? {} : { nationalId: input.nationalId }),

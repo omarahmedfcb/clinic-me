@@ -3,16 +3,15 @@
 
 import { Module } from "@nestjs/common";
 import { ClinicIdentityController } from "./clinic-identity.controller.ts";
-import { LocalFilesystemStorageProvider } from "../attachments/storage/local-filesystem.provider.ts";
 import { STORAGE_PROVIDER, type StorageProvider } from "../attachments/storage/storage-provider.ts";
-import { storageRootFromEnv } from "../attachments/storage/storage.config.ts";
+import { createStorageProvider } from "../attachments/storage/storage.factory.ts";
 
 @Module({
   controllers: [ClinicIdentityController],
   providers: [
     {
       provide: STORAGE_PROVIDER,
-      useFactory: (): StorageProvider => new LocalFilesystemStorageProvider(storageRootFromEnv()),
+      useFactory: (): StorageProvider => createStorageProvider(),
     },
   ],
 })

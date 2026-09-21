@@ -6,8 +6,7 @@ import {
   CLINICS,
   PLATFORM_ADMIN,
   resolveReferenceDate,
-  SEED_PASSWORD,
-  SHARED_STAFF_PHONE,
+  SEED_PASSWORD,  SHARED_STAFF_PHONE,
 } from "./blueprint.ts";
 import { ensurePlatformAdmin } from "./platform-admin.ts";
 
@@ -87,10 +86,23 @@ async function main(): Promise<void> {
 
   // The operator, before any clinic: they belong to none, and 0a's whole point is that the console
   // is reachable without a membership anywhere.
+  /*
+   * **No authenticator, deliberately — reversed on 2026-09-15.**
+   *
+   * The seed used to create this operator with a confirmed TOTP secret, so a review build would be
+   * signable-into. It did the opposite: the console went straight to the code prompt, the reviewer
+   * had no authenticator loaded with that secret, and the enrolment screen sat behind a step that
+   * could not be satisfied. The founder's words: *"there is no enrolment screen, so the code prompt
+   * can never be satisfied."* The screen existed; the seed made it unreachable.
+   *
+   * Seeding no secret is what makes the first sign-in show enrolment, which is the screen that
+   * needs reviewing. `OPERATOR_TOTP=off` is the separate lever for skipping the step entirely, and
+   * the review build sets it.
+   */
   const operator = await ensurePlatformAdmin({ ...PLATFORM_ADMIN, password: SEED_PASSWORD });
   console.log(
     `Platform operator ${PLATFORM_ADMIN.phoneE164} ${operator.created ? "created" : "already present"} ` +
-      "-- no membership in any clinic.",
+      "-- no membership in any clinic, and no authenticator enrolled.",
   );
 
   console.log(`Reference date: ${referenceDate.toISOString()}`);

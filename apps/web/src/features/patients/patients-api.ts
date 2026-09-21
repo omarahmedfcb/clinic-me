@@ -229,10 +229,34 @@ export async function loadHousehold(
   return body.household ?? null;
 }
 
+/**
+ * A refusal that names the control it is about.
+ *
+ * Read generically from the body rather than mapped per field: the API already answers
+ * `INVALID_FIELD` with `params.field` for any DTO or service rejection, and this discarded it —
+ * so a rejected phone showed a form-level "something was invalid" with no indication where. Any
+ * field that gains validation later arrives here without this file changing.
+ */
+export interface FieldRefusal {
+  code: string;
+  field: string | null;
+}
+
+export async function readRefusal(response: Response): Promise<FieldRefusal> {
+  try {
+    const body = (await response.json()) as { code?: unknown; params?: { field?: unknown } };
+    const code = typeof body.code === "string" ? body.code : "ERROR";
+    const field = typeof body.params?.field === "string" ? body.params.field : null;
+    return { code, field };
+  } catch {
+    return { code: "ERROR", field: null };
+  }
+}
+
 export type CreateResult =
   | { ok: true; patient: { id: string } }
   /** DUPLICATE_ID is the partial unique index refusing a second patient on one national ID (D27). */
-  | { ok: false; reason: "DUPLICATE_ID" | "INVALID" | "ERROR" };
+  | { ok: false; reason: "DUPLICATE_ID" | "INVALID" | "ERROR"; refusal?: FieldRefusal };
 
 export async function createPatient(
   authFetch: AuthFetch,
@@ -245,7 +269,7 @@ export async function createPatient(
   });
   if (response.ok) return { ok: true, patient: (await response.json()) as { id: string } };
   if (response.status === 409) return { ok: false, reason: "DUPLICATE_ID" };
-  if (response.status === 400) return { ok: false, reason: "INVALID" };
+  if (response.status === 400) return { ok: false, reason: "INVALID", refusal: await readRefusal(response) };
   return { ok: false, reason: "ERROR" };
 }
 
@@ -321,16 +345,26 @@ export async function updatePatient(
   authFetch: AuthFetch,
   patientId: string,
   patch: PatientPatch,
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true } | { ok: false; message: string; refusal?: FieldRefusal }> {
   const response = await authFetch(`/api/patients/${patientId}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(patch),
   });
   if (response.ok) return { ok: true };
-  const body = (await response.json().catch(() => null)) as { message?: string | string[] } | null;
+
+  const body = (await response.json().catch(() => null)) as
+    | { message?: string | string[]; code?: unknown; params?: { field?: unknown } }
+    | null;
   const message = Array.isArray(body?.message) ? body?.message.join("، ") : body?.message;
-  return { ok: false, message: message ?? `PATCH /patients/${patientId} -> ${response.status}` };
+  const code = typeof body?.code === "string" ? body.code : null;
+  const field = typeof body?.params?.field === "string" ? body.params.field : null;
+
+  return {
+    ok: false,
+    message: message ?? `PATCH /patients/${patientId} -> ${response.status}`,
+    ...(code === null ? {} : { refusal: { code, field } }),
+  };
 }
 
 export interface NewCoverage {

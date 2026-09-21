@@ -10,6 +10,17 @@ export interface PlatformAdminInput {
   phoneE164: string;
   email: string | null;
   password: string;
+  /** The seat. OWNER for the first one: there is nobody else to have seated them. */
+  platformRole?: "OWNER" | "SUPPORT" | "SALES" | "FINANCE";
+  /**
+   * A pre-confirmed authenticator seed, for the review build only.
+   *
+   * Every operator needs a second factor, and a reviewer signing in for the first time would
+   * otherwise have to enrol one before seeing a single screen. The seed passes a fixed secret so the
+   * founder can add it to an authenticator once; `create-platform-admin.ts` never does, so a real
+   * operator always enrols their own.
+   */
+  totp?: { secret: string; confirmedAt: Date };
 }
 
 /**
@@ -38,6 +49,10 @@ export async function ensurePlatformAdmin(input: PlatformAdminInput): Promise<{ 
       email: input.email,
       passwordHash: await hashPassword(input.password),
       isPlatformAdmin: true,
+      platformRole: input.platformRole ?? "OWNER",
+      ...(input.totp === undefined
+        ? {}
+        : { totpSecret: input.totp.secret, totpConfirmedAt: input.totp.confirmedAt }),
       status: "ACTIVE",
     },
     select: { id: true },

@@ -14,7 +14,8 @@ import {
 } from "../../domain/birth-date.ts";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import { BirthDateField } from "./BirthDateField.tsx";
-import { updatePatient, type PatientProfile } from "./patients-api.ts";
+import { refusalText } from "../platform/refusal-text.ts";
+import { updatePatient, type FieldRefusal, type PatientProfile } from "./patients-api.ts";
 
 type AuthFetch = (path: string, init?: RequestInit) => Promise<Response>;
 
@@ -39,6 +40,7 @@ export function EditPatientCard({ authFetch, patient, onSaved, onCancel }: Props
   const [dobProblem, setDobProblem] = useState<BirthDateProblem | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<FieldRefusal | null>(null);
 
   useEffect(() => {
     setDobParts(partsFromIso(patient.dateOfBirth));
@@ -53,6 +55,7 @@ export function EditPatientCard({ authFetch, patient, onSaved, onCancel }: Props
   async function save(): Promise<void> {
     setSaving(true);
     setError(null);
+    setRefusal(null);
     // `""` means "clear it", which is `null` on the wire and is not the same as omitting the key.
     // The badge is derived from what is stored, so completing these fields clears it by itself.
     const result = await updatePatient(authFetch, patient.id, {
@@ -70,8 +73,17 @@ export function EditPatientCard({ authFetch, patient, onSaved, onCancel }: Props
       onSaved();
       return;
     }
+    // Same rule as intake: a refusal that names a field belongs on that control, and the message
+    // above it stays the fallback for the ones that do not name one.
+    if (result.refusal?.field != null) {
+      setRefusal(result.refusal);
+      return;
+    }
     setError(result.message);
   }
+
+  const fieldError = (name: string): string | undefined =>
+    refusal?.field === name ? refusalText(t, refusal.code, { field: name }) : undefined;
 
   return (
     <Card title={t("patients.detail.edit")}>
@@ -96,14 +108,20 @@ export function EditPatientCard({ authFetch, patient, onSaved, onCancel }: Props
         <TextInput
           label={t("intake.field.phone")}
           numeric
+          type="tel"
+          inputMode="tel"
           required
           value={phoneE164}
+          error={fieldError("phoneE164")}
           onChange={(event) => setPhoneE164(event.target.value)}
         />
         <TextInput
           label={t("intake.field.secondaryPhone")}
           numeric
+          type="tel"
+          inputMode="tel"
           value={secondaryPhone}
+          error={fieldError("secondaryPhone")}
           onChange={(event) => setSecondaryPhone(event.target.value)}
         />
 

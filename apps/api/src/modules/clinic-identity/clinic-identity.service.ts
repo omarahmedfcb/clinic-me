@@ -127,6 +127,8 @@ export async function saveClinicIdentity(
   patch: ClinicIdentityPatch,
   defaultCountry: "EG" | "SA" | "AE",
 ): Promise<ClinicIdentity> {
+  // Kept as typed when it does not parse: a letterhead number is display text for print, not an
+  // identifier, and a doctor may legitimately write "02-1234567 ext 3". Ruled 2026-09-16.
   const printable = (typed: string): string => normalisePhone(typed, defaultCountry) ?? typed;
 
   await withTenant(caller.tenantId, caller.actor, async (tx) => {

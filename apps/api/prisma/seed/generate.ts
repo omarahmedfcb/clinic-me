@@ -46,6 +46,24 @@ const BOOKING_RATE = 0.55;
  */
 const ENGLISH_NAME_RATE = 0.2;
 
+/**
+ * The share of seeded patients who live in a household rather than on their own number.
+ *
+ * **One phone per family is the Egyptian norm, not an edge case** -- a mother books for a child on
+ * her own phone -- and the seed modelled the opposite: every patient their own contact, every
+ * relationship SELF. That made the bot's household lookup untestable against review data and made
+ * every desk screen show a shape the pilot clinics will not have.
+ *
+ * A quarter, not all: a clinic has plenty of single adults too, and a seed where every patient sat
+ * in a household would hide the other half of each screen.
+ */
+const HOUSEHOLD_PATIENT_SHARE = 0.25;
+
+/** How many people share one number, when they do. Weighted towards three: a couple and a child. */
+const HOUSEHOLD_SIZES = [2, 3, 3, 4];
+
+export type PatientRelationship = "SELF" | "SPOUSE" | "CHILD" | "PARENT";
+
 export interface GeneratedPatient {
   id: string;
   contactId: string;
@@ -55,10 +73,69 @@ export interface GeneratedPatient {
   phoneE164: string;
   gender: string;
   address: string;
+  /** `SELF` unless this patient shares somebody else's number. */
+  relationshipToContact: PatientRelationship;
+}
+
+/**
+ * Groups a share of the patients onto one contact each: one number, one family name, mixed
+ * relationships.
+ *
+ * Deterministic like everything else here -- it consumes the same PRNG, which is seeded from the
+ * reference date -- so the review build and the sandbox show the same households, and "the mother
+ * on +2010…" means one person in a conversation about a bug.
+ *
+ * The head keeps their own number, contact and family name; the others take all three, because a
+ * household that shared a number and not a surname would read as a data-entry error rather than as
+ * a family.
+ */
+interface DraftPatient extends Omit<GeneratedPatient, "fullName" | "fullNameEn"> {
+  /** The name as parts, so a household can swap a surname without editing a string. */
+  parts: { ar: string; en: string }[];
+  hasEnglishName: boolean;
+}
+
+function formHouseholds(drafts: DraftPatient[], rng: Prng): void {
+  const target = Math.round(drafts.length * HOUSEHOLD_PATIENT_SHARE);
+  let grouped = 0;
+  let index = 0;
+
+  while (grouped < target && index + 1 < drafts.length) {
+    const head = drafts[index];
+    if (head === undefined) break;
+
+    const size = Math.min(rng.pick(HOUSEHOLD_SIZES), drafts.length - index, target - grouped + 1);
+    if (size < 2) break;
+
+    // The head's family name as a *part*, never as text cut off a rendered name. English family
+    // names here contain spaces — "El Sherbiny" — so replacing the last space-separated token
+    // produced "El El Sherbiny", and reading the English surname off a head who has none (the
+    // common case, ENGLISH_NAME_RATE) left a member's own surname beside somebody else's Arabic
+    // one. `seeded-english-names.spec.ts` caught both while this was being written.
+    const family = head.parts.at(-1);
+    if (family === undefined) break;
+
+    for (let member = 1; member < size; member += 1) {
+      const person = drafts[index + member];
+      if (person === undefined) break;
+
+      // A spouse first, then children with the occasional elderly parent -- the shapes a
+      // receptionist actually meets. At most one spouse: a second would be a different product.
+      person.relationshipToContact =
+        member === 1 ? "SPOUSE" : rng.chance(0.75) ? "CHILD" : "PARENT";
+      person.parts = [...person.parts.slice(0, -1), family];
+      person.contactId = head.contactId;
+      person.phoneE164 = head.phoneE164;
+      person.address = head.address;
+    }
+
+    grouped += size;
+    index += size;
+  }
 }
 
 export function generatePatients(clinic: ClinicBlueprint, rng: Prng, phoneBase: number): GeneratedPatient[] {
-  const patients: GeneratedPatient[] = [];
+  const drafts: DraftPatient[] = [];
   for (let index = 0; index < clinic.patientCount; index += 1) {
     const isMale = rng.chance(0.5);
     const given = rng.pick(isMale ? MALE_GIVEN_NAMES : FEMALE_GIVEN_NAMES);
@@ -72,17 +149,27 @@ export function generatePatients(clinic: ClinicBlueprint, rng: Prng, phoneBase: 
     // Arabic name is محمد أحمد الشناوي is Mohamed Ahmed El Shennawy and never someone else.
     const hasEnglishName = rng.chance(ENGLISH_NAME_RATE);
 
-    patients.push({
+    drafts.push({
       id: uuidv7(),
       contactId: uuidv7(),
-      fullName: parts.map((part) => part.ar).join(" "),
-      fullNameEn: hasEnglishName ? parts.map((part) => part.en).join(" ") : null,
+      parts,
+      hasEnglishName,
       phoneE164: `+2010${String(phoneBase + index).padStart(8, "0")}`,
       gender: isMale ? "MALE" : "FEMALE",
       address: rng.pick(ADDRESSES),
+      relationshipToContact: "SELF",
     });
   }
-  return patients;
+
+  formHouseholds(drafts, rng);
+
+  // Rendered once, after the households are settled, so both columns always come from one set of
+  // parts — which is the whole of D19's "the two columns describe one person".
+  return drafts.map(({ parts, hasEnglishName, ...patient }) => ({
+    ...patient,
+    fullName: parts.map((part) => part.ar).join(" "),
+    fullNameEn: hasEnglishName ? parts.map((part) => part.en).join(" ") : null,
+  }));
 }
 
 export interface GeneratedAppointment {

@@ -315,6 +315,7 @@ export function StaffPage({ onOpenDoctor }: { onOpenDoctor: (doctorId: string | 
             label={t("staff.field.phone")}
             required
             numeric
+            type="tel"
             inputMode="tel"
             value={phone}
             data-testid="staff-phone"
@@ -367,6 +368,7 @@ export function StaffPage({ onOpenDoctor }: { onOpenDoctor: (doctorId: string | 
             label={t("staff.field.phone")}
             required
             numeric
+            type="tel"
             inputMode="tel"
             value={phone}
             data-testid="edit-staff-phone"

@@ -1,4 +1,12 @@
 import { useEffect, useState } from "react";
+import { CircleHelp } from "lucide-react";
+import { BRAND } from "../../brand/brand.ts";
+import { BrandMark } from "../../brand/Logo.tsx";
+import { NavIcon, NAV_ICON_SIZE, NAV_ICON_STROKE } from "./nav-icons.tsx";
+import { ClinicBadge } from "./ClinicBadge.tsx";
+import { useClinicLogo } from "./use-clinic-logo.ts";
+import { BUILD_VERSION } from "../auth/BuildStamp.tsx";
+import { HelpPage } from "./HelpPage.tsx";
 import { Avatar } from "../../design-system/Avatar.tsx";
 import { Button } from "../../design-system/Button.tsx";
 import { useLocale } from "../../i18n/locale-context.tsx";
@@ -93,6 +101,8 @@ export function AppShell() {
   // literal segment cannot be read as a malformed id.
   const myPatientId = /^\/visits\/patients\/([0-9a-fA-F-]{36})$/.exec(path)?.[1] ?? null;
   const myPhoto = useUserPhoto(me.membershipId);
+  // Re-fetched when the clinic switches, which is what makes the switcher change the mark too.
+  const clinicLogo = useClinicLogo(me.tenantId);
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState(false);
 
@@ -138,8 +148,9 @@ export function AppShell() {
   return (
     <div className="min-h-dvh bg-surface-sunken text-ink flex">
       <aside className="hidden w-60 shrink-0 border-e border-border bg-surface md:flex md:flex-col">
-        <div className="px-5 py-4 border-b border-border">
-          <span className="text-lg font-semibold">Clinic OS</span>
+        <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
+          <BrandMark size={28} />
+          <span className="text-lg font-semibold text-ink">{BRAND.name}</span>
         </div>
 
         <nav aria-label={t("shell.nav.sectionLabel")} className="flex-1 overflow-y-auto p-3">
@@ -154,9 +165,10 @@ export function AppShell() {
                 {item.path === undefined ? (
                   <span
                     aria-disabled="true"
-                    className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-ink-subtle cursor-default select-none"
+                    className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-ink-subtle cursor-default select-none"
                   >
-                    {t(item.key)}
+                    <NavIcon navKey={item.key} />
+                    <span className="flex-1">{t(item.key)}</span>
                     <span className="rounded bg-surface-sunken px-1.5 py-0.5 text-[10px] text-ink-muted">
                       {t("shell.nav.comingSoon")}
                     </span>
@@ -172,46 +184,73 @@ export function AppShell() {
                       navigate(item.path as string);
                     }}
                     className={cx(
-                      "flex items-center justify-between rounded-lg px-3 py-2 text-sm",
+                      "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm",
+                      // Filled in primary with white text, per the brief. The old active state was
+                      // a grey tint, which on a sidebar of thirteen items said "hovered" more than
+                      // it said "you are here".
                       currentKey === item.key
-                        ? "bg-surface-sunken font-medium text-ink"
-                        : "text-ink-subtle hover:bg-surface-sunken",
+                        ? "bg-primary font-medium text-white"
+                        : "text-ink-muted hover:bg-primary-soft hover:text-primary",
                     )}
                   >
-                    {t(item.key)}
+                    <NavIcon navKey={item.key} />
+                    <span className="flex-1">{t(item.key)}</span>
                   </a>
                 )}
               </li>
             ))}
           </ul>
         </nav>
+
+        {/*
+          The foot of the sidebar: help, and which build this is.
+
+          «مساعدة» is a static page rather than a section — it is deliberately below the rule, not
+          in the list above, because the brief said the sections stay exactly as they are. The
+          version sits under it for the reason `BuildStamp` exists on the login page: when a clinic
+          says "it did something odd", the first question is which build they are on, and an answer
+          they can read aloud is worth more than one we have to go and look up.
+        */}
+        <div className="border-t border-border p-3">
+          <a
+            href="/help"
+            className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-ink-muted hover:bg-primary-soft hover:text-primary"
+            onClick={(event) => {
+              if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+              event.preventDefault();
+              navigate("/help");
+            }}
+          >
+            <CircleHelp size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} aria-hidden="true" className="shrink-0" />
+            <span className="flex-1">{t("shell.nav.help")}</span>
+          </a>
+          <p className="numeric px-3 pt-2 text-[11px] text-ink-subtle">{BUILD_VERSION}</p>
+        </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex flex-wrap items-center gap-3 border-b border-border bg-surface px-4 py-3">
-          {/* The signed-in person's own face, beside their name. No `hasPhoto` hint exists here —
-              the shell knows a membership and nothing else — so a 404 is an ordinary answer. */}
-          <Avatar name={me.user.fullName} src={myPhoto} />
-          <div className="min-w-0">
-            {/* The clinic name is what must visibly change when the clinic switches. The role
-                beneath it says who you are here, which is one role per clinic since 2026-09-09. */}
-            <p className="truncate text-sm font-semibold">{current?.tenantName ?? "—"}</p>
-            {/* The account menu, reachable by every role since 2026-09-13: «بياناتي» holds a
-                person's own name, phone and photo, and a doctor's print fields only if there is a
-                doctor record. A person's own row is not a section of the clinic, so it is the name
-                rather than a sidebar entry. */}
-            <button
-              type="button"
-              data-testid="account-menu"
-              aria-label={t("shell.accountMenu")}
-              onClick={() => navigate("/me")}
-              className="truncate text-xs text-ink-muted underline decoration-border-strong underline-offset-2 hover:decoration-ink"
-            >
-              {me.user.fullName} · {roleLabel(me.role, t)} · {t("shell.myProfile")}
-            </button>
-          </div>
+          {/*
+            **The clinic leads the top bar** — ruled 2026-09-15. Its own mark, then its name as the
+            page's heading, with who you are here beneath it. The NOMED mark is not used as the
+            fallback: a clinic with no logo shows its own initials, so none of them looks like ours.
+          */}
+          <ClinicBadge
+            clinicName={current?.tenantName ?? "—"}
+            logoUrl={clinicLogo}
+            userName={me.user.fullName}
+            roleText={roleLabel(me.role, t)}
+            onAccount={() => navigate("/me")}
+          />
 
           <div className="ms-auto flex items-center gap-2">
+            {/*
+              The signed-in person's own face, moved here with the clinic badge: it belongs with the
+              account controls rather than competing with the clinic's mark at the start of the bar.
+              No `hasPhoto` hint exists — the shell knows a membership and nothing else — so a 404 is
+              an ordinary answer.
+            */}
+            <Avatar name={me.user.fullName} src={myPhoto} size="sm" />
             {others.length > 0 && (
               <div className="flex items-center gap-2">
                 <span className="hidden text-xs text-ink-muted sm:inline">{t("shell.switchClinic")}</span>
@@ -271,6 +310,8 @@ export function AppShell() {
           ) : openDoctorId !== null ? (
             // The users list links here for a doctor row: the Doctors tab with that drawer open.
             <DoctorsPage openDoctorId={openDoctorId} />
+          ) : path === "/help" ? (
+            <HelpPage />
           ) : path === "/me" ? (
             <MyDetailsPage authFetch={authFetch} membershipId={me.membershipId} />
           ) : path === "/audit-log" ? (

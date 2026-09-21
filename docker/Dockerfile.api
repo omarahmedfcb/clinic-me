@@ -97,6 +97,14 @@ COPY --from=deps  /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/package.json ./package.json
 
+# The local attachments backend's directory, created here and owned by the runtime user.
+#
+# Docker seeds a fresh named volume from the image's directory, ownership included, so the volume
+# docker-compose.server.yml mounts here arrives writable. Without this the volume is root-owned, the
+# unprivileged process cannot write to it, and the API refuses to start with "exists but is not
+# writable by this process" — measured, not predicted.
+RUN mkdir -p /srv/clinic-os/attachments && chown -R node:node /srv/clinic-os
+
 # The `node` user ships with the image, uid 1000. Running as root inside a container is one
 # misconfiguration away from being root on the host.
 USER node

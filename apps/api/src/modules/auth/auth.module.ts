@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { ThrottlerModule } from "@nestjs/throttler";
 import { AUTH_THROTTLERS } from "./auth-throttle.ts";
 import { AuthController } from "./auth.controller.ts";
+import { ThrottlingModule } from "../../common/throttling.module.ts";
 
 /**
  * The auth endpoints and their rate limiting.
@@ -17,7 +18,7 @@ import { AuthController } from "./auth.controller.ts";
  * meaning what it says.
  */
 @Module({
-  imports: [ThrottlerModule.forRoot(AUTH_THROTTLERS)],
+  imports: [ThrottlingModule],
   controllers: [AuthController],
 })
 export class AuthModule {}

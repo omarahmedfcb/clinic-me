@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { isDeadlock, retryOnDeadlock } from "../../src/prisma/deadlock-retry.ts";
+import { driverCause } from "../../src/prisma/driver-error.ts";
 import { lockDoctorDay } from "../../src/modules/appointments/slot-day-lock.ts";
 import { prisma } from "../../src/prisma/client.ts";
 import { injected } from "../../src/prisma/injected.ts";
@@ -175,12 +176,12 @@ describe("the exclusion constraint can deadlock, and the retry survives it", () 
     // the SQLSTATE, `isDeadlock` starts returning false, every deadlock silently stops being
     // retried, and this is the test that says so — the guarantee `isDoubleBookingViolation` did not
     // have when it was first written against the shape the docs describe rather than the one raised.
+    //
+    // It said so, on 2026-09-19: Prisma 7.10.0 renamed `cause.code` to `cause.originalCode` and
+    // this line went red while every unit spec stayed green. Read through `driverCause` now, so the
+    // assertion follows the classifier rather than one version's field name.
     expect(isDeadlock(rejected[0]?.reason)).toBe(true);
-
-    const cause = (
-      rejected[0]?.reason as { meta?: { driverAdapterError?: { cause?: { code?: string } } } }
-    ).meta?.driverAdapterError?.cause;
-    expect(cause?.code).toBe("40P01");
+    expect(driverCause(rejected[0]?.reason).code).toBe("40P01");
   }, 30_000);
 
   /**
@@ -244,10 +245,7 @@ describe("the exclusion constraint can deadlock, and the retry survives it", () 
 
     // No deadlock reaches the caller any more: the retry converted it into a real conflict.
     expect(isDeadlock(rejections[0]?.reason)).toBe(false);
-    const cause = (
-      rejections[0]?.reason as { meta?: { driverAdapterError?: { cause?: { code?: string } } } }
-    ).meta?.driverAdapterError?.cause;
-    expect(cause?.code).toBe("23P01");
+    expect(driverCause(rejections[0]?.reason).code).toBe("23P01");
   }, 30_000);
 
   /**
@@ -278,10 +276,7 @@ describe("the exclusion constraint can deadlock, and the retry survives it", () 
     // nothing -- a lock that made both sessions fail would satisfy "no deadlock" as well.
     expect(settled.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     expect(rejections).toHaveLength(1);
-    const cause = (
-      rejections[0]?.reason as { meta?: { driverAdapterError?: { cause?: { code?: string } } } }
-    ).meta?.driverAdapterError?.cause;
-    expect(cause?.code).toBe("23P01");
+    expect(driverCause(rejections[0]?.reason).code).toBe("23P01");
 
     expect(await storedSlots()).toHaveLength(2);
   }, 30_000);

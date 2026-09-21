@@ -107,9 +107,18 @@ describe("user-lookup", () => {
       // (D16). That is the trigger working -- suspending a clinic is exactly the administrative
       // act the audit trail exists to record -- so the test binds an actor like every other
       // tenant-scoped write in the codebase does.
+      // The reason and the instant travel with the status from 0b–0g: `tenants_suspension_is_explained`
+      // refuses a suspended clinic with no explanation, and refuses a live one that still carries a
+      // stale one. This test is about who may log in, and supplies both halves so the CHECK passes.
       const setStatus = (status: "ACTIVE" | "SUSPENDED"): Promise<unknown> =>
         withTenant(tenantId, { userId, ip: "127.0.0.1", userAgent: "jest-integration-tests" }, (tx) =>
-          tx.tenant.update({ where: { id: tenantId }, data: { status } }),
+          tx.tenant.update({
+            where: { id: tenantId },
+            data:
+              status === "SUSPENDED"
+                ? { status, suspensionReason: "suspended by a test", suspendedAt: new Date() }
+                : { status, suspensionReason: null, suspendedAt: null },
+          }),
         );
 
       await setStatus("SUSPENDED");

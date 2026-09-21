@@ -58,6 +58,17 @@ const EXPECTED: Record<Capability, ["full" | "own" | "none", "full" | "own" | "n
   "payments.adjust": ["full", "full", "none", "none"],
   "reports.financial": ["full", "full", "own", "none"],
   "auditLog.read": ["full", "full", "none", "none"],
+  // The bot set, 2026-09-18: AI_AGENT alone holds these, so every human role is none. The AI_AGENT
+  // column is asserted separately, in bot-capability-set.spec.ts, which replaced the holds-nothing
+  // assertion this file used to sit beside.
+  "bot.findPatientByPhone": ["none", "none", "none", "none"],
+  "bot.createProvisionalPatient": ["none", "none", "none", "none"],
+  "bot.listSlots": ["none", "none", "none", "none"],
+  "bot.book": ["none", "none", "none", "none"],
+  "bot.reschedule": ["none", "none", "none", "none"],
+  "bot.cancel": ["none", "none", "none", "none"],
+  "bot.readAppointmentStatus": ["none", "none", "none", "none"],
+  "bot.recordConsent": ["none", "none", "none", "none"],
 };
 
 describe("permission matrix (ARCHITECTURE.md §8)", () => {
@@ -78,7 +89,9 @@ describe("permission matrix (ARCHITECTURE.md §8)", () => {
     // themselves" is a shape no existing capability expressed.
     // -> 112 on 2026-09-11 when R2 split the payments screen (`payments.read`) from the act of
     // taking money (`payments.record`), so that an admin can hold one and not the other.
-    expect(cases).toHaveLength(112);
+    // -> 144 on 2026-09-18 with the eight bot.* capabilities: AI_AGENT holds them and the four
+    // human roles hold none of them, which is the part this file checks.
+    expect(cases).toHaveLength(144);
   });
 
   test.each(cases)("%s x %s -> %s", (capability, role, expectedLevel) => {

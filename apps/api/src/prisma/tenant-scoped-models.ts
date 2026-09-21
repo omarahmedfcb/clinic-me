@@ -11,8 +11,15 @@ import { Prisma } from "../generated/prisma/client.ts";
  *              Application code must set tenantId explicitly for these two models.
  * - "none"     no tenantId column at all (Tenant is the tenant; User and RefreshToken are
  *              scoped indirectly through Membership).
+ * - "platform" a required tenantId column naming the clinic a row is ABOUT, on a table that
+ *              belongs to the vendor rather than to that clinic. Never auto-injected: the operator
+ *              reads across every clinic from a session that binds no tenant, so a filter on the
+ *              bound tenant would return nothing and a value on write would be unavailable. What
+ *              keeps a clinic out of these tables is not the extension but RLS — the policy is
+ *              `is_active_platform_admin()`, which is false for every clinic user, so the whole
+ *              table is empty to them. Added 2026-09-15 with the back office.
  */
-export type TenantPolicy = "scoped" | "nullable" | "none";
+export type TenantPolicy = "scoped" | "nullable" | "none" | "platform";
 
 /**
  * One entry per model in schema.prisma, and only per model in schema.prisma. `satisfies
@@ -45,6 +52,8 @@ const TENANT_POLICY = {
   Payment: "scoped",
   PaymentAdjustment: "scoped",
   Consent: "scoped",
+  BotCredential: "scoped",
+  WebhookDelivery: "scoped",
   AccessGrant: "scoped",
   TreatmentPlan: "scoped",
   TreatmentPlanSession: "scoped",
@@ -77,6 +86,13 @@ const TENANT_POLICY = {
   VisitChargeLine: "scoped",
   ChargeableMaterial: "scoped",
   PatientCredit: "scoped",
+  // The vendor's file on a clinic, not the clinic's own data. See "platform" above.
+  PlatformClinicFile: "platform",
+  PlatformClinicContact: "platform",
+  PlatformClinicContract: "platform",
+  // An operator's recovery codes. "none", like `User` and `RefreshToken`: an operator holds no
+  // membership anywhere, so there is no tenant for a policy to compare against.
+  OperatorRecoveryCode: "none",
 } satisfies Record<Prisma.ModelName, TenantPolicy>;
 
 export function tenantPolicyOf(model: Prisma.ModelName): TenantPolicy {

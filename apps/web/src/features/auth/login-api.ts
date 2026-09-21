@@ -34,13 +34,20 @@ export type LoginResult =
  * both true and actionable, and it reveals nothing: being rate-limited is a fact about her own
  * requests, which she already knows.
  */
-export async function login(identifier: string, password: string, signal?: AbortSignal): Promise<LoginResult> {
+export async function login(
+  identifier: string,
+  password: string,
+  options: { rememberMe?: boolean; signal?: AbortSignal } = {},
+): Promise<LoginResult> {
+  const { rememberMe, signal } = options;
   let response: Response;
   try {
     response = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ identifier, password }),
+      // `rememberMe` is a request and not a decision: the server grants it only to a DOCTOR or a
+      // RECEPTIONIST, whatever this sends.
+      body: JSON.stringify({ identifier, password, ...(rememberMe === undefined ? {} : { rememberMe }) }),
       // The refresh token comes back as an httpOnly cookie; without this the browser discards it
       // and every session would end at the first token expiry.
       credentials: "include",

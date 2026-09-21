@@ -15,6 +15,9 @@ import {
 } from "@nestjs/common";
 import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, Min } from "class-validator";
 import { actorContext } from "../../common/actor-context.ts";
+import { SkipThrottle } from "@nestjs/throttler";
+import { RetryAfterThrottlerGuard, SkipAllThrottlers, ThrottleOnly } from "../../common/throttlers.ts";
+import { PAYMENTS_THROTTLER, WRITE_THROTTLE_LIMITS } from "../../common/write-throttle.ts";
 import { AuthGuard, type AuthenticatedRequest } from "../../common/auth.guard.ts";
 import { PermissionGuard } from "../../common/permission.guard.ts";
 import { RequirePermission } from "../../common/require-permission.decorator.ts";
@@ -55,7 +58,9 @@ export class RefundCreditDto {
  * which an admin sees in full; `payments.record` carries the act, which an admin does not hold.
  */
 @Controller()
-@UseGuards(AuthGuard, TenantGuard, PermissionGuard)
+@UseGuards(AuthGuard, TenantGuard, PermissionGuard, RetryAfterThrottlerGuard)
+// Off by default, on per route — see write-throttle.ts for why that is not the framework's default.
+@SkipAllThrottlers()
 export class BillingActionsController {
   private caller(request: AuthenticatedRequest) {
     return {

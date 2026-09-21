@@ -22,9 +22,14 @@ describe("tenant-scoped-models registry", () => {
     // ChargeableMaterial (PR 3). The balance is a view and therefore not a model here.
     // 49 as of 2026-09-13: PatientCredit (ruling 5). `patient_credit_balances` is a view, for the
     // same reason `visit_charge_balances` is, so it is not a model either.
-    expect(allModelNames).toHaveLength(49);
+    // 52 as of 2026-09-15: PlatformClinicFile, PlatformClinicContact and PlatformClinicContract
+    // joined with the back office, under the new "platform" classification.
+    // 53 as of 2026-09-16: OperatorRecoveryCode joined, classified "none".
+    // 54 as of 2026-09-18: BotCredential joined, scoped — a credential belongs to one clinic.
+    // 55 as of 2026-09-18: WebhookDelivery joined, scoped — one clinic's outbox.
+    expect(allModelNames).toHaveLength(55);
     for (const name of allModelNames) {
-      expect(["scoped", "nullable", "none"]).toContain(tenantPolicyOf(name));
+      expect(["scoped", "nullable", "none", "platform"]).toContain(tenantPolicyOf(name));
     }
   });
 
@@ -61,8 +66,8 @@ describe("tenant-scoped-models registry", () => {
     }
   });
 
-  test("has exactly 44 scoped, 2 nullable, and 3 none models (44 + 2 + 3 = 49)", () => {
-    const counts = { scoped: 0, nullable: 0, none: 0 };
+  test("has exactly 46 scoped, 2 nullable, 4 none and 3 platform models (46 + 2 + 4 + 3 = 55)", () => {
+    const counts = { scoped: 0, nullable: 0, none: 0, platform: 0 };
     for (const name of allModelNames) {
       counts[tenantPolicyOf(name)] += 1;
     }
@@ -76,6 +81,16 @@ describe("tenant-scoped-models registry", () => {
     // 38 as of 2026-09-08: visit_procedures joined (prisma/sql/26, PHASE-4.md Q25).
     // 44 as of 2026-09-13: patient_credits joined (ruling 5). Plainly scoped — a credit belongs to
     // one patient in one clinic, and a balance that crossed clinics would be a different product.
-    expect(counts).toEqual({ scoped: 44, nullable: 2, none: 3 });
+    // 2026-09-15: the three back-office tables joined as "platform" — they carry a `tenantId`
+    // naming the clinic they are ABOUT, on tables that belong to the vendor. Classifying them
+    // "scoped" would have been the silent mistake: the extension would inject a filter on a tenant
+    // the operator never binds, and every read would answer nothing while looking correct.
+    // 2026-09-16: operator_recovery_codes joined as "none". An operator holds no membership in any
+    // clinic, so there is no tenant for a policy to compare against — the same reasoning as `User`
+    // and `RefreshToken`, and the reason that table carries no RLS either.
+    // 2026-09-18: bot_credentials joined as "scoped". The bot authenticates before any tenant is
+    // bound, which is why `resolve_bot_credential` exists — not a reason to loosen the model.
+    // 2026-09-18: webhook_deliveries joined as "scoped". Its rows name one clinic's appointments.
+    expect(counts).toEqual({ scoped: 46, nullable: 2, none: 4, platform: 3 });
   });
 });
