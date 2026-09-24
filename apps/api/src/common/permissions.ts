@@ -75,6 +75,13 @@ export const CAPABILITIES = [
   "bot.cancel",
   "bot.readAppointmentStatus",
   "bot.recordConsent",
+  // Added 2026-09-22 for the web-chat prototype (docs precede it; the contract itself only ever
+  // needed find/create/slots/book/reschedule/cancel/status/consent, because a WhatsApp number
+  // already implies one clinic). A patient with no clinic yet, browsing by chat, needs to see the
+  // doctor and service lists a receptionist already can -- `appointments.read`/`services.manage`
+  // grant far more than that, so these are narrow capabilities of their own rather than a reuse.
+  "bot.listDoctors",
+  "bot.listServices",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -288,6 +295,8 @@ const MATRIX: Record<Capability, Record<MembershipRole, PermissionLevel>> = {
   "bot.cancel": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
   "bot.readAppointmentStatus": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
   "bot.recordConsent": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
+  "bot.listDoctors": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
+  "bot.listServices": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
 };
 
 export function permissionLevel(role: MembershipRole, capability: Capability): PermissionLevel {

@@ -69,6 +69,10 @@ const EXPECTED: Record<Capability, ["full" | "own" | "none", "full" | "own" | "n
   "bot.cancel": ["none", "none", "none", "none"],
   "bot.readAppointmentStatus": ["none", "none", "none", "none"],
   "bot.recordConsent": ["none", "none", "none", "none"],
+  // Added 2026-09-22 for the web-chat prototype; AI_AGENT column asserted in
+  // bot-capability-set.spec.ts, same as the original eight.
+  "bot.listDoctors": ["none", "none", "none", "none"],
+  "bot.listServices": ["none", "none", "none", "none"],
 };
 
 describe("permission matrix (ARCHITECTURE.md §8)", () => {
@@ -91,7 +95,9 @@ describe("permission matrix (ARCHITECTURE.md §8)", () => {
     // taking money (`payments.record`), so that an admin can hold one and not the other.
     // -> 144 on 2026-09-18 with the eight bot.* capabilities: AI_AGENT holds them and the four
     // human roles hold none of them, which is the part this file checks.
-    expect(cases).toHaveLength(144);
+    // -> 152 on 2026-09-22 when bot.listDoctors and bot.listServices joined for the web-chat
+    // prototype's clinic browsing.
+    expect(cases).toHaveLength(152);
   });
 
   test.each(cases)("%s x %s -> %s", (capability, role, expectedLevel) => {

@@ -6,6 +6,7 @@ import { ChangePasswordScreen } from "./features/staff/ChangePasswordScreen.tsx"
 import { GalleryPage } from "./features/gallery/GalleryPage.tsx";
 import { PlatformConsole } from "./features/platform/PlatformConsole.tsx";
 import { AppShell } from "./features/shell/AppShell.tsx";
+import { WebchatPage } from "./features/webchat/WebchatPage.tsx";
 
 /**
  * Which screen is on: the login page, or the authenticated shell.
@@ -26,6 +27,10 @@ import { AppShell } from "./features/shell/AppShell.tsx";
 
 /** The operator's console. One definition, because two checks would drift the first time one moved. */
 export const isPlatformPath = (): boolean => window.location.pathname.startsWith("/platform");
+
+/** The public booking chat prototype -- no login, reachable by a patient who has never heard of
+ *  this page. Same reasoning as isPlatformPath: one definition, checked before the session logic. */
+export const isWebchatPath = (): boolean => window.location.pathname.startsWith("/book");
 
 type Screen =
   | { kind: "loading" }
@@ -57,6 +62,9 @@ export function App() {
     // early return below cannot prevent this: hooks run before it.
     if (isPlatformPath()) return;
 
+    // The web chat has no session at all -- a patient here has never logged in and never will.
+    if (isWebchatPath()) return;
+
     void (async () => {
       try {
         const response = await fetch("/api/auth/refresh", { method: "POST", credentials: "include" });
@@ -79,6 +87,15 @@ export function App() {
 
   // Kept reachable for review; it is not part of the application's own navigation.
   if (window.location.pathname.startsWith("/gallery")) return <GalleryPage />;
+
+  /**
+   * **The public booking chat prototype, outside the clinic application entirely.**
+   *
+   * Checked before the session logic below, same as the platform console: a patient reaching
+   * `/book` has no membership, no token and no clinic yet -- the chat itself is how a clinic gets
+   * chosen. See docs/ARCHITECTURE.md §12 and apps/api/src/modules/webchat.
+   */
+  if (isWebchatPath()) return <WebchatPage />;
 
   /**
    * **The operator's console, outside the clinic application entirely** — pilot-readiness 0b–0f.

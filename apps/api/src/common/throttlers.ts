@@ -10,6 +10,7 @@ import {
 } from "@nestjs/throttler";
 import { AUTH_THROTTLERS } from "../modules/auth/auth-throttle.ts";
 import { BOT_THROTTLERS } from "../modules/bot/bot-throttle.ts";
+import { WEBCHAT_THROTTLERS } from "../modules/webchat/webchat-throttle.ts";
 import { WRITE_THROTTLERS } from "./write-throttle.ts";
 
 /**
@@ -29,6 +30,7 @@ export const ALL_THROTTLERS: ThrottlerOptions[] = [
   ...AUTH_THROTTLERS,
   ...BOT_THROTTLERS,
   ...WRITE_THROTTLERS,
+  ...WEBCHAT_THROTTLERS,
 ];
 
 /**

@@ -12,6 +12,11 @@ import type { MembershipRole } from "../../src/generated/prisma/enums.ts";
  * nobody holds is a capability nobody reviews"; now it is a role that runs software we do not
  * control, so the question is whether its column ever grows a ninth row quietly. Growing it means
  * editing the list below, which is the conversation the deleted file existed to force.
+ *
+ * Grown to ten on 2026-09-22: the web-chat prototype gave AI_AGENT `bot.listDoctors` and
+ * `bot.listServices`, so a patient with no clinic yet can browse before booking. Both are read-only
+ * and narrower than `appointments.read`/`services.manage`, the same shape of decision as the
+ * original eight.
  */
 const BOT_CAPABILITIES: Capability[] = [
   "bot.findPatientByPhone",
@@ -22,12 +27,14 @@ const BOT_CAPABILITIES: Capability[] = [
   "bot.cancel",
   "bot.readAppointmentStatus",
   "bot.recordConsent",
+  "bot.listDoctors",
+  "bot.listServices",
 ];
 
 const HUMAN_ROLES: MembershipRole[] = ["OWNER", "ADMIN", "DOCTOR", "RECEPTIONIST"];
 
 describe("the AI_AGENT capability set", () => {
-  test("AI_AGENT holds exactly the eight bot capabilities, and nothing else", () => {
+  test("AI_AGENT holds exactly the ten bot capabilities, and nothing else", () => {
     const held = CAPABILITIES.filter((capability) => permissionLevel("AI_AGENT", capability) !== "none");
     expect([...held].sort()).toEqual([...BOT_CAPABILITIES].sort());
   });
