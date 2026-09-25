@@ -76,9 +76,7 @@ export async function listBookableClinics(): Promise<BookableClinic[]> {
     select: CLINIC_SELECT,
     orderBy: { name: "asc" },
   });
-  console.log("tenants", tenants);
 
   const flags = await Promise.all(tenants.map((tenant) => resolveBotActor(tenant.id)));
-  console.log("flags", flags);
   return tenants.filter((_tenant, index) => flags[index] !== null);
 }

@@ -15,6 +15,15 @@ const WELCOME =
 
 const SEND_ERROR = "تعذّر الإرسال، من فضلك حاول تاني. / Could not send that, please try again.";
 
+/** Arabic and its extended block (covers Arabic-script Egyptian/MSA text). Whichever script the
+ *  message is actually written in decides its direction -- a conversation can switch language
+ *  mid-way, so this is judged per message, not once for the whole page. */
+const ARABIC_PATTERN = /[\u0600-\u06FF\u0750-\u077F]/;
+
+function directionOf(text: string): "rtl" | "ltr" {
+  return ARABIC_PATTERN.test(text) ? "rtl" : "ltr";
+}
+
 /**
  * The web-chat booking prototype -- `/book`, reachable with no login (App.tsx's isWebchatPath()).
  *
@@ -64,6 +73,7 @@ export function WebchatPage() {
         {messages.map((message, index) => (
           <div key={index} className={cx("flex", message.role === "user" ? "justify-end" : "justify-start")}>
             <div
+              dir={directionOf(message.text)}
               className={cx(
                 "max-w-[80%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm",
                 message.role === "user" ? "bg-primary text-white" : "border border-border-strong bg-surface text-ink",
@@ -91,6 +101,7 @@ export function WebchatPage() {
         }}
       >
         <input
+          dir={directionOf(input)}
           className="min-w-0 flex-1 rounded-full border border-border-strong bg-surface-sunken px-4 py-2.5 text-sm text-ink outline-none focus:border-primary"
           value={input}
           onChange={(event) => setInput(event.target.value)}

@@ -11,7 +11,7 @@ const WINDOW_MS = 60_000;
 /**
  * Thirty messages a minute per address. A tool-calling round trip is still one message from the
  * patient's side, so this is generous for a real conversation and tight for a script driving
- * Groq spend or the booking endpoints through this one open door.
+ * OpenAI spend or the booking endpoints through this one open door.
  */
 const LIMIT = 30;
 

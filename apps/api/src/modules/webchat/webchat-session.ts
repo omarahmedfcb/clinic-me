@@ -1,5 +1,10 @@
 // A conversation's working memory: which clinic, patient, doctor and service have been settled so
-// far, and the message history Groq needs for context.
+// far, plus the one id needed to continue the OpenAI conversation next time.
+//
+// No message array anymore. previous_response_id (gpt-client.ts) means OpenAI keeps the transcript
+// on its side; the only local state left is exactly what the tools need to book safely -- the ids
+// resolved into `slots` -- and a pointer to resume from. This is what "don't resend the whole
+// history" actually looks like in the session shape: there is no history object left to resend.
 //
 // In-memory and per-process, deliberately. `Conversation`/`Message` (WHATSAPP-BOT-CONTRACT.md)
 // carry WhatsApp billing fields -- `billingCategory`, a required external message id -- that a web
@@ -10,23 +15,10 @@
 
 import { randomUUID } from "node:crypto";
 
-export interface GroqToolCall {
-  id: string;
-  type: "function";
-  function: { name: string; arguments: string };
-}
-
-export type GroqMessage =
-  | { role: "system"; content: string }
-  | { role: "user"; content: string }
-  | { role: "assistant"; content: string | null; tool_calls?: GroqToolCall[] }
-  | { role: "tool"; tool_call_id: string; content: string };
-
 /** What the tools have settled so far. Never trust the model with an id this doesn't hold. */
 export interface WebchatSlots {
   tenantId?: string;
   tenantTimezone?: string;
-  tenantCountry?: "EG" | "SA" | "AE";
   botMembershipId?: string;
   botUserId?: string;
   patientId?: string;
@@ -37,7 +29,9 @@ export interface WebchatSlots {
 
 export interface WebchatSession {
   id: string;
-  messages: GroqMessage[];
+  /** The OpenAI response this conversation is chained from. Absent until the first reply comes
+   *  back; every call after that passes it so OpenAI continues from its own stored context. */
+  previousResponseId?: string;
   slots: WebchatSlots;
   updatedAt: number;
 }
@@ -54,7 +48,7 @@ class WebchatSessionStore {
   }
 
   create(): WebchatSession {
-    const session: WebchatSession = { id: randomUUID(), messages: [], slots: {}, updatedAt: Date.now() };
+    const session: WebchatSession = { id: randomUUID(), slots: {}, updatedAt: Date.now() };
     this.sessions.set(session.id, session);
     return session;
   }
