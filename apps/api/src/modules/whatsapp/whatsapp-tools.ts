@@ -108,14 +108,19 @@ export const WHATSAPP_TOOLS: GptTool[] = [
     description:
       "Books the slot the patient confirmed, for the patient identified by patientId. Only call this " +
       "after the patient has explicitly confirmed the doctor, date and time out loud, and only with a " +
-      "patientId that came from find_or_create_patient earlier in this conversation.",
+      "patientId that came from find_or_create_patient earlier in this conversation. Pass the same " +
+      "doctorId, serviceId and date you used for list_slots, and the slotId of the chosen time, copied " +
+      "exactly as list_slots returned it.",
     parameters: {
       type: "object",
       properties: {
         patientId: { type: "string" },
-        slotToken: { type: "string" },
+        doctorId: { type: "string" },
+        serviceId: { type: "string" },
+        date: { type: "string" },
+        slotId: { type: "string" },
       },
-      required: ["patientId", "slotToken"],
+      required: ["patientId", "doctorId", "serviceId", "date", "slotId"],
       additionalProperties: false,
     },
     strict: true,
@@ -190,20 +195,32 @@ async function toolListSlots(ctx: WhatsAppToolContext, args: Record<string, unkn
     // has passed since the list was computed is worse to show than one the engine's own lead-time
     // rules already excluded.
     slots: result.value.slots
-      .map((slot) => ({ start: new Date(slot.start), token: slot.token }))
+      .map((slot) => ({ start: new Date(slot.start) }))
       .filter((slot) => slot.start > now)
-      .map((slot) => ({ token: slot.token, localTime: formatInClinicTime(slot.start, ctx.timezone) })),
+      .map((slot) => ({ slotId: slot.start.toISOString(), localTime: formatInClinicTime(slot.start, ctx.timezone) })),
   };
 }
 
 async function toolBookAppointment(ctx: WhatsAppToolContext, args: Record<string, unknown>): Promise<unknown> {
   const patientId = asString(args["patientId"]);
-  const slotToken = asString(args["slotToken"]);
-  if (!patientId || !slotToken) return { ok: false, reason: "INVALID_INPUT" };
+  const doctorId = asString(args["doctorId"]);
+  const serviceId = asString(args["serviceId"]);
+  const date = parseFlexibleDate(asString(args["date"]));
+  const slotStartMs = Date.parse(asString(args["slotId"]));
+  if (!patientId || !doctorId || !serviceId || !date || Number.isNaN(slotStartMs)) {
+    return { ok: false, reason: "INVALID_INPUT" };
+  }
+
+  // Re-ask the API for the offer and take the token from *its* answer, never from the model.
+  const offered = await ctx.client.listSlots({ doctorId, serviceId, date });
+  if (!offered.ok) return { ok: false, reason: offered.code, params: offered.params };
+
+  const match = offered.value.slots.find((slot) => new Date(slot.start).getTime() === slotStartMs);
+  if (match === undefined) return { ok: false, reason: "SLOT_TAKEN", params: {} };
 
   const result = await ctx.client.bookAppointment({
     patientId,
-    slotToken,
+    slotToken: match.token,
     consentMessageId: ctx.inboundExternalMessageId,
   });
   if (!result.ok) return { ok: false, reason: result.code, params: result.params };
