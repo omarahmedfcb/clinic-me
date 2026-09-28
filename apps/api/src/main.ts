@@ -43,7 +43,13 @@ async function bootstrap(): Promise<void> {
   // logging receiver, which is fine on a laptop and is a data leak on a server.
   assertBotSandboxAllowed();
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // `rawBody: true` keeps the exact bytes of every request body on `request.rawBody`, alongside
+  // Nest's normal parsed `request.body`. Only one route reads it (whatsapp.controller.ts): Meta
+  // signs the literal bytes it sent, and verifying against `JSON.stringify(request.body)` instead
+  // would fail on the first delivery whose re-serialization does not byte-for-byte match Meta's own
+  // (a reordered key, different whitespace) -- indistinguishable from a forged request if that
+  // happened, which is exactly the failure mode a signature check exists to rule out.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
 
   /**
    * TRUST_PROXY is a correctness setting, not a deployment convenience.

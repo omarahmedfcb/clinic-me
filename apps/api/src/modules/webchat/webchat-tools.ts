@@ -7,6 +7,7 @@
 // JSON Schema before we ever see it, so a malformed or missing field is rejected before it reaches
 // this file at all, not caught here after the fact.
 
+import { formatInClinicTime, parseFlexibleDate, todayInClinic } from "../../common/clinic-time.ts";
 import type { Capability } from "../../common/permissions.ts";
 import { permissionLevel } from "../../common/permissions.ts";
 import { findAvailableSlots, bookAppointment, type CallerContext } from "../appointments/appointments.service.ts";
@@ -40,61 +41,6 @@ function callerFor(session: WebchatSession): CallerContext | null {
     membershipId: botMembershipId,
     actor: { userId: botUserId, ip: "webchat", userAgent: "clinic-os-webchat" },
   };
-}
-
-/** The clinic's local wall-clock time for an instant, e.g. `2026-09-25 10:00`. No arithmetic done
- *  by hand -- and none left for the model to get wrong either. */
-function formatInClinicTime(instant: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(instant);
-  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
-  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}`;
-}
-
-/** Today's date, in the clinic's own calendar rather than the server's. Reads it off the resolved
- *  tenant instead of hardcoding Africa/Cairo directly, even though that is the only value this
- *  project currently has. */
-function todayInClinic(timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
-  return `${get("year")}-${get("month")}-${get("day")}`;
-}
-
-/**
- * Accepts the date formats a patient (or the model, converting free text) is likely to produce:
- * ISO (2026-09-23), and Egypt's everyday day-first convention with either separator
- * (23-09-2026, 23/09/2026). Returns a normalised YYYY-MM-DD string, or null if it cannot be read as
- * a real calendar date -- the model is instructed to convert relative or worded dates itself before
- * calling this tool, so this only needs to cover the handful of literal shapes people actually type.
- */
-function parseFlexibleDate(input: string): string | null {
-  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input);
-  if (isoMatch) {
-    const asDate = new Date(`${input}T00:00:00Z`);
-    return Number.isNaN(asDate.getTime()) ? null : input;
-  }
-
-  const dayFirstMatch = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/.exec(input);
-  if (dayFirstMatch) {
-    const [, day, month, year] = dayFirstMatch;
-    const iso = `${year}-${month!.padStart(2, "0")}-${day!.padStart(2, "0")}`;
-    const asDate = new Date(`${iso}T00:00:00Z`);
-    return Number.isNaN(asDate.getTime()) ? null : iso;
-  }
-
-  return null;
 }
 
 function asString(value: unknown): string {

@@ -93,20 +93,20 @@ export type AvailabilityResult =
 export type BookingResult =
   | { ok: true; appointmentId: string; start: Date; end: Date }
   | {
-      ok: false;
-      code:
-        | "INVALID_TOKEN"
-        | "EXPIRED_TOKEN"
-        | "SLOT_TAKEN"
-        // Every attempt was killed to break a deadlock. Deliberately NOT folded into SLOT_TAKEN:
-        // the loser of a deadlock lost a coin toss, not a slot. See `prisma/deadlock-retry.ts`.
-        | "CONTENDED"
-        | "NOT_FOUND"
-        // The slot has already happened. Separate from EXPIRED_TOKEN: that one says the *offer* went
-        // stale and a fresh one would work, this one says the time itself is gone and none would.
-        | "PAST_SLOT";
-      params: RefusalParams;
-    };
+    ok: false;
+    code:
+    | "INVALID_TOKEN"
+    | "EXPIRED_TOKEN"
+    | "SLOT_TAKEN"
+    // Every attempt was killed to break a deadlock. Deliberately NOT folded into SLOT_TAKEN:
+    // the loser of a deadlock lost a coin toss, not a slot. See `prisma/deadlock-retry.ts`.
+    | "CONTENDED"
+    | "NOT_FOUND"
+    // The slot has already happened. Separate from EXPIRED_TOKEN: that one says the *offer* went
+    // stale and a fresh one would work, this one says the time itself is gone and none would.
+    | "PAST_SLOT";
+    params: RefusalParams;
+  };
 
 export type StatusChangeResult =
   | { ok: true; status: AppointmentStatus }
@@ -393,7 +393,10 @@ export async function bookAppointment(
     // retry" rule does not reach this error shape. `23P01` is never retried: it is an answer.
     return await retryOnDeadlock(() =>
       withTenant(caller.tenantId, caller.actor, async (tx) => {
+        const t0 = Date.now();
+        const lap = (step: string) => console.log(`[book-timing] +${Date.now() - t0}ms ${step}`);
         const patient = await tx.patient.findFirst({ where: { id: input.patientId } });
+        lap("patient read");
         if (patient === null) {
           return {
             ok: false as const,
@@ -414,6 +417,7 @@ export async function bookAppointment(
           where: { id: claims.serviceId },
           select: { priceMinor: true },
         });
+        lap("service read");
         if (quotedService === null) {
           return {
             ok: false as const,
@@ -431,6 +435,7 @@ export async function bookAppointment(
           doctorId: claims.doctorId,
           at: new Date(claims.startMs),
         });
+        lap("day lock acquired");
 
         const created = await tx.appointment.create({
           data: injected({
@@ -448,6 +453,7 @@ export async function bookAppointment(
             updatedBy: caller.actor.userId,
           }),
         });
+        lap("appointment inserted");
 
         await tx.appointmentEvent.create({
           data: injected({
@@ -459,6 +465,7 @@ export async function bookAppointment(
             actorUserId: caller.actor.userId,
           }),
         });
+        lap("event inserted");
 
         // In this transaction, not after it: a booking that rolls back must not leave a
         // notification claiming it happened (PHASE-2.md §16).
@@ -555,10 +562,10 @@ export async function rescheduleAppointment(
         const existing = await tx.appointment.findFirst({ where: { id: appointmentId } });
         if (existing === null) {
           return {
-        ok: false as const,
-        code: "NOT_FOUND" as const,
-        params: { resource: "appointment" } as const,
-      };
+            ok: false as const,
+            code: "NOT_FOUND" as const,
+            params: { resource: "appointment" } as const,
+          };
         }
 
         // Reschedule is not an event, so `transition()` never saw it and this check did not exist:

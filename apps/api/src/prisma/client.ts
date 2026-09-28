@@ -28,4 +28,11 @@ const pool = new Pool({
 
 const adapter = new PrismaPg(pool);
 
-export const prisma = withTenantScoping(new PrismaClient({ adapter }));
+export const prisma = withTenantScoping(
+  new PrismaClient({
+    adapter,
+    // Prisma's interactive-transaction default is 5s (maxWait 2s), which a booking blocked behind
+    // the doctor-day advisory lock can exceed. Applies to every withTenant() call.
+    transactionOptions: { timeout: 30_000, maxWait: 10_000 },
+  }),
+);

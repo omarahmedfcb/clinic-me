@@ -26,6 +26,8 @@ import {
   findAvailableSlots,
   rescheduleAppointment,
 } from "../appointments/appointments.service.ts";
+import { listDoctors } from "../doctors/doctors.service.ts";
+import { listServices } from "../services/services.service.ts";
 import {
   BotBookDto,
   BotCancelDto,
@@ -47,13 +49,21 @@ import {
 /**
  * The WhatsApp bot's entire surface. `docs/WHATSAPP-BOT-CONTRACT.md` is the specification.
  *
- * **Eight routes, eight capabilities, one each.** Nothing here is shared with a staff route: the
- * contract's refusals are narrower than a receptionist's, and a shared endpoint would have to decide
- * between them at runtime — which is the shape of check that is right until someone adds a branch.
+ * **Ten routes, ten capabilities, one each.** `bot.listDoctors` and `bot.listServices` joined the
+ * original eight on 2026-09-26, closing a gap the contract's §3 table never covered: `bot.listSlots`
+ * takes a `doctorId`/`serviceId` a caller must already have, and nothing in the original eight hands
+ * one out. `permissions.ts` already granted AI_AGENT both -- the web chat has called the identical
+ * `listDoctors`/`listServices` functions in-process since it was built -- so this is the same grant
+ * reaching an HTTP route for the first time, not a new capability being decided here. Nothing here is
+ * shared with a staff route: the contract's refusals are narrower than a receptionist's, and a shared
+ * endpoint would have to decide between them at runtime — which is the shape of check that is right
+ * until someone adds a branch.
  *
- * **No list endpoint, deliberately.** Every route below takes a number the caller already had, or an
- * id it was given. There is nothing here that walks the clinic's book, and nothing that returns a
- * clinical or financial field, which is why the bot's credential can be handed to software running
+ * **No *patient* list endpoint, deliberately** (the doctor and service lists above are the clinic's
+ * own public catalog, not a page of anyone's patients). Every route that takes a patient or an
+ * appointment takes one the caller already had, or an id it was given. There is nothing here that
+ * walks the clinic's book, and nothing that returns a clinical or financial field, which is why the
+ * bot's credential can be handed to software running
  * somewhere we do not control.
  */
 @Controller("bot")
@@ -79,6 +89,38 @@ export class BotController {
   @RequirePermission("bot.findPatientByPhone")
   async findByPhone(@Req() request: AuthenticatedRequest, @Query() query: BotPhoneQueryDto) {
     return { patients: await findPatientsByPhone(this.caller(request), query.phone) };
+  }
+
+  /**
+   * The clinic's active doctors — id, name, title, specialty. Nothing about their schedule beyond
+   * what `bot.listSlots` already exposes, and nothing a patient could not learn by asking at the desk.
+   */
+  @Get("doctors")
+  @RequirePermission("bot.listDoctors")
+  async doctors(@Req() request: AuthenticatedRequest) {
+    const rows = await listDoctors(this.caller(request), new Date());
+    return {
+      doctors: rows
+        .filter((doctor) => doctor.isActive)
+        .map((doctor) => ({ id: doctor.id, fullName: doctor.fullName, title: doctor.title, specialty: doctor.specialty })),
+    };
+  }
+
+  /** The clinic's active services — id, name (Arabic and English), duration. Same boundary as above. */
+  @Get("services")
+  @RequirePermission("bot.listServices")
+  async services(@Req() request: AuthenticatedRequest) {
+    const rows = await listServices(this.caller(request), new Date());
+    return {
+      services: rows
+        .filter((service) => service.isActive)
+        .map((service) => ({
+          id: service.id,
+          nameAr: service.nameAr,
+          nameEn: service.nameEn,
+          durationMinutes: service.durationMinutes,
+        })),
+    };
   }
 
   /**

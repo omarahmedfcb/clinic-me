@@ -24,6 +24,7 @@ import { QueueModule } from "./modules/queue/queue.module.ts";
 import { TransfersModule } from "./modules/transfers/transfers.module.ts";
 import { InsuranceModule } from "./modules/insurance/insurance.module.ts";
 import { WebchatModule } from "./modules/webchat/webchat.module.ts";
+import { WhatsAppModule } from "./modules/whatsapp/whatsapp.module.ts";
 import { PrismaModule } from "./prisma/prisma.module.ts";
 
 /**
@@ -61,6 +62,7 @@ import { PrismaModule } from "./prisma/prisma.module.ts";
     AuditModule,
     PlatformModule,
     WebchatModule,
+    WhatsAppModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: ActorContextInterceptor },

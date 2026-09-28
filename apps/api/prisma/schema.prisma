@@ -365,6 +365,12 @@ model Tenant {
   commercialRegisterNumber String?      @map("commercial_register_number")
   email                    String?
   whatsappPhone            String?      @map("whatsapp_phone")
+  /// Meta's `phone_number_id` for this clinic's WhatsApp number -- the tenant-resolution key for an
+  /// inbound webhook (ARCHITECTURE.md §11: "never trust anything else in the payload"). Distinct from
+  /// `whatsappPhone` above, which is a printed display number and carries no routing meaning. Set by
+  /// hand for now (one clinic, one Meta test number); Embedded Signup is what fills this in without a
+  /// person typing it, and is out of scope for this pass.
+  whatsappPhoneNumberId    String?      @unique @map("whatsapp_phone_number_id")
   /// Free text, not a schedule: a letterhead carries a phrase like the clinic's opening days, which
   /// columns cannot hold without inventing a second calendar beside `schedule_templates`.
   printedWorkingHours      String?      @map("printed_working_hours")
@@ -1698,6 +1704,14 @@ model Conversation {
   openedAt               DateTime           @map("opened_at") @db.Timestamptz(6)
   closedAt               DateTime?          @map("closed_at") @db.Timestamptz(6)
   assignedToUserId       String?            @map("assigned_to_user_id") @db.Uuid
+  /// The OpenAI Responses API turn this conversation is chained from (gpt-client.ts's
+  /// `previous_response_id`). Durable on purpose, unlike the web chat's in-memory session
+  /// (webchat-session.ts): a WhatsApp conversation spans webhook deliveries on separate requests,
+  /// possibly separate processes, so the pointer that lets us send only the new turn -- not the whole
+  /// transcript -- has to survive a restart. `messages.bodyPreview` cannot stand in for this: it is
+  /// capped at 280 characters and commented "never clinical content" because it is a delivery/audit
+  /// record, not a context store -- deliberately not enough to reconstruct a conversation from.
+  lastAiResponseId       String?            @map("last_ai_response_id")
   createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
 
