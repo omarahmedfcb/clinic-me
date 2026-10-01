@@ -119,6 +119,12 @@ export const T = {
   // -- generic ---------------------------------------------------------------------------------
   pleaseUseButtons: (lang: Lang) =>
     pick(lang, "من فضلك اختار من الأزرار اللي فوق 🙏", "Please choose one of the options above 🙏"),
+  escapeHatch: (lang: Lang) =>
+    pick(
+      lang,
+      "معلش، يبدو إني مش قادر أساعدك في الموضوع ده من خلال الشات. تواصل مباشرة مع العيادة وهيساعدوك.",
+      "Sorry, I'm not able to help with this through chat. Please contact the clinic directly and they'll help you.",
+    ),
   genericError: (lang: Lang) =>
     pick(lang, "معلش، حصل خطأ. ممكن تجرب تاني؟", "Sorry, something went wrong. Could you try again?"),
 } as const;

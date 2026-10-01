@@ -40,9 +40,20 @@ interface Person {
   patientName: string;
 }
 
+/** How many consecutive turns at the same step can go by with free text that neither a button tap,
+ *  the keyword matcher, nor the model could resolve to a real option, before giving up and telling
+ *  the patient to contact the clinic directly rather than looping them forever. Counts only genuine
+ *  misses -- a step that resolves (by tap, by keyword, or by the model) always starts back at 0. */
+const MAX_UNMATCHED_ATTEMPTS = 3;
+
 /** Every shape `Conversation.flowState` can hold. Every step past IDENTITY carries `lang` and,
- *  once resolved, the patient -- both are settled once per flow and never re-asked mid-way. */
-export type FlowState =
+ *  once resolved, the patient -- both are settled once per flow and never re-asked mid-way.
+ *  `missCount` rides along on every variant via this intersection (TS distributes it across the
+ *  union) rather than being repeated in each one -- `offScriptThenRepeat` is the only place that
+ *  reads or writes it. */
+type FlowStateBase = { missCount?: number };
+export type FlowState = FlowStateBase &
+  (
   | { step: "INTENT"; lang: Lang }
   | { step: "IDENTITY_PICK"; lang: Lang; intent: Intent; phoneE164: string; options: { patientId: string; name: string }[] }
   | { step: "IDENTITY_YESNO"; lang: Lang; intent: Intent; phoneE164: string; patientId: string; patientName: string }
@@ -77,7 +88,8 @@ export type FlowState =
       token: string;
     } & Person)
   | ({ step: "COMPLAINT_TEXT"; lang: Lang } & Person)
-  | ({ step: "COMPLAINT_CONFIRM"; lang: Lang; text: string } & Person);
+  | ({ step: "COMPLAINT_CONFIRM"; lang: Lang; text: string } & Person)
+  );
 
 export interface FlowContext {
   tenant: WhatsAppTenant;
@@ -202,27 +214,96 @@ async function classifyIntent(text: string): Promise<Intent | null> {
   }
 }
 
-/** Answers a question asked mid-step without ever letting the model touch a booking or a complaint
- *  -- no tools offered, nothing it says is treated as fact by any later step, and the reply is
- *  always followed by re-asking whatever the step already needed. A failed call still returns a
- *  reply (the neutral nudge), because a step with a pending question cannot be left with nothing to
- *  send back. */
-async function offScriptReply(text: string, lang: Lang): Promise<string> {
+/** One tappable option, reduced to what `matchByKeyword` and `classifyOrReply` need: its id, and
+ *  every piece of visible text a patient might type instead of tapping it (a button/row's title,
+ *  plus a list row's description when it has one). Built fresh from the step's own `FlowOutgoing`
+ *  by `optionsFromOutgoing` -- never a separate hand-maintained list, so it can never drift from
+ *  what the patient actually sees on screen. */
+interface MatchableOption {
+  id: string;
+  titles: string[];
+}
+
+function optionsFromOutgoing(outgoing: FlowOutgoing): MatchableOption[] {
+  if (outgoing.kind === "text") return [];
+  if (outgoing.kind === "buttons") return outgoing.buttons.map((b) => ({ id: b.id, titles: [b.title] }));
+  return outgoing.sections.flatMap((section) =>
+    section.rows.map((row) => ({ id: row.id, titles: row.description === undefined ? [row.title] : [row.title, row.description] })),
+  );
+}
+
+function normaliseForMatch(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[\u064B-\u0652]/g, "") // Arabic diacritics
+    .replace(/[إأآا]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه");
+}
+
+const YES_WORDS = ["yes", "yeah", "yep", "sure", "ok", "okay", "تمام", "ايوه", "اه", "ايوة", "موافق", "حاضر"];
+const NO_WORDS = ["no", "nope", "لا", "لأ", "مش موافق", "رفض"];
+const ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩";
+
+/** Free, local, no model call -- tried before anything that costs a network round trip. Catches
+ *  the common cases a fixed button-only step still deserved to handle: a typed "ايوه" instead of a
+ *  tap, a bare number picking the Nth item in the list shown, or typing the option's own name (a
+ *  doctor, a service) rather than tapping its row. Anything this doesn't resolve falls to
+ *  `classifyOrReply` -- it never guesses when more than one option looks plausible. */
+function matchByKeyword(text: string, options: MatchableOption[]): string | null {
+  const norm = normaliseForMatch(text);
+  if (norm.length === 0) return null;
+
+  if (options.some((o) => o.id === "yn_yes") && YES_WORDS.some((w) => norm === normaliseForMatch(w))) return "yn_yes";
+  if (options.some((o) => o.id === "yn_no") && NO_WORDS.some((w) => norm === normaliseForMatch(w))) return "yn_no";
+
+  const westernised = norm.replace(/[٠-٩]/g, (d) => String(ARABIC_DIGITS.indexOf(d)));
+  const asIndex = Number(westernised);
+  if (Number.isInteger(asIndex) && asIndex >= 1 && asIndex <= options.length) {
+    return options[asIndex - 1]!.id;
+  }
+
+  const substringMatches = options.filter((option) =>
+    option.titles.some((title) => {
+      const normTitle = normaliseForMatch(title);
+      return normTitle.length > 0 && (norm.includes(normTitle) || normTitle.includes(norm));
+    }),
+  );
+  // More than one option's title overlaps the text -- genuinely ambiguous, not this function's call
+  // to break the tie. classifyOrReply (with the model actually reading the sentence) goes next.
+  return substringMatches.length === 1 ? substringMatches[0]!.id : null;
+}
+
+type ClassifyOutcome = { kind: "match"; id: string } | { kind: "reply"; text: string };
+
+/** The model's one and only job here: given the *exact finite list* of ids this specific step
+ *  will accept right now, say which one (if any) the patient's free text selects -- never asked to
+ *  pick from anything wider, and never trusted blindly even then. `offScriptThenRepeat` below only
+ *  acts on a returned id after confirming it is one of `options`' own ids; an id the model
+ *  hallucinated that isn't in that list is treated exactly like no match at all. If nothing
+ *  matches, the same call doubles as the off-script answer -- one model call either way, not two. */
+async function classifyOrReply(text: string, lang: Lang, options: MatchableOption[], questionBody: string): Promise<ClassifyOutcome> {
+  const optionLines = options.map((o) => `${o.id}: ${o.titles.join(" / ")}`).join("\n");
   try {
     const completion = await callGpt({
       input: [{ role: "user", content: text }],
       tools: [],
       instructions:
-        `You are a clinic's WhatsApp assistant. The patient just asked something off-script while in the middle of ` +
-        `a booking or complaint flow that is driven by buttons, not by you. Answer briefly (2 sentences at most) in ` +
-        `${lang === "ar" ? "Egyptian Arabic" : "English"}. Never invent clinic facts (hours, prices, doctor ` +
-        `availability) you were not told here -- if asked, say you're not sure and that the desk can confirm. Do ` +
-        "not mention booking, appointments, or complaints yourself -- the app adds its own reminder after your reply.",
+        `A clinic's WhatsApp bot just asked: "${questionBody}". The only valid choices right now are:\n${optionLines}\n\n` +
+        `If the patient's message clearly picks one of these, reply with ONLY that exact id and nothing else -- no ` +
+        `punctuation, no explanation. If it does not clearly pick one, instead reply with a brief answer (2 ` +
+        `sentences at most) to whatever they said, in ${lang === "ar" ? "Egyptian Arabic" : "English"}. Never invent ` +
+        "clinic facts (hours, prices, availability) you were not given here. Do not mention booking, appointments, " +
+        "or complaints yourself -- the app adds its own reminder after your reply.",
     });
-    return completion.outputText?.trim() || T.pleaseUseButtons(lang);
+    const raw = completion.outputText?.trim() ?? "";
+    const matched = options.find((o) => o.id === raw);
+    if (matched !== undefined) return { kind: "match", id: matched.id };
+    return { kind: "reply", text: raw || T.pleaseUseButtons(lang) };
   } catch (error) {
-    console.error("WhatsApp flow: off-script reply call failed", error);
-    return T.pleaseUseButtons(lang);
+    console.error("WhatsApp flow: classify-or-reply call failed", error);
+    return { kind: "reply", text: T.pleaseUseButtons(lang) };
   }
 }
 
@@ -901,18 +982,49 @@ async function stepComplaintConfirm(ctx: FlowContext, state: Extract<FlowState, 
 // Shared
 // -------------------------------------------------------------------------------------------
 
-/** Free text arrived at a step that expects a tap. Answered by the model (never touching booking or
- *  complaint state), then the same question is repeated unchanged -- the patient's place in the
- *  flow never moves because of an off-script message. */
+/**
+ * Free text (or an unrecognised tap id) arrived at a step that expects one of `repeat`'s own
+ * options. Three stages, cheapest first:
+ *
+ * 1. `matchByKeyword` -- local, free, no model call.
+ * 2. `classifyOrReply` -- one model call, closed-set: a real id, or a fallback answer.
+ * 3. Neither resolves it -- the same question is repeated with that answer folded in, and a miss is
+ *    counted. After `MAX_UNMATCHED_ATTEMPTS` straight misses *at this step*, the flow gives up
+ *    rather than loop the patient forever, and hands them to the clinic directly.
+ *
+ * A resolved id (stage 1 or 2) is never acted on here -- it is handed back into `runFlow` as though
+ * it had been tapped, so the one real implementation of "what doc_<id> means" stays in the step
+ * handler that already has it, never duplicated.
+ */
 async function offScriptThenRepeat(ctx: FlowContext, lang: Lang, repeat: FlowOutgoing): Promise<FlowResult> {
   const text = textOf(ctx.input);
   const state = ctx.state as FlowState; // present on every call site -- only reached from within a step handler.
   if (text === null) {
     return { handled: true, nextState: state, outgoing: repeat };
   }
-  const answer = await offScriptReply(text, lang);
-  const nudge = repeat.kind === "text" ? `${answer}\n\n${T.pleaseUseButtons(lang)}` : answer;
-  return { handled: true, nextState: state, outgoing: prependText(repeat, nudge) ?? repeat };
+
+  const options = optionsFromOutgoing(repeat);
+
+  const keywordMatch = matchByKeyword(text, options);
+  if (keywordMatch !== null) {
+    return runFlow({ ...ctx, input: { kind: "interactive", id: keywordMatch }, state });
+  }
+
+  const questionBody = repeat.kind === "text" ? repeat.text : repeat.body;
+  const classified: ClassifyOutcome =
+    options.length === 0 ? { kind: "reply", text: T.pleaseUseButtons(lang) } : await classifyOrReply(text, lang, options, questionBody);
+
+  if (classified.kind === "match") {
+    return runFlow({ ...ctx, input: { kind: "interactive", id: classified.id }, state });
+  }
+
+  const missCount = (state.missCount ?? 0) + 1;
+  if (missCount >= MAX_UNMATCHED_ATTEMPTS) {
+    return { handled: true, nextState: null, outgoing: { kind: "text", text: T.escapeHatch(lang) } };
+  }
+
+  const nudge = repeat.kind === "text" ? `${classified.text}\n\n${T.pleaseUseButtons(lang)}` : classified.text;
+  return { handled: true, nextState: { ...state, missCount }, outgoing: prependText(repeat, nudge) ?? repeat };
 }
 
 function errorResult(lang: Lang, prefix: string): FlowResult {
