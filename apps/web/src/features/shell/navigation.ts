@@ -120,6 +120,10 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // Phase 5 PR 11. `auditLog.read` is the capability of the thing you go there to see — which is
   // the rule two items above, and the only control on the screen is a filter.
   { key: "shell.nav.audit", capability: "auditLog.read", path: "/audit-log" },
+  // «الشكاوى», 2026-09-29. `complaints.read` — same OWNER+ADMIN pairing as the audit log above, for
+  // the same reason: RECEPTIONIST and DOCTOR do not get a new inbox neither asked for. The bot
+  // files these (bot.controller.ts's POST /bot/complaints); this screen only reads and resolves.
+  { key: "shell.nav.complaints", capability: "complaints.read", path: "/complaints" },
   // The قريبًا badge came off when the screen shipped (PR 7h). It comes off for work that lands,
   // and stays on for work that is deferred — the founder's distinction, ruled 2026-09-03.
   { key: "shell.nav.settings", capability: "clinicSettings.manage", path: "/settings" },

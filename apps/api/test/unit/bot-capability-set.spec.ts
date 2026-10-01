@@ -29,12 +29,14 @@ const BOT_CAPABILITIES: Capability[] = [
   "bot.recordConsent",
   "bot.listDoctors",
   "bot.listServices",
+  // Added 2026-09-29 for the "شكوى" (complaint) flow.
+  "bot.createComplaint",
 ];
 
 const HUMAN_ROLES: MembershipRole[] = ["OWNER", "ADMIN", "DOCTOR", "RECEPTIONIST"];
 
 describe("the AI_AGENT capability set", () => {
-  test("AI_AGENT holds exactly the ten bot capabilities, and nothing else", () => {
+  test("AI_AGENT holds exactly the eleven bot capabilities, and nothing else", () => {
     const held = CAPABILITIES.filter((capability) => permissionLevel("AI_AGENT", capability) !== "none");
     expect([...held].sort()).toEqual([...BOT_CAPABILITIES].sort());
   });
@@ -59,6 +61,8 @@ describe("the AI_AGENT capability set", () => {
     "patients.write",
     "patients.merge",
     "users.manage",
+    "complaints.read",
+    "complaints.manage",
   ])("AI_AGENT holds no %s", (capability) => {
     expect(permissionLevel("AI_AGENT", capability as Capability)).toBe("none");
   });

@@ -82,6 +82,14 @@ export const CAPABILITIES = [
   // grant far more than that, so these are narrow capabilities of their own rather than a reuse.
   "bot.listDoctors",
   "bot.listServices",
+  // Added for the "شكوى" (complaint) flow, 2026-09-29. bot.createComplaint mirrors
+  // bot.createProvisionalPatient's shape exactly (AI_AGENT-only, write, narrow). complaints.read is
+  // a *staff* capability -- OWNER and ADMIN only, the same pairing reports.financial uses -- so the
+  // desk can see what patients report without RECEPTIONIST or DOCTOR getting a new inbox they did
+  // not ask for.
+  "bot.createComplaint",
+  "complaints.read",
+  "complaints.manage",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -297,6 +305,12 @@ const MATRIX: Record<Capability, Record<MembershipRole, PermissionLevel>> = {
   "bot.recordConsent": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
   "bot.listDoctors": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
   "bot.listServices": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
+  "bot.createComplaint": { OWNER: NONE, ADMIN: NONE, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: FULL },
+  // Staff-facing, same pairing as reports.financial: OWNER and ADMIN see what patients report,
+  // RECEPTIONIST and DOCTOR do not get a new inbox neither asked for, AI_AGENT never reads its own
+  // writes back (it holds bot.createComplaint, not this).
+  "complaints.read": { OWNER: FULL, ADMIN: FULL, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: NONE },
+  "complaints.manage": { OWNER: FULL, ADMIN: FULL, DOCTOR: NONE, RECEPTIONIST: NONE, AI_AGENT: NONE },
 };
 
 export function permissionLevel(role: MembershipRole, capability: Capability): PermissionLevel {

@@ -436,6 +436,7 @@ model Tenant {
   paymentAdjustments       PaymentAdjustment[]
   auditLogs                AuditLog[]
   consents                 Consent[]
+  complaints               Complaint[]
   accessGrants             AccessGrant[]
   treatmentPlans           TreatmentPlan[]
   treatmentPlanSessions    TreatmentPlanSession[]
@@ -520,6 +521,7 @@ model User {
   patientCreditsActed       PatientCredit[]
   auditLogsActed            AuditLog[]
   consentsCaptured          Consent[]
+  complaintsResolved        Complaint[]
   botCredentialsIssued      BotCredential[]               @relation("BotCredentialIssuer")
   accessGrantsReceived      AccessGrant[]                 @relation("AccessGrantGrantedTo")
   accessGrantsApproved      AccessGrant[]                 @relation("AccessGrantApprovedBy")
@@ -875,6 +877,7 @@ model Patient {
   prescriptions          Prescription[]
   payments               Payment[]
   consents               Consent[]
+  complaints             Complaint[]
   treatmentPlans         TreatmentPlan[]
   followupTasks          FollowupTask[]
   attachments            Attachment[]
@@ -1441,6 +1444,43 @@ model Consent {
   @@map("consents")
 }
 
+/// A patient-reported issue, free text only -- "شكوى" from the WhatsApp bot (docs/WHATSAPP-BOT-CONTRACT.md
+/// will get a §5 for this). Deliberately no category and no structured severity: the founder's call was
+/// that a free-text description plus a reference number is enough for this pass, not a ticket taxonomy.
+/// `patientId` is always set -- the bot resolves or creates a patient the same way booking does, so a
+/// complaint is never an orphan row with only a phone number on it.
+model Complaint {
+  id               String            @id @db.Uuid
+  tenantId         String            @map("tenant_id") @db.Uuid
+  patientId        String            @map("patient_id") @db.Uuid
+  /// Short, human-readable, shown back to the patient over WhatsApp so they have something to refer
+  /// to later -- never the row's own uuid, which is not a thing a patient can read out over the phone.
+  referenceNumber  String            @map("reference_number")
+  description      String
+  status           ComplaintStatus   @default(OPEN)
+  source           AppointmentSource
+  /// Same evidence shape as a booking's `consentMessageId` (BotBookDto) -- the WhatsApp message this
+  /// complaint was reported from, for the same reason a booking records one.
+  consentMessageId String?           @map("consent_message_id")
+  resolvedByUserId String?           @map("resolved_by_user_id") @db.Uuid
+  resolvedAt       DateTime?         @map("resolved_at") @db.Timestamptz(6)
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant  @relation(fields: [tenantId], references: [id])
+  patient        Patient @relation(fields: [patientId], references: [id])
+  resolvedByUser User?   @relation(fields: [resolvedByUserId], references: [id])
+
+  @@unique([tenantId, referenceNumber])
+  @@index([tenantId, status, createdAt])
+  @@map("complaints")
+}
+
+enum ComplaintStatus {
+  OPEN
+  RESOLVED
+}
+
 /// One clinic's WhatsApp bot credential. docs/WHATSAPP-BOT-CONTRACT.md §2.
 model BotCredential {
   id              String    @id @db.Uuid
@@ -1712,6 +1752,12 @@ model Conversation {
   /// capped at 280 characters and commented "never clinical content" because it is a delivery/audit
   /// record, not a context store -- deliberately not enough to reconstruct a conversation from.
   lastAiResponseId       String?            @map("last_ai_response_id")
+  /// The WhatsApp bot's own step-machine state (whatsapp-flow.ts's `FlowState`), opaque JSON.
+  /// Driven entirely in code -- never by the model -- to decide which fixed-template question
+  /// comes next (identity confirm, intent menu, slot picker). `lastMessageAt` already carries the
+  /// idle-session boundary that decides when the welcome message reappears (whatsapp-flow.ts's
+  /// `WELCOME_IDLE_GAP_MS`).
+  flowState              Json?              @map("flow_state")
   createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
 

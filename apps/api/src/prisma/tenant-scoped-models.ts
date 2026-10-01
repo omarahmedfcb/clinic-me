@@ -63,6 +63,7 @@ const TENANT_POLICY = {
   UsageAlert: "scoped",
   Invoice: "scoped",
   Conversation: "scoped",
+  Complaint: "scoped",
   Message: "scoped",
   FollowupTask: "scoped",
   Attachment: "scoped",

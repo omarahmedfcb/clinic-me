@@ -12,6 +12,7 @@ import { uuidv7 } from "uuidv7";
 import { injected } from "../../prisma/injected.ts";
 import { withTenant, type ActorContext } from "../../prisma/with-tenant.ts";
 import type { BotActor } from "../webchat/webchat-clinics.ts";
+import { Prisma } from "../../generated/prisma/client.ts";
 
 export function botActorContext(bot: BotActor): ActorContext {
   return { userId: bot.userId, ip: "whatsapp", userAgent: "clinic-os-whatsapp-bot" };
@@ -29,6 +30,15 @@ export interface IngestResult {
   contactId: string;
   /** Chained from here (gpt-client.ts's `previous_response_id`) if this conversation has one already. */
   lastAiResponseId: string | null;
+  /** The WhatsApp step machine's own state (whatsapp-flow.ts's `FlowState`), exactly as it was last
+   *  written -- `null` if this conversation has none yet, or if the idle gap below reset it. */
+  flowState: unknown;
+  /** `true` on this contact's very first message ever, or when more than `idleGapMs` (caller-supplied
+   *  -- whatsapp-flow.ts's `WELCOME_IDLE_GAP_MS`) has passed since the last message on this
+   *  conversation. The flow uses this to decide whether to open with the welcome line; `flowState`
+   *  above is reset to `null` in the same case, so a stale mid-booking state from hours ago can
+   *  never resume as if no time had passed. */
+  isNewSession: boolean;
   /** `true` if a row with this `externalMessageId` already existed -- Meta's own retry/redelivery
    *  behaviour, closed by the same `@@unique([tenantId, externalMessageId])` constraint the outbound
    *  side already relies on for idempotency. The caller must not run this message through the bot
@@ -39,12 +49,20 @@ export interface IngestResult {
 /**
  * Resolves (or creates) the contact and the open conversation, and logs the inbound message --
  * one transaction, database-only. Returns what the orchestrator needs to continue: which
- * conversation this is, and whether OpenAI has a turn to chain from.
+ * conversation this is, whether OpenAI has a turn to chain from, and whether the step machine
+ * (whatsapp-flow.ts) has a turn to resume.
+ *
+ * `idleGapMs` decides `isNewSession`: this project's WhatsApp conversation never auto-closes (the
+ * webchat one does, by contrast -- see webchat-session.ts), so "a new session" is a fact about the
+ * *gap* since the last message, not about the row's own `status`. A conversation idle for longer
+ * than `idleGapMs` is treated as a new session -- welcomed again, and its step-machine state
+ * discarded -- while staying the same Conversation row, so message history is never split across two
+ * rows for what is, to the clinic, one ongoing relationship with this contact.
  */
 export async function ingestInboundMessage(
   tenantId: string,
   bot: BotActor,
-  input: { waId: string; phoneE164: string; externalMessageId: string; text: string; occurredAt: Date },
+  input: { waId: string; phoneE164: string; externalMessageId: string; text: string; occurredAt: Date; idleGapMs: number },
 ): Promise<IngestResult> {
   const actor = botActorContext(bot);
 
@@ -56,12 +74,14 @@ export async function ingestInboundMessage(
     if (existing !== null) {
       const conversation = await tx.conversation.findFirst({
         where: { id: existing.conversationId },
-        select: { lastAiResponseId: true },
+        select: { lastAiResponseId: true, flowState: true },
       });
       return {
         conversationId: existing.conversationId,
         contactId: existing.contactId,
         lastAiResponseId: conversation?.lastAiResponseId ?? null,
+        flowState: conversation?.flowState ?? null,
+        isNewSession: false,
         alreadyProcessed: true,
       };
     }
@@ -73,11 +93,21 @@ export async function ingestInboundMessage(
         select: { id: true },
       }));
 
+    const existingConversation = await tx.conversation.findFirst({
+      where: { contactId: contact.id, status: "OPEN" },
+      select: { id: true, lastAiResponseId: true, flowState: true, lastMessageAt: true },
+    });
+
+    // No prior message ever, or the gap since the last one is past the idle threshold -- either way
+    // this turn opens a new session, and any step-machine state left over from a session that ended
+    // hours ago must not resume as though no time had passed.
+    const isNewSession =
+      existingConversation === null ||
+      existingConversation.lastMessageAt === null ||
+      input.occurredAt.getTime() - existingConversation.lastMessageAt.getTime() > input.idleGapMs;
+
     const conversation =
-      (await tx.conversation.findFirst({
-        where: { contactId: contact.id, status: "OPEN" },
-        select: { id: true, lastAiResponseId: true },
-      })) ??
+      existingConversation ??
       (await tx.conversation.create({
         data: injected({
           id: uuidv7(),
@@ -89,7 +119,7 @@ export async function ingestInboundMessage(
           status: "OPEN",
           openedAt: input.occurredAt,
         }),
-        select: { id: true, lastAiResponseId: true },
+        select: { id: true, lastAiResponseId: true, flowState: true, lastMessageAt: true },
       }));
 
     await tx.message.create({
@@ -115,10 +145,17 @@ export async function ingestInboundMessage(
       }),
     });
 
+    await tx.conversation.update({
+      where: { id: conversation.id },
+      data: { lastMessageAt: input.occurredAt, ...(isNewSession ? { flowState: Prisma.JsonNull } : {}) },
+    });
+
     return {
       conversationId: conversation.id,
       contactId: contact.id,
       lastAiResponseId: conversation.lastAiResponseId,
+      flowState: isNewSession ? null : conversation.flowState,
+      isNewSession,
       alreadyProcessed: false,
     };
   });
@@ -131,6 +168,11 @@ export async function ingestInboundMessage(
  * orchestrator and turned into the bilingual "busy" reply), there is nothing new to chain from, and
  * `lastAiResponseId` is left exactly as `ingestInboundMessage` found it rather than being overwritten
  * with nothing -- the next message should still resume from the last turn that really happened.
+ *
+ * `flowState` is similarly optional and independent of `aiResponseId`: the step machine
+ * (whatsapp-flow.ts) and the GPT chain advance on different turns of the same conversation, never
+ * both in one call, so whichever one this turn used is the only one this call updates. Passing
+ * `null` clears it (the flow finished or handed off); omitting it leaves whatever was there.
  */
 export async function recordOutboundMessage(
   tenantId: string,
@@ -141,6 +183,7 @@ export async function recordOutboundMessage(
     externalMessageId: string;
     text: string;
     aiResponseId?: string;
+    flowState?: unknown;
     now: Date;
   },
 ): Promise<void> {
@@ -163,12 +206,11 @@ export async function recordOutboundMessage(
       }),
     });
 
-    if (input.aiResponseId !== undefined) {
-      await tx.conversation.update({
-        where: { id: input.conversationId },
-        data: { lastAiResponseId: input.aiResponseId },
-      });
-    }
+    const data: Record<string, unknown> = { lastMessageAt: input.now };
+    if (input.aiResponseId !== undefined) data["lastAiResponseId"] = input.aiResponseId;
+    if ("flowState" in input) data["flowState"] = input.flowState;
+
+    await tx.conversation.update({ where: { id: input.conversationId }, data });
   });
 }
 

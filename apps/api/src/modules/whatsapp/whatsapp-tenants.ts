@@ -8,6 +8,12 @@ import { resolveBotActor, type BotActor } from "../webchat/webchat-clinics.ts";
 export interface WhatsAppTenant {
   id: string;
   timezone: string;
+  /** Arabic is the clinic's name of record (Tenant.name — required); nameEn is nullable the same
+   *  way the letterhead falls back (Q45's note on Tenant.nameEn) -- the welcome message
+   *  (whatsapp-flow-text.ts) uses whichever matches the language it opens in, falling back to
+   *  Arabic if the clinic never filled in an English name. */
+  clinicName: string;
+  clinicNameEn: string | null;
   /** The clinic's own Meta phone number id -- the same value it was resolved by, threaded back out
    *  because sending a reply (whatsapp-graph-client.ts) needs to say which number it is replying
    *  from, and it must be this clinic's own number, never one read off the inbound payload again. */
@@ -28,12 +34,19 @@ export interface WhatsAppTenant {
 export async function resolveTenantByPhoneNumberId(phoneNumberId: string): Promise<WhatsAppTenant | null> {
   const tenant = await prisma.tenant.findFirst({
     where: { whatsappPhoneNumberId: phoneNumberId, status: "ACTIVE" },
-    select: { id: true, timezone: true, whatsappPhoneNumberId: true },
+    select: { id: true, timezone: true, whatsappPhoneNumberId: true, name: true, nameEn: true },
   });
   if (tenant === null || tenant.whatsappPhoneNumberId === null) return null;
 
   const bot = await resolveBotActor(tenant.id);
   if (bot === null) return null;
 
-  return { id: tenant.id, timezone: tenant.timezone, phoneNumberId: tenant.whatsappPhoneNumberId, bot };
+  return {
+    id: tenant.id,
+    timezone: tenant.timezone,
+    clinicName: tenant.name,
+    clinicNameEn: tenant.nameEn,
+    phoneNumberId: tenant.whatsappPhoneNumberId,
+    bot,
+  };
 }

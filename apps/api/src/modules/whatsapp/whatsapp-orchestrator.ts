@@ -1,82 +1,73 @@
-// One inbound WhatsApp message in, a reply sent back out. The GPT loop itself is
-// webchat-orchestrator.ts's, unchanged in shape: same Responses-API chaining (gpt-client.ts), same
-// bounded tool-round loop, same fallback reply -- what differs is what surrounds it, since a
-// WhatsApp turn has no HTTP response to hand a reply back on. It has to send one itself, and it has
-// to persist what a web-chat session was allowed to keep only in memory (webchat-session.ts's own
-// header explains why that was an acceptable prototype shortcut and why WhatsApp cannot repeat it).
+// One inbound WhatsApp message in, a reply sent back out. Routing itself is entirely the step
+// machine's job now (whatsapp-flow.ts) -- this file's job is the plumbing around it: persistence
+// (whatsapp-conversation.ts), which graph-API call a given FlowOutgoing needs
+// (whatsapp-graph-client.ts), and turning anything that throws into the bilingual "something went
+// wrong" reply rather than leaving the patient with silence.
+//
+// There is no more a separate "free chat" mode this falls back to: booking and filing a complaint
+// used to be GPT calling functions (WHATSAPP_TOOLS, removed with this change, along with
+// whatsapp-tools.ts) -- now every fact in either comes from a tool result the *flow* fetched or the
+// patient's own tap, never from the model choosing to call something. The model's only two jobs
+// left are inside the flow itself: guessing intent from a vague opener, and answering an
+// off-script question without derailing the step the patient is on (see whatsapp-flow.ts's header).
 
-import { callGpt, type GptInputItem } from "../webchat/gpt-client.ts";
 import { getDefaultBotApiClient } from "./bot-api-client.ts";
 import { clearAiChain, ingestInboundMessage, recordOutboundMessage } from "./whatsapp-conversation.ts";
-import { sendWhatsAppText } from "./whatsapp-graph-client.ts";
+import { sendWhatsAppButtons, sendWhatsAppList, sendWhatsAppText } from "./whatsapp-graph-client.ts";
+import { runFlow, WELCOME_IDLE_GAP_MS, type FlowOutgoing, type FlowState } from "./whatsapp-flow.ts";
 import type { WhatsAppTenant } from "./whatsapp-tenants.ts";
-import { executeWhatsAppTool, START_NEW_BOOKING_TOOL, WHATSAPP_TOOLS, WHATSAPP_TOOLS_AFTER_RESET, type WhatsAppToolContext } from "./whatsapp-tools.ts";
-
-const MAX_TOOL_ROUNDS = 6;
 
 const FALLBACK_REPLY =
   "معذرة، حدث خطأ أثناء إتمام طلبك. من فضلك حاول مرة أخرى.\n" +
   "Sorry, something went wrong on our side. Please try again.";
 
-const BUSY_REPLY =
-  "الخدمة مشغولة لحظة، من فضلك أعد المحاولة بعد قليل.\n" +
-  "The service is busy right now, please try again in a moment.";
-
-const SYSTEM_PROMPT = `You are the appointment-booking assistant for this clinic, reached over its WhatsApp number. You \
-speak Arabic (Egyptian or MSA) or English, matching whichever the patient uses, and can switch mid-conversation if \
-they do. The clinic is already known from the number the patient messaged -- never ask which clinic they want.
-
-Follow this order, settling each step before moving to the next:
-1. If you do not already know the patient's full name and phone number from earlier in this conversation, ask for \
-them, then call find_or_create_patient.
-   - If it returns status "found_many", read out the names it lists and ask which one this booking is for. Use that \
-patient's exact id as patientId in every later tool call in this conversation -- never invent one.
-   - Otherwise the returned patient is the one to use.
-2. Call list_doctors and ask which doctor they'd like to see. Then call list_services: if it returns exactly one \
-service, use it silently without asking; if more than one, ask which the visit is for.
-3. Ask what date they'd like. The patient may answer in any form -- a written date, a relative one ("tomorrow", \
-"بكرة"), or day-month-year -- convert whatever they say into YYYY-MM-DD or DD-MM-YYYY yourself before calling \
-list_slots; do not make the patient repeat themselves into one exact format. If list_slots returns DATE_IN_PAST, \
-that date has already passed -- say so plainly and ask for a different one.
-4. Read out the times list_slots returns and ask the patient to pick one -- never state a time it did not return. \
-If it returns no times at all for that date, say so and offer to check a different date.
-5. Once they pick a time, restate the doctor, date and time and patient name back to them, and ask for an explicit \
-yes before booking anything.
-6. Only after they say yes, call book_appointment with that patient's id, the same doctorId, serviceId and date \
-you used for list_slots, and the chosen time's slotId copied exactly. Report the outcome plainly. If it fails because the slot was just taken by someone else, apologise and call list_slots again for \
-fresh times on that date.
-
-Rules:
-- Never state a fact -- a doctor, an available time, or that a booking succeeded -- unless it came from a tool \
-result earlier in this conversation.
-- This chat only books appointments. Do not answer medical questions, comment on symptoms, or give medical advice \
-of any kind, even reassurance -- say the doctor will address that at the visit, and continue with the booking.
-- Ask one question at a time, and keep messages short -- this is a WhatsApp chat, not an email.
-- Ids (patientId, doctorId, serviceId, slotId, and similar) are for calling tools only -- never read one aloud \
-or show it to the patient. When listing options, refer to them by name, or by a number you assign yourself for \
-the patient to reply with, never by id.
-- If the patient says at any point that they want to start over, drop what they were doing, or book a new \
-or another appointment -- even in the middle of a booking, or right after one -- call start_new_booking \
-straight away without asking. Do not try to continue the old booking.
-- This chat only books appointments.`;
+/** What arrived: free text, or a tapped button/list-row id -- whatsapp.controller.ts tells them
+ *  apart and never joins the two. whatsapp-flow.ts's step machine is what reads `id`; it is never
+ *  shown to the model (that was Part 1's fix for the WhatsApp token bug, and the same reasoning
+ *  applies to every other opaque id a step hands out). */
+export type InboundWhatsAppInput = { kind: "text"; text: string } | { kind: "interactive"; id: string };
 
 export interface InboundWhatsAppMessage {
   tenant: WhatsAppTenant;
   waId: string;
   phoneE164: string;
   externalMessageId: string;
-  text: string;
+  input: InboundWhatsAppInput;
   occurredAt: Date;
 }
 
+/** A `FlowOutgoing` is graph-API-shaped already (whatsapp-flow.ts builds it directly against
+ *  whatsapp-graph-client.ts's own types) -- this is purely "which of the three send functions",
+ *  plus the flat text this turn's `Message` row is logged with regardless of which one fired. */
+async function sendFlowOutgoing(
+  tenant: WhatsAppTenant,
+  waId: string,
+  outgoing: FlowOutgoing,
+): Promise<{ externalMessageId: string; loggedText: string }> {
+  if (outgoing.kind === "text") {
+    const sent = await sendWhatsAppText(tenant.phoneNumberId, waId, outgoing.text);
+    return { externalMessageId: sent.externalMessageId, loggedText: outgoing.text };
+  }
+  if (outgoing.kind === "buttons") {
+    const sent = await sendWhatsAppButtons(tenant.phoneNumberId, waId, outgoing.body, outgoing.buttons);
+    const optionsLine = outgoing.buttons.map((b) => b.title).join(" / ");
+    return { externalMessageId: sent.externalMessageId, loggedText: `${outgoing.body}\n[${optionsLine}]` };
+  }
+  const sent = await sendWhatsAppList(tenant.phoneNumberId, waId, outgoing.body, outgoing.buttonLabel, outgoing.sections);
+  const optionsLine = outgoing.sections.flatMap((section) => section.rows.map((row) => row.title)).join(" / ");
+  return { externalMessageId: sent.externalMessageId, loggedText: `${outgoing.body}\n[${optionsLine}]` };
+}
+
 /**
- * The whole pipeline for one already-debounced batch of text from one sender: persist it, run the
- * model, send a reply, persist that too. Errors are caught and turned into the bilingual "busy"
- * reply rather than thrown -- the webhook has already returned `200` to Meta by the time this runs
- * (whatsapp.controller.ts never awaits it), so there is nobody left to hand an exception to.
+ * The whole pipeline for one inbound message (or one tapped button/list row): persist it, run the
+ * step machine, send whatever it produced, persist that too. Errors are caught and turned into the
+ * bilingual fallback reply rather than thrown -- the webhook has already returned `200` to Meta by
+ * the time this runs (whatsapp.controller.ts never awaits it), so there is nobody left to hand an
+ * exception to.
  */
 export async function handleInboundWhatsAppMessage(input: InboundWhatsAppMessage): Promise<void> {
   const { tenant } = input;
+  const messageText = input.input.kind === "text" ? input.input.text : "";
 
   let ingest;
   try {
@@ -84,8 +75,9 @@ export async function handleInboundWhatsAppMessage(input: InboundWhatsAppMessage
       waId: input.waId,
       phoneE164: input.phoneE164,
       externalMessageId: input.externalMessageId,
-      text: input.text,
+      text: messageText,
       occurredAt: input.occurredAt,
+      idleGapMs: WELCOME_IDLE_GAP_MS,
     });
   } catch (error) {
     console.error("WhatsApp: failed to ingest inbound message", error);
@@ -94,76 +86,44 @@ export async function handleInboundWhatsAppMessage(input: InboundWhatsAppMessage
 
   if (ingest.alreadyProcessed) return;
 
-  const toolContext: WhatsAppToolContext = {
-    client: getDefaultBotApiClient(),
-    timezone: tenant.timezone,
-    inboundExternalMessageId: input.externalMessageId,
-  };
+  let outgoing: FlowOutgoing;
+  let nextState: FlowState | null;
+  try {
+    const result = await runFlow({
+      tenant,
+      client: getDefaultBotApiClient(),
+      phoneE164: input.phoneE164,
+      input: input.input,
+      state: ingest.flowState as FlowState | null,
+      isNewSession: ingest.isNewSession,
+      inboundExternalMessageId: input.externalMessageId,
+    });
 
-  let gptInput: GptInputItem[] = [{ role: "user", content: input.text }];
-  let reply = FALLBACK_REPLY;
-  let responseId: string | undefined = ingest.lastAiResponseId ?? undefined;
-  let gptFailed = false;
-  let resetDone = false;
-
-  for (let round = 0; round < MAX_TOOL_ROUNDS && !gptFailed; round++) {
-    let completion;
-    try {
-      completion = await callGpt({
-        input: gptInput,
-        tools: resetDone ? WHATSAPP_TOOLS_AFTER_RESET : WHATSAPP_TOOLS,
-        instructions: SYSTEM_PROMPT,
-        previousResponseId: responseId,
-      });
-    } catch (error) {
-      console.error("WhatsApp: OpenAI call failed", error);
-      reply = BUSY_REPLY;
-      gptFailed = true;
-      break;
+    if (!result.handled) {
+      // Nothing left to interpret a stale interactive tap against (whatsapp-flow.ts's own note on
+      // when this happens) -- the chain, if any, is stale too; clear it and fall back to the plain
+      // apology rather than guessing at what the tap meant.
+      await clearAiChain(tenant.id, tenant.bot, ingest.conversationId).catch(() => undefined);
+      outgoing = { kind: "text", text: FALLBACK_REPLY };
+      nextState = null;
+    } else {
+      outgoing = result.outgoing ?? { kind: "text", text: FALLBACK_REPLY };
+      nextState = result.nextState ?? null;
     }
-
-    responseId = completion.id;
-
-    if (completion.toolCalls.length === 0) {
-      reply = completion.outputText?.trim() ? completion.outputText : FALLBACK_REPLY;
-      break;
-    }
-
-    // The patient asked to start over: drop the whole chain, not just the last turn, and run the
-    // same message again on a fresh one. Any other tool calls in this response are ignored.
-    if (!resetDone && completion.toolCalls.some((call) => call.name === START_NEW_BOOKING_TOOL)) {
-      resetDone = true;
-      responseId = undefined;
-      gptInput = [{ role: "user", content: input.text }];
-      await clearAiChain(tenant.id, tenant.bot, ingest.conversationId).catch((error: unknown) => {
-        console.error("WhatsApp: failed to clear the AI chain", error);
-      });
-      continue;
-    }
-
-    gptInput = [];
-    for (const call of completion.toolCalls) {
-      let result: unknown;
-      try {
-        result = await executeWhatsAppTool(toolContext, call.name, call.arguments);
-      } catch (error) {
-        console.error(`WhatsApp: tool "${call.name}" threw`, error);
-        result = { ok: false, reason: "INTERNAL_ERROR" };
-      }
-      gptInput.push({ type: "function_call_output", call_id: call.callId, output: JSON.stringify(result) });
-    }
+  } catch (error) {
+    console.error("WhatsApp: step machine failed", error);
+    outgoing = { kind: "text", text: FALLBACK_REPLY };
+    nextState = null;
   }
 
   try {
-    const sent = await sendWhatsAppText(tenant.phoneNumberId, input.waId, reply);
+    const sent = await sendFlowOutgoing(tenant, input.waId, outgoing);
     await recordOutboundMessage(tenant.id, tenant.bot, {
       conversationId: ingest.conversationId,
       contactId: ingest.contactId,
       externalMessageId: sent.externalMessageId,
-      text: reply,
-      // Only carried forward if this turn actually reached OpenAI -- see recordOutboundMessage's
-      // own note on why a failed turn must not overwrite a real chain pointer with nothing.
-      aiResponseId: gptFailed ? undefined : responseId,
+      text: sent.loggedText,
+      flowState: nextState,
       now: new Date(),
     });
   } catch (error) {

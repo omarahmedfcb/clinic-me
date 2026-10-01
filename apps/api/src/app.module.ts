@@ -10,6 +10,7 @@ import { BillingModule } from "./modules/billing/billing.module.ts";
 import { HealthModule } from "./modules/health/health.module.ts";
 import { AppointmentsModule } from "./modules/appointments/appointments.module.ts";
 import { BotModule } from "./modules/bot/bot.module.ts";
+import { ComplaintsModule } from "./modules/complaints/complaints.module.ts";
 import { AttachmentsModule } from "./modules/attachments/attachments.module.ts";
 import { ClinicIdentityModule } from "./modules/clinic-identity/clinic-identity.module.ts";
 import { DoctorsModule } from "./modules/doctors/doctors.module.ts";
@@ -60,6 +61,7 @@ import { PrismaModule } from "./prisma/prisma.module.ts";
     ClinicIdentityModule,
     NotificationsModule,
     AuditModule,
+    ComplaintsModule,
     PlatformModule,
     WebchatModule,
     WhatsAppModule,

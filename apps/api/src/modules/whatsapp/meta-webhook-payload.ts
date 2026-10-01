@@ -6,12 +6,23 @@
 // is read defensively instead -- every access is optional-chained, and an unrecognised shape is
 // skipped rather than thrown on. See whatsapp.controller.ts for where it is actually parsed.
 
+export interface MetaInteractiveReply {
+  type?: "button_reply" | "list_reply";
+  button_reply?: { id?: string; title?: string };
+  list_reply?: { id?: string; title?: string; description?: string };
+}
+
 export interface MetaInboundMessage {
   id?: string;
   from?: string;
   timestamp?: string;
   type?: string;
   text?: { body?: string };
+  /** Present when `type === "interactive"` -- a tapped reply button or list row. whatsapp.controller.ts
+   *  reads `button_reply.id` or `list_reply.id`, never `.title`: the id is the flow's own opaque
+   *  step-scoped value (whatsapp-flow.ts mints it), and the title is only what was shown on the
+   *  button, which is locale text and never what a step handler should branch on. */
+  interactive?: MetaInteractiveReply;
 }
 
 export interface MetaWebhookPayload {

@@ -62,7 +62,7 @@ somebody at the desk could act on. The code goes to the console; the user gets `
 | `NO_VISIT_YET` | — | The appointment exists; no visit has been recorded against it. Different action: wait | 404 |
 | `NO_CONTACT_RECORD` | — | No household to attach a policy to. Different action: add contact details first | 422 |
 
-`resource` is one of: `appointment`, `attachment`, `botCredential`, `charge`, `clinic`,
+`resource` is one of: `appointment`, `attachment`, `botCredential`, `charge`, `clinic`, `complaint`,
 `coverage`, `doctor`, `exception`, `insuranceCompany`, `membership`, `patient`, `policy`,
 `procedure`, `service`, `transfer`, `visit`.
 An unknown value renders a generic

@@ -165,6 +165,78 @@ export async function recordBotConsent(
   });
 }
 
+/**
+ * A short, patient-readable reference — `CMP-` plus six base32 (Crockford, no I/L/O/U) characters
+ * from a uuidv7's own randomness, so it needs no separate counter or row lock. Collisions are
+ * handled by the caller retrying with a fresh id (createComplaint below), the same shape
+ * `latinSearchKey`-adjacent code in this codebase already uses for "cheap to generate, rare enough
+ * to just retry on conflict" rather than reserving a sequence up front.
+ */
+function referenceNumberFrom(id: string): string {
+  const hex = id.replace(/-/g, "");
+  const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+  let bits = BigInt(`0x${hex.slice(0, 10)}`);
+  let code = "";
+  for (let i = 0; i < 6; i++) {
+    code = CROCKFORD[Number(bits % 32n)] + code;
+    bits /= 32n;
+  }
+  return `CMP-${code}`;
+}
+
+/**
+ * Files a complaint against a patient the bot already resolved or created — the same shape as
+ * booking: the bot never invents a patient, it either found one on the phone number or created a
+ * provisional record, and `patientId` here has to be one of those.
+ *
+ * Consent is recorded the same way `BotController.book` records it for a booking: only if the
+ * patient has none yet (`ensureWhatsAppConsent`), after the write succeeds. The caller (bot.controller.ts)
+ * is responsible for that, exactly as it already is for bookings — this function's own job is the
+ * complaint row alone.
+ */
+export async function createComplaint(
+  ctx: CallerContext,
+  input: {
+    patientId: string;
+    description: string;
+    source: "WHATSAPP" | "RECEPTION" | "DOCTOR" | "ONLINE" | "WALK_IN";
+    consentMessageId?: string;
+  },
+  now: Date,
+): Promise<{ ok: true; complaintId: string; referenceNumber: string } | { ok: false; code: "NOT_FOUND" }> {
+  return withTenant(ctx.tenantId, ctx.actor, async (tx) => {
+    const patient = await tx.patient.findFirst({ where: { id: input.patientId }, select: { id: true } });
+    if (patient === null) return { ok: false as const, code: "NOT_FOUND" as const };
+
+    // Up to three attempts against the (tenantId, referenceNumber) unique index before giving up --
+    // a collision on six Crockford characters (32^6 ≈ 1.07 billion) is not expected in practice, but
+    // "not expected" is not "impossible", and a retry costs one more uuidv7.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const id = uuidv7();
+      const referenceNumber = referenceNumberFrom(id);
+      try {
+        await tx.complaint.create({
+          data: injected({
+            id,
+            patientId: input.patientId,
+            referenceNumber,
+            description: input.description,
+            status: "OPEN",
+            source: input.source,
+            consentMessageId: input.consentMessageId ?? null,
+          }),
+        });
+        return { ok: true as const, complaintId: id, referenceNumber };
+      } catch (error) {
+        const isUniqueViolation = (error as { code?: string }).code === "P2002";
+        if (!isUniqueViolation || attempt === 2) throw error;
+      }
+    }
+    // Unreachable -- the loop above either returns or throws on its last attempt.
+    throw new Error("createComplaint: exhausted retries");
+  });
+}
+
 /** Status of one appointment, and nothing about the visit inside it. */
 export async function readAppointmentStatus(
   ctx: CallerContext,

@@ -91,9 +91,9 @@ export class WhatsAppWebhookController {
   }
 
   private async handleOneMessage(tenant: WhatsAppTenant, message: MetaInboundMessage): Promise<void> {
-    // Text only for this pass (webchat-prototype.md's agreed scope) -- an image, a location, an
-    // interactive reply button and so on are simply not acted on yet.
-    if (message.type !== "text" || !message.text?.body || !message.from || !message.id) return;
+    // Text and tapped interactive replies (buttons, list rows) are acted on; anything else (image,
+    // location, and so on) is not, same as before.
+    if (!message.from || !message.id) return;
 
     const waId = message.from;
     const phoneE164 = `+${waId}`;
@@ -110,8 +110,31 @@ export class WhatsAppWebhookController {
       return;
     }
 
-    // Coalesces a burst into one GPT turn. `externalMessageId` here ends up being whichever message
-    // in the burst settles the debounce last -- a known, accepted simplification of exactly-once
+    if (message.type === "interactive") {
+      // A tapped button or list row is one discrete, already-unambiguous action -- unlike free
+      // text, it is never debounced or joined with anything else: joining "s3" with whatever the
+      // patient types next would corrupt both. Its `id` is whatever whatsapp-flow.ts minted for
+      // that button; the flow step handler is what makes sense of it, not the model.
+      const id = message.interactive?.button_reply?.id ?? message.interactive?.list_reply?.id;
+      if (id === undefined) return;
+
+      handleInboundWhatsAppMessage({
+        tenant,
+        waId,
+        phoneE164,
+        externalMessageId,
+        input: { kind: "interactive", id },
+        occurredAt,
+      }).catch((error: unknown) => {
+        console.error("WhatsApp: failed to handle inbound interactive reply", error);
+      });
+      return;
+    }
+
+    if (message.type !== "text" || !message.text?.body) return;
+
+    // Coalesces a burst into one turn. `externalMessageId` here ends up being whichever message in
+    // the burst settles the debounce last -- a known, accepted simplification of exactly-once
     // logging across a *debounced batch* (webchat-prototype.md: "start simple"); each individual
     // delivery is still deduplicated correctly on its own via the same check.
     debounceMessage(waId, message.text.body, (combinedText) => {
@@ -120,7 +143,7 @@ export class WhatsAppWebhookController {
         waId,
         phoneE164,
         externalMessageId,
-        text: combinedText,
+        input: { kind: "text", text: combinedText },
         occurredAt,
       }).catch((error: unknown) => {
         console.error("WhatsApp: failed to handle inbound message", error);

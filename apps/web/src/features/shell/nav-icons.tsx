@@ -8,6 +8,7 @@ import {
   ClipboardList,
   FileClock,
   LayoutGrid,
+  MessageSquareWarning,
   Settings,
   Stethoscope,
   Users,
@@ -42,6 +43,7 @@ export const NAV_ICONS: Record<string, LucideIcon> = {
   "shell.nav.users": UsersRound,
   "shell.nav.reports": Banknote,
   "shell.nav.audit": FileClock,
+  "shell.nav.complaints": MessageSquareWarning,
   "shell.nav.settings": Settings,
 };
 

@@ -73,6 +73,12 @@ const EXPECTED: Record<Capability, ["full" | "own" | "none", "full" | "own" | "n
   // bot-capability-set.spec.ts, same as the original eight.
   "bot.listDoctors": ["none", "none", "none", "none"],
   "bot.listServices": ["none", "none", "none", "none"],
+  // Added 2026-09-29 for the "شكوى" (complaint) flow. bot.createComplaint is AI_AGENT-only, same
+  // shape as the rest of the bot set; complaints.read/manage are OWNER+ADMIN, same pairing as
+  // reports.financial and auditLog.read.
+  "bot.createComplaint": ["none", "none", "none", "none"],
+  "complaints.read": ["full", "full", "none", "none"],
+  "complaints.manage": ["full", "full", "none", "none"],
 };
 
 describe("permission matrix (ARCHITECTURE.md §8)", () => {
@@ -97,7 +103,9 @@ describe("permission matrix (ARCHITECTURE.md §8)", () => {
     // human roles hold none of them, which is the part this file checks.
     // -> 152 on 2026-09-22 when bot.listDoctors and bot.listServices joined for the web-chat
     // prototype's clinic browsing.
-    expect(cases).toHaveLength(152);
+    // -> 164 on 2026-09-29 when the complaint flow added bot.createComplaint (AI_AGENT-only) and
+    // complaints.read/complaints.manage (OWNER+ADMIN).
+    expect(cases).toHaveLength(164);
   });
 
   test.each(cases)("%s x %s -> %s", (capability, role, expectedLevel) => {

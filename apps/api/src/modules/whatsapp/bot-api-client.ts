@@ -187,8 +187,22 @@ export class BotApiClient {
     });
   }
 
-  /** Not wired into the AI tool registry yet (see whatsapp-tools.ts) -- exposed here so adding a
-   *  reschedule/cancel/status conversation later is a tool-registry change, not a new client. */
+  /** `/bot/complaints` returns `{ complaintId, referenceNumber }` on success (bot.controller.ts's
+   *  `complaint` route) -- the reference number is what the flow reads back to the patient. */
+  async createComplaint(input: {
+    patientId: string;
+    description: string;
+    consentMessageId: string;
+  }): Promise<BotResult<{ complaintId: string; referenceNumber: string }>> {
+    return this.request("/bot/complaints", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  }
+
+  /** Not offered via GPT function-calling -- the WhatsApp flow (whatsapp-flow.ts) calls this client
+   *  directly, and reschedule/cancel/status are simply not steps it has yet. */
   async rescheduleAppointment(
     appointmentId: string,
     slotToken: string,

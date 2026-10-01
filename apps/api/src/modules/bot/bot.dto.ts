@@ -57,6 +57,24 @@ export class BotBookDto {
   patientId!: string;
 }
 
+export class BotComplaintDto {
+  /** As the patient typed it, or the bot's faithful summary of a longer message. Free text only —
+   *  no category, no severity, the founder's call for this pass. */
+  @IsString()
+  @Length(1, 2000)
+  description!: string;
+
+  @IsUUID()
+  patientId!: string;
+
+  /** Same evidence shape as BotBookDto.consentMessageId, and required for the same reason: a
+   *  complaint filed in chat is where the patient can be reached back, and a channel with no
+   *  evidence of which message it came from is not one the desk can follow up against. */
+  @IsString()
+  @Length(1, 200)
+  consentMessageId!: string;
+}
+
 export class BotRescheduleDto {
   @IsString()
   @MaxLength(4096)

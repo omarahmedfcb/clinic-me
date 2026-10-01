@@ -120,6 +120,9 @@ export const RESOURCE_NAMES = [
   // A visit's bill. Distinct from "visit": credit is applied to the charge, and a reader told the
   // visit was not found would look for the wrong thing.
   "charge",
+  // A patient-reported issue over WhatsApp ("شكوى", 2026-09-29). Distinct from "patient": a
+  // resolve call names the complaint, not the person who filed it.
+  "complaint",
   "coverage",
   "doctor",
   "exception",

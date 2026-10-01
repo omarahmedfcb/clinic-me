@@ -57,3 +57,141 @@ export async function sendWhatsAppText(
   if (!externalMessageId) throw new Error("WhatsApp send succeeded but returned no message id.");
   return { externalMessageId };
 }
+
+/** One tappable reply button. Meta's own limits, enforced by `sendWhatsAppButtons` below rather
+ *  than trusted of the caller: at most 3 per message, `id` under 256 bytes, `title` under 20
+ *  UTF-16 code units (Meta counts codepoints, not bytes, for this one). */
+export interface WhatsAppButton {
+  id: string;
+  title: string;
+}
+
+/**
+ * A short question with up to three tappable buttons -- the flow's default for anything with 2 or
+ * 3 fixed answers (yes/no, doctor A vs B when there happen to be only two). `bodyText` is the
+ * question itself; the buttons carry no separate label the way a list's opening button does.
+ *
+ * Meta rejects the whole send if a title exceeds 20 characters or there are more than 3 buttons --
+ * caught here, before the HTTP call, so a template that has drifted past the limit fails loudly in
+ * the template itself (whatsapp-flow-text.ts) rather than as an opaque 400 from Meta at runtime.
+ */
+export async function sendWhatsAppButtons(
+  phoneNumberId: string,
+  toWaId: string,
+  bodyText: string,
+  buttons: WhatsAppButton[],
+): Promise<{ externalMessageId: string }> {
+  if (buttons.length === 0 || buttons.length > 3) {
+    throw new Error(`sendWhatsAppButtons: need 1-3 buttons, got ${buttons.length}`);
+  }
+  for (const button of buttons) {
+    if (button.title.length > 20) {
+      throw new Error(`sendWhatsAppButtons: button title over 20 chars: "${button.title}"`);
+    }
+  }
+
+  const response = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${accessToken()}` },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to: toWaId,
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: bodyText },
+        action: { buttons: buttons.map((b) => ({ type: "reply", reply: { id: b.id, title: b.title } })) },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`WhatsApp interactive-button send failed: ${response.status} ${errorBody}`);
+  }
+
+  const data = (await response.json()) as { messages?: Array<{ id: string }> };
+  const externalMessageId = data.messages?.[0]?.id;
+  if (!externalMessageId) throw new Error("WhatsApp interactive-button send succeeded but returned no message id.");
+  return { externalMessageId };
+}
+
+/** One row of a list message. Meta's limits: `id` under 200 bytes, `title` under 24 characters,
+ *  `description` (optional) under 72. */
+export interface WhatsAppListRow {
+  id: string;
+  title: string;
+  description?: string;
+}
+
+export interface WhatsAppListSection {
+  title: string;
+  rows: WhatsAppListRow[];
+}
+
+/**
+ * A question with many answers, shown as a tappable list rather than free text -- doctors,
+ * services, dates, and slots (paginated into pages of 9 plus a "more" row by the caller; this
+ * function itself enforces only Meta's hard ceiling of 10 rows *total* across every section, which
+ * is what one page of the paginated slot list is already sized to).
+ *
+ * `buttonLabel` is what opens the list (e.g. "اختر", "More options") -- distinct from any row's own
+ * title, and under Meta's 20-character limit for it, same as a reply button's title.
+ */
+export async function sendWhatsAppList(
+  phoneNumberId: string,
+  toWaId: string,
+  bodyText: string,
+  buttonLabel: string,
+  sections: WhatsAppListSection[],
+): Promise<{ externalMessageId: string }> {
+  const totalRows = sections.reduce((sum, section) => sum + section.rows.length, 0);
+  if (totalRows === 0 || totalRows > 10) {
+    throw new Error(`sendWhatsAppList: need 1-10 rows total, got ${totalRows}`);
+  }
+  if (buttonLabel.length > 20) {
+    throw new Error(`sendWhatsAppList: button label over 20 chars: "${buttonLabel}"`);
+  }
+  for (const section of sections) {
+    if (section.title.length > 24) {
+      throw new Error(`sendWhatsAppList: section title over 24 chars: "${section.title}"`);
+    }
+    for (const row of section.rows) {
+      if (row.title.length > 24) throw new Error(`sendWhatsAppList: row title over 24 chars: "${row.title}"`);
+      if ((row.description?.length ?? 0) > 72) {
+        throw new Error(`sendWhatsAppList: row description over 72 chars: "${row.description}"`);
+      }
+    }
+  }
+
+  const response = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${accessToken()}` },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to: toWaId,
+      type: "interactive",
+      interactive: {
+        type: "list",
+        body: { text: bodyText },
+        action: {
+          button: buttonLabel,
+          sections: sections.map((section) => ({
+            title: section.title,
+            rows: section.rows.map((row) => ({ id: row.id, title: row.title, description: row.description })),
+          })),
+        },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`WhatsApp interactive-list send failed: ${response.status} ${errorBody}`);
+  }
+
+  const data = (await response.json()) as { messages?: Array<{ id: string }> };
+  const externalMessageId = data.messages?.[0]?.id;
+  if (!externalMessageId) throw new Error("WhatsApp interactive-list send succeeded but returned no message id.");
+  return { externalMessageId };
+}

@@ -31,6 +31,7 @@ import { listServices } from "../services/services.service.ts";
 import {
   BotBookDto,
   BotCancelDto,
+  BotComplaintDto,
   BotConsentDto,
   BotPhoneQueryDto,
   BotProvisionalPatientDto,
@@ -39,6 +40,7 @@ import {
 } from "./bot.dto.ts";
 import { BOT_CREATE_PATIENT_THROTTLER, BOT_CREDENTIAL_THROTTLER, BOT_WRITE_THROTTLER } from "./bot-throttle.ts";
 import {
+  createComplaint,
   createProvisionalPatient,
   findPatientsByPhone,
   readAppointmentStatus,
@@ -49,7 +51,9 @@ import {
 /**
  * The WhatsApp bot's entire surface. `docs/WHATSAPP-BOT-CONTRACT.md` is the specification.
  *
- * **Ten routes, ten capabilities, one each.** `bot.listDoctors` and `bot.listServices` joined the
+ * **Eleven routes, eleven capabilities, one each** (ten plus `bot.createComplaint`, 2026-09-29, for
+ * the "شكوى" flow — same shape as `bot.createProvisionalPatient`: narrow, write, AI_AGENT-only).
+ * `bot.listDoctors` and `bot.listServices` joined the
  * original eight on 2026-09-26, closing a gap the contract's §3 table never covered: `bot.listSlots`
  * takes a `doctorId`/`serviceId` a caller must already have, and nothing in the original eight hands
  * one out. `permissions.ts` already granted AI_AGENT both -- the web chat has called the identical
@@ -180,6 +184,23 @@ export class BotController {
       return result;
     }
     return this.refuse(result.code, result.params);
+  }
+
+  /** Files a complaint against a patient the bot already resolved or created. `source: WHATSAPP`,
+   *  same reasoning as `book`. Consent recorded the same way, and for the same reason: only after
+   *  the write succeeds, and only if the patient has none yet. */
+  @Post("complaints")
+  @RequirePermission("bot.createComplaint")
+  @SkipThrottle(skipAllExcept(BOT_CREDENTIAL_THROTTLER, BOT_WRITE_THROTTLER))
+  async complaint(@Req() request: AuthenticatedRequest, @Body() body: BotComplaintDto) {
+    const result = await createComplaint(
+      this.caller(request),
+      { patientId: body.patientId, description: body.description, source: "WHATSAPP", consentMessageId: body.consentMessageId },
+      new Date(),
+    );
+    if (!result.ok) throw new NotFoundException(refusal(result.code, { resource: "patient" }));
+    await ensureWhatsAppConsent(this.caller(request), body.patientId, body.consentMessageId, new Date());
+    return { complaintId: result.complaintId, referenceNumber: result.referenceNumber };
   }
 
   @Post("appointments/:id/reschedule")
