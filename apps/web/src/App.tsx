@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { Spinner } from "./design-system/Spinner.tsx";
 import { LoginPage } from "./features/auth/LoginPage.tsx";
-import { SessionProvider, fetchMe, type CurrentUser } from "./features/auth/session.tsx";
+import {
+  SessionProvider,
+  fetchMe,
+  type CurrentUser,
+} from "./features/auth/session.tsx";
 import { ChangePasswordScreen } from "./features/staff/ChangePasswordScreen.tsx";
 import { GalleryPage } from "./features/gallery/GalleryPage.tsx";
 import { PlatformConsole } from "./features/platform/PlatformConsole.tsx";
 import { AppShell } from "./features/shell/AppShell.tsx";
 import { WebchatPage } from "./features/webchat/WebchatPage.tsx";
+import { refreshAccessToken } from "./features/auth/refresh-session.ts";
 
 /**
  * Which screen is on: the login page, or the authenticated shell.
@@ -26,11 +31,13 @@ import { WebchatPage } from "./features/webchat/WebchatPage.tsx";
  */
 
 /** The operator's console. One definition, because two checks would drift the first time one moved. */
-export const isPlatformPath = (): boolean => window.location.pathname.startsWith("/platform");
+export const isPlatformPath = (): boolean =>
+  window.location.pathname.startsWith("/platform");
 
 /** The public booking chat prototype -- no login, reachable by a patient who has never heard of
  *  this page. Same reasoning as isPlatformPath: one definition, checked before the session logic. */
-export const isWebchatPath = (): boolean => window.location.pathname.startsWith("/book");
+export const isWebchatPath = (): boolean =>
+  window.location.pathname.startsWith("/book");
 
 type Screen =
   | { kind: "loading" }
@@ -67,14 +74,15 @@ export function App() {
 
     void (async () => {
       try {
-        const response = await fetch("/api/auth/refresh", { method: "POST", credentials: "include" });
-        if (!response.ok) throw new Error("no session");
-        const { accessToken } = (await response.json()) as { accessToken: string };
+        const accessToken = await refreshAccessToken();
+        if (accessToken === null) throw new Error("no session");
         const me = await fetchMe(accessToken);
         if (cancelled) return;
         // A refresh that succeeds but whose /auth/me fails is not a session -- fall to login rather
         // than render a shell with nothing in the header.
-        setScreen(me ? { kind: "shell", token: accessToken, me } : { kind: "login" });
+        setScreen(
+          me ? { kind: "shell", token: accessToken, me } : { kind: "login" },
+        );
       } catch {
         if (!cancelled) setScreen({ kind: "login" });
       }
@@ -116,7 +124,12 @@ export function App() {
   }
 
   if (screen.kind === "login") {
-    return <LoginPage onSignedIn={signedIn} onMustChangePassword={mustChangePassword} />;
+    return (
+      <LoginPage
+        onSignedIn={signedIn}
+        onMustChangePassword={mustChangePassword}
+      />
+    );
   }
 
   if (screen.kind === "password") {
@@ -129,13 +142,20 @@ export function App() {
           fetch(path, {
             ...init,
             credentials: "include",
-            headers: { ...(init?.headers ?? {}), authorization: `Bearer ${token}` },
+            headers: {
+              ...(init?.headers ?? {}),
+              authorization: `Bearer ${token}`,
+            },
           })
         }
         onChanged={(accessToken) => {
           void (async () => {
             const me = await fetchMe(accessToken);
-            setScreen(me === null ? { kind: "login" } : { kind: "shell", token: accessToken, me });
+            setScreen(
+              me === null
+                ? { kind: "login" }
+                : { kind: "shell", token: accessToken, me },
+            );
           })();
         }}
       />
@@ -143,7 +163,11 @@ export function App() {
   }
 
   return (
-    <SessionProvider initialToken={screen.token} initialMe={screen.me} onSignedOut={signedOut}>
+    <SessionProvider
+      initialToken={screen.token}
+      initialMe={screen.me}
+      onSignedOut={signedOut}
+    >
       <AppShell />
     </SessionProvider>
   );

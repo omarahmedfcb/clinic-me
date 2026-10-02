@@ -1,4 +1,4 @@
-import type { NotificationKind } from "../../generated/prisma/client.ts";
+import type { MembershipRole, NotificationKind, Prisma } from "../../generated/prisma/client.ts";
 import { injected } from "../../prisma/injected.ts";
 import { withTenant, type ActorContext, type TransactionClient } from "../../prisma/with-tenant.ts";
 
@@ -22,6 +22,7 @@ import { withTenant, type ActorContext, type TransactionClient } from "../../pri
 export interface NotificationCaller {
   tenantId: string;
   membershipId: string;
+  role: MembershipRole;
   actor: ActorContext;
 }
 
@@ -40,7 +41,7 @@ export interface NotificationItem {
 /** The whole notifiable set. A closed union so a new kind is a decision, not a side effect. */
 export interface NotificationInput {
   kind: NotificationKind;
-  appointmentId: string;
+  appointmentId: string | null;
   patientId: string;
   source: string;
   occurredAt: Date;
@@ -79,11 +80,52 @@ export async function recordNotification(
  * The bell polls this every fifteen seconds, so it is one indexed anti-join and nothing else — no
  * payloads, no joins to patients, no ordering. The list is fetched only when the bell is opened.
  */
-export async function unreadCount(caller: NotificationCaller): Promise<number> {
+async function visibleTo(
+  tx: TransactionClient,
+  caller: NotificationCaller,
+): Promise<Prisma.NotificationWhereInput> {
+  const NOBODY: Prisma.NotificationWhereInput = { id: { in: [] } };
+  switch (caller.role) {
+    case "OWNER":
+    case "ADMIN":
+      return {};
+    case "RECEPTIONIST":
+      return { kind: { not: "COMPLAINT_RECEIVED" } };
+    case "DOCTOR": {
+      const doctor = await tx.doctor.findFirst({
+        where: { membershipId: caller.membershipId },
+        select: { id: true },
+      });
+      if (doctor === null) return NOBODY;
+      return {
+        kind: { not: "COMPLAINT_RECEIVED" },
+        OR: [
+          { appointment: { doctorId: doctor.id } },
+          { payload: { path: ["toDoctorId"], equals: doctor.id } },
+        ],
+      };
+    }
+    default:
+      return NOBODY;
+  }
+}
+
+export async function unreadCount(
+  caller: NotificationCaller,
+): Promise<{ unread: number; latestId: string | null }> {
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
-    return tx.notification.count({
-      where: { reads: { none: { membershipId: caller.membershipId } } },
-    });
+    const visible = await visibleTo(tx, caller);
+    const [unread, latest] = await Promise.all([
+      tx.notification.count({
+        where: { AND: [visible, { reads: { none: { membershipId: caller.membershipId } } }] },
+      }),
+      tx.notification.findFirst({
+        where: visible,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { id: true },
+      }),
+    ]);
+    return { unread, latestId: latest?.id ?? null };
   });
 }
 
@@ -99,6 +141,7 @@ export async function listNotifications(
 ): Promise<NotificationItem[]> {
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
     const rows = await tx.notification.findMany({
+      where: await visibleTo(tx, caller),
       // Two notifications can share an instant -- a cancellation recorded at the same `now` as the
       // booking it cancels, which is exactly what a test does. `id` breaks the tie deterministically
       // because ids are UUIDv7 (D6) and therefore time-ordered; without it Postgres is free to
@@ -142,7 +185,7 @@ export async function markRead(
     // Filtered through a tenant-scoped read first: an id from another clinic is invisible here, so
     // it is silently dropped rather than inserted against a row the caller cannot see.
     const visible = await tx.notification.findMany({
-      where: { id: { in: notificationIds } },
+      where: { AND: [await visibleTo(tx, caller), { id: { in: notificationIds } }] },
       select: { id: true },
     });
 

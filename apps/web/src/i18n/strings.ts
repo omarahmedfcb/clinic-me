@@ -1042,11 +1042,13 @@ const AR = {
   "notifications.kind.APPOINTMENT_BOOKED": "حجز جديد",
   "notifications.kind.APPOINTMENT_CANCELLED": "إلغاء موعد",
   "notifications.kind.APPOINTMENT_RESCHEDULED": "تغيير موعد",
+  "notifications.kind.COMPLAINT_RECEIVED": "شكوى جديدة",
   "notifications.source.WHATSAPP": "واتساب",
   "notifications.source.RECEPTION": "الاستقبال",
   "notifications.source.DOCTOR": "الطبيب",
   "notifications.source.ONLINE": "الموقع",
   "notifications.source.WALK_IN": "بدون موعد",
+
 
   "schedules.settings.open": "إعدادات أوقات الدوام",
   "schedules.settings.close": "إعدادات أوقات الدوام",
@@ -2763,6 +2765,7 @@ const EN: Partial<Record<TranslationKey, string>> = {
   "notifications.kind.APPOINTMENT_BOOKED": "New booking",
   "notifications.kind.APPOINTMENT_CANCELLED": "Appointment cancelled",
   "notifications.kind.APPOINTMENT_RESCHEDULED": "Appointment moved",
+  "notifications.kind.COMPLAINT_RECEIVED": "New complaint",
   "notifications.source.WHATSAPP": "WhatsApp",
   "notifications.source.RECEPTION": "Reception",
   "notifications.source.DOCTOR": "Doctor",

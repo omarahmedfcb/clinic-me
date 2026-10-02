@@ -5,10 +5,16 @@ import { useEffect, useState } from "react";
 import { Button } from "../../design-system/Button.tsx";
 import { StatusBadge } from "../../design-system/display.tsx";
 import { Drawer } from "../../design-system/overlays.tsx";
-import { canReschedule, type AppointmentStatus } from "../../domain/appointment-status.ts";
+import {
+  canReschedule,
+  type AppointmentStatus,
+} from "../../domain/appointment-status.ts";
 import { intlLocale } from "../../i18n/format.ts";
 import { useLocale } from "../../i18n/locale-context.tsx";
-import { loadDay as loadDayTimeline, type DayDescription } from "../day-view/day-view-api.ts";
+import {
+  loadDay as loadDayTimeline,
+  type DayDescription,
+} from "../day-view/day-view-api.ts";
 import type { DayBooking } from "./book-api.ts";
 
 type AuthFetch = (path: string, init?: RequestInit) => Promise<Response>;
@@ -28,7 +34,10 @@ export interface HourRow {
 const HOUR_MS = 3_600_000;
 
 const spans = (windows: { start: string; end: string }[]): Span[] =>
-  windows.map((window) => ({ fromMs: Date.parse(window.start), toMs: Date.parse(window.end) }));
+  windows.map((window) => ({
+    fromMs: Date.parse(window.start),
+    toMs: Date.parse(window.end),
+  }));
 
 const overlaps = (span: Span, fromMs: number, toMs: number): boolean =>
   span.fromMs < toMs && span.toMs > fromMs;
@@ -44,16 +53,23 @@ export function hourRows(
   days: { doctorId: string; day: DayDescription }[],
   bookings: DayBooking[],
 ): HourRow[] {
-  const hourOf = (ms: number): number => Math.floor((ms - midnightMs) / HOUR_MS);
+  const hourOf = (ms: number): number =>
+    Math.floor((ms - midnightMs) / HOUR_MS);
 
   const hours: number[] = [];
   for (const { day } of days) {
     for (const window of spans(day.working)) {
       // The end is exclusive: a session ending at 17:00 does not occupy the 17:00 row.
-      for (let hour = hourOf(window.fromMs); hour <= hourOf(window.toMs - 1); hour += 1) hours.push(hour);
+      for (
+        let hour = hourOf(window.fromMs);
+        hour <= hourOf(window.toMs - 1);
+        hour += 1
+      )
+        hours.push(hour);
     }
   }
-  for (const booking of bookings) hours.push(hourOf(Date.parse(booking.startsAt)));
+  for (const booking of bookings)
+    hours.push(hourOf(Date.parse(booking.startsAt)));
   if (hours.length === 0) return [];
 
   const first = Math.min(...hours);
@@ -70,7 +86,9 @@ export function hourRows(
         return at >= fromMs && at < toMs;
       }),
       freeDoctorIds: days
-        .filter(({ day }) => spans(day.free).some((span) => overlaps(span, fromMs, toMs)))
+        .filter(({ day }) =>
+          spans(day.free).some((span) => overlaps(span, fromMs, toMs)),
+        )
         .map(({ doctorId }) => doctorId),
     });
   }
@@ -84,14 +102,22 @@ export function hourRows(
  * tenant's zone and returns the offset it used, so the spine is labelled with the clinic's hours.
  * The browser's own offset is the last resort, for a day on which no doctor works at all.
  */
-export function midnightFor(date: string, days: { day: DayDescription }[], bookings: DayBooking[]): number {
+export function midnightFor(
+  date: string,
+  days: { day: DayDescription }[],
+  bookings: DayBooking[],
+): number {
   const utcMidnight = Date.parse(`${date}T00:00:00Z`);
-  const reported = days.flatMap(({ day }) => day.working).at(0)?.utcOffsetMinutes;
+  const reported = days
+    .flatMap(({ day }) => day.working)
+    .at(0)?.utcOffsetMinutes;
   if (reported !== undefined) return utcMidnight - reported * 60_000;
 
   const sample = bookings.at(0)?.startsAt;
   if (sample === undefined) return utcMidnight;
-  return utcMidnight + new Date(Date.parse(sample)).getTimezoneOffset() * 60_000;
+  return (
+    utcMidnight + new Date(Date.parse(sample)).getTimezoneOffset() * 60_000
+  );
 }
 
 export function DayDrawer({
@@ -123,9 +149,14 @@ export function DayDrawer({
   const { t, locale } = useLocale();
   // Null until the spine is known. Drawing the bookings first and the working hours a moment later
   // rebuilds every row under the reader's cursor, which loses the click they were making.
-  const [days, setDays] = useState<{ doctorId: string; day: DayDescription }[] | null>(null);
+  const [days, setDays] = useState<
+    { doctorId: string; day: DayDescription }[] | null
+  >(null);
 
-  const inScope = doctorId === "" ? doctors : doctors.filter((doctor) => doctor.id === doctorId);
+  const inScope =
+    doctorId === ""
+      ? doctors
+      : doctors.filter((doctor) => doctor.id === doctorId);
 
   useEffect(() => {
     let cancelled = false;
@@ -133,7 +164,10 @@ export function DayDrawer({
       const loaded = await Promise.all(
         inScope.map(async (doctor) => {
           try {
-            return { doctorId: doctor.id, day: await loadDayTimeline(authFetch, doctor.id, date) };
+            return {
+              doctorId: doctor.id,
+              day: await loadDayTimeline(authFetch, doctor.id, date),
+            };
           } catch {
             // A doctor whose day cannot be read is left out of the spine rather than failing the
             // panel: the bookings are already in hand and are what the reader came for.
@@ -215,7 +249,11 @@ export function DayDrawer({
             const fromMs = midnightMs + row.hour * HOUR_MS;
             const bookable = mayAct && row.freeDoctorIds.length > 0;
             return (
-              <li key={row.hour} className="flex items-stretch gap-2" data-testid={`hour-${row.hour}`}>
+              <li
+                key={row.hour}
+                className="flex items-stretch gap-2"
+                data-testid={`hour-${row.hour}`}
+              >
                 <span className="numeric w-12 shrink-0 pt-2 text-xs text-ink-muted">
                   {clinicTime(fromMs)}
                 </span>
@@ -238,39 +276,50 @@ export function DayDrawer({
                         {t("book.bookHere")}
                       </Button>
                     ) : (
-                      <span className="block min-h-8 rounded-md bg-surface-sunken/40" aria-hidden="true" />
+                      <span
+                        className="block min-h-8 rounded-md bg-surface-sunken/40"
+                        aria-hidden="true"
+                      />
                     )
                   ) : (
                     <ul className="grid gap-1">
                       {row.bookings.map((booking) => (
                         <li
                           key={booking.appointmentId}
-                          className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg bg-surface-sunken px-2 py-1.5"
+                          className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-0.5 rounded-lg bg-surface-sunken px-2 py-1.5"
                           data-testid={`booking-${booking.appointmentId}`}
                         >
-                          <span className="text-sm text-ink">
-                            <span className="numeric me-2 text-xs text-ink-muted">
-                              {clinicTime(Date.parse(booking.startsAt))}
+                          <span className="min-w-0">
+                            <span className="block wrap-break-word text-sm text-ink">
+                              <span className="numeric me-2 text-xs text-ink-muted">
+                                {clinicTime(Date.parse(booking.startsAt))}
+                              </span>
+                              {booking.patientName}
                             </span>
-                            {booking.patientName}
-                            <span className="ms-2 text-xs text-ink-subtle">
-                              {nameOf.get(booking.doctorId) ?? booking.doctorName}
+                            <span className="block wrap-break-word text-xs text-ink-subtle">
+                              {nameOf.get(booking.doctorId) ??
+                                booking.doctorName}
                             </span>
                           </span>
-                          <span className="flex items-baseline gap-2">
-                            <StatusBadge status={booking.status as AppointmentStatus} />
+                          <span className="flex flex-wrap items-center justify-end gap-2">
+                            <StatusBadge
+                              status={booking.status as AppointmentStatus}
+                            />
                             {/* No drag (the ruling): a move is a dialog. And the screen asks the
                                 state machine whether a move is legal rather than deciding itself. */}
-                            {mayAct && canReschedule(booking.status as AppointmentStatus) && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                data-testid={`move-${booking.appointmentId}`}
-                                onClick={() => onMove(booking)}
-                              >
-                                {t("book.move")}
-                              </Button>
-                            )}
+                            {mayAct &&
+                              canReschedule(
+                                booking.status as AppointmentStatus,
+                              ) && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  data-testid={`move-${booking.appointmentId}`}
+                                  onClick={() => onMove(booking)}
+                                >
+                                  {t("book.move")}
+                                </Button>
+                              )}
                           </span>
                         </li>
                       ))}

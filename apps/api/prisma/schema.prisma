@@ -325,6 +325,8 @@ enum NotificationKind {
   TRANSFER_REJECTED
   /// The appointment ended while the request was still open -- closed by nobody. D24.
   TRANSFER_LAPSED
+  /// A patient filed a complaint over WhatsApp. Owner and admin only.
+  COMPLAINT_RECEIVED
 }
 
 enum AttachmentCategory {

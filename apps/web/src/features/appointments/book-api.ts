@@ -93,8 +93,14 @@ export async function loadSlots(
     `/api/availability?doctorId=${input.doctorId}&serviceId=${input.serviceId}&date=${input.date}`,
   );
   if (!response.ok) return [];
-  const body = (await response.json()) as { slots?: Slot[] };
-  return body.slots ?? [];
+  const body = (await response.json()) as {
+    slots?: { start?: string; end?: string; token?: string; startsAt?: string; endsAt?: string; slotToken?: string }[];
+  };
+  return (body.slots ?? []).map((raw) => ({
+    slotToken: raw.slotToken ?? raw.token ?? "",
+    startsAt: raw.startsAt ?? raw.start ?? "",
+    endsAt: raw.endsAt ?? raw.end ?? "",
+  }));
 }
 
 /**

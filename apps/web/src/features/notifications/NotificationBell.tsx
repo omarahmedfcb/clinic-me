@@ -37,19 +37,28 @@ import { NOTIFICATION_POLL_MS } from "../../lib/polling.ts";
 
 interface NotificationItem {
   id: string;
-  kind: "APPOINTMENT_BOOKED" | "APPOINTMENT_CANCELLED" | "APPOINTMENT_RESCHEDULED";
+  kind:
+    | "APPOINTMENT_BOOKED"
+    | "APPOINTMENT_CANCELLED"
+    | "APPOINTMENT_RESCHEDULED"
+    | "COMPLAINT_RECEIVED";
   occurredAt: string;
   source: string;
-  payload: { patientName?: string | null; start?: string; from?: string; reason?: string | null };
+  payload: {
+    patientName?: string | null;
+    start?: string;
+    from?: string;
+    reason?: string | null;
+    referenceNumber?: string;
+  };
   read: boolean;
 }
-
 
 const POLL_MS = NOTIFICATION_POLL_MS;
 
 export function NotificationBell() {
   const { t, locale } = useLocale();
-  const { authFetch } = useSession();
+  const { authFetch, me } = useSession();
 
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
@@ -59,30 +68,51 @@ export function NotificationBell() {
   const [audioBlocked, setAudioBlocked] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
   /** The previous count, so a rise can be told from a first load or a mark-as-read. */
-  const lastCount = useRef<number | null>(null);
+  const firstPoll = useRef(true);
 
   const refreshCount = useCallback(async (): Promise<void> => {
     try {
       const response = await authFetch("/api/notifications/count");
       if (!response.ok) return;
-      const next = ((await response.json()) as { unread: number }).unread;
+      const body = (await response.json()) as {
+        unread: number;
+        latestId: string | null;
+      };
+      setUnread(body.unread);
 
-      // Only on a RISE, and never on the first poll of the session -- otherwise signing in with
-      // yesterday's unread items would chime for news that is not new.
-      const previous = lastCount.current;
-      lastCount.current = next;
-      setUnread(next);
+      const key = `clinic-os:last-chime:${me.membershipId}`;
+      let seen: string | null = null;
+      try {
+        seen = window.localStorage.getItem(key);
+      } catch {
+        /* storage unavailable */
+      }
+      const isNew = body.latestId !== null && body.latestId !== seen;
+      if (isNew) {
+        try {
+          window.localStorage.setItem(key, body.latestId as string);
+        } catch {
+          /* as above */
+        }
+      }
 
-      if (previous !== null && next > previous && soundEnabled(window.localStorage)) {
+      const wasFirst = firstPoll.current;
+      firstPoll.current = false;
+
+      if (
+        isNew &&
+        !wasFirst &&
+        seen !== null &&
+        body.unread > 0 &&
+        soundEnabled(window.localStorage)
+      ) {
         const played = await notificationSound.play();
-        // The rejection is surfaced, not swallowed. This is the branch that stops a clinic
-        // believing it will be alerted when it will not be.
         setAudioBlocked(!played);
       }
     } catch {
       // A failed poll is not worth telling anyone about; the next one is fifteen seconds away.
     }
-  }, [authFetch]);
+  }, [authFetch, me.membershipId]);
 
   useEffect(() => {
     void refreshCount();
@@ -94,7 +124,11 @@ export function NotificationBell() {
   useEffect(() => {
     if (!open) return;
     const onDown = (event: MouseEvent): void => {
-      if (panel.current !== null && !panel.current.contains(event.target as Node)) setOpen(false);
+      if (
+        panel.current !== null &&
+        !panel.current.contains(event.target as Node)
+      )
+        setOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
@@ -108,7 +142,10 @@ export function NotificationBell() {
     setLoading(true);
     try {
       const response = await authFetch("/api/notifications");
-      if (response.ok) setItems(((await response.json()) as { items: NotificationItem[] }).items);
+      if (response.ok)
+        setItems(
+          ((await response.json()) as { items: NotificationItem[] }).items,
+        );
     } finally {
       setLoading(false);
     }
@@ -141,8 +178,12 @@ export function NotificationBell() {
       <Button
         variant="ghost"
         size="sm"
-        aria-label={sound ? t("notifications.sound.on") : t("notifications.sound.off")}
-        title={sound ? t("notifications.sound.on") : t("notifications.sound.off")}
+        aria-label={
+          sound ? t("notifications.sound.on") : t("notifications.sound.off")
+        }
+        title={
+          sound ? t("notifications.sound.on") : t("notifications.sound.off")
+        }
         onClick={() => {
           const next = !sound;
           setSound(next);
@@ -151,7 +192,9 @@ export function NotificationBell() {
             // Turning sound ON is itself a user gesture -- the best moment to unlock, and to find
             // out immediately whether the browser will allow it rather than at the next booking.
             notificationSound.unlock();
-            void notificationSound.play().then((played) => setAudioBlocked(!played));
+            void notificationSound
+              .play()
+              .then((played) => setAudioBlocked(!played));
           } else {
             setAudioBlocked(false);
           }
@@ -180,7 +223,9 @@ export function NotificationBell() {
             className="ms-2 underline"
             onClick={() => {
               notificationSound.unlock();
-              void notificationSound.play().then((played) => setAudioBlocked(!played));
+              void notificationSound
+                .play()
+                .then((played) => setAudioBlocked(!played));
             }}
           >
             {t("notifications.sound.enable")}
@@ -197,9 +242,15 @@ export function NotificationBell() {
         */
         <div className="absolute end-0 top-full z-20 mt-2 w-80 rounded-xl border border-border bg-surface shadow-lg">
           <div className="flex items-center justify-between border-b border-border px-3 py-2">
-            <span className="text-sm font-semibold">{t("notifications.title")}</span>
+            <span className="text-sm font-semibold">
+              {t("notifications.title")}
+            </span>
             {items.some((item) => !item.read) && (
-              <Button variant="ghost" size="sm" onClick={() => void markAllRead()}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void markAllRead()}
+              >
                 {t("notifications.markAllRead")}
               </Button>
             )}
@@ -240,11 +291,16 @@ export function NotificationBell() {
 
                 <p className="mt-0.5 text-sm text-ink-subtle">
                   {item.payload.patientName ?? ""}
-                  {item.payload.start !== undefined && ` · ${time.format(new Date(item.payload.start))}`}
+                  {item.payload.start !== undefined &&
+                    ` · ${time.format(new Date(item.payload.start))}`}
+                  {item.payload.referenceNumber !== undefined &&
+                    ` · ${item.payload.referenceNumber}`}
                 </p>
 
                 {item.payload.reason != null && item.payload.reason !== "" && (
-                  <p className="text-xs text-ink-muted">{item.payload.reason}</p>
+                  <p className="text-xs text-ink-muted">
+                    {item.payload.reason}
+                  </p>
                 )}
               </li>
             ))}

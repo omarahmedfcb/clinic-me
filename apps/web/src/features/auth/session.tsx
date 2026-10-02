@@ -1,5 +1,14 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { clearCachedLocale } from "../../i18n/locale-store.ts";
+import { refreshAccessToken } from "./refresh-session.ts";
 
 /**
  * The signed-in session: the access token, who it belongs to, and the one fetch wrapper everything
@@ -39,7 +48,13 @@ export interface Membership {
 }
 
 export interface CurrentUser {
-  user: { id: string; fullName: string; phoneE164: string; email: string | null; locale: string | null };
+  user: {
+    id: string;
+    fullName: string;
+    phoneE164: string;
+    email: string | null;
+    locale: string | null;
+  };
   membershipId: string;
   tenantId: string;
   /** ISO 4217 code from `tenants.currency`. Never assume EGP — `formatMinor` takes it as input. */
@@ -64,12 +79,15 @@ const SessionContext = createContext<SessionValue | undefined>(undefined);
 
 export function useSession(): SessionValue {
   const value = useContext(SessionContext);
-  if (value === undefined) throw new Error("useSession() outside a <SessionProvider>.");
+  if (value === undefined)
+    throw new Error("useSession() outside a <SessionProvider>.");
   return value;
 }
 
 /** Reads `/auth/me` with a token. Exported so the login screen can establish a session. */
-export async function fetchMe(accessToken: string): Promise<CurrentUser | null> {
+export async function fetchMe(
+  accessToken: string,
+): Promise<CurrentUser | null> {
   const response = await fetch("/api/auth/me", {
     headers: { authorization: `Bearer ${accessToken}` },
     credentials: "include",
@@ -112,22 +130,10 @@ export function SessionProvider({
   }, [onSignedOut]);
 
   const refresh = useCallback(async (): Promise<boolean> => {
-    refreshing.current ??= (async () => {
-      try {
-        const response = await fetch("/api/auth/refresh", { method: "POST", credentials: "include" });
-        if (!response.ok) return false;
-        const body = (await response.json()) as { accessToken: string };
-        token.current = body.accessToken;
-        return true;
-      } catch {
-        return false;
-      } finally {
-        // Cleared regardless of outcome, so the next expiry starts a fresh attempt rather than
-        // resolving instantly against a stale result.
-        refreshing.current = null;
-      }
-    })();
-    return refreshing.current;
+    const accessToken = await refreshAccessToken();
+    if (accessToken === null) return false;
+    token.current = accessToken;
+    return true;
   }, []);
 
   const authFetch = useCallback(
@@ -136,7 +142,10 @@ export function SessionProvider({
         fetch(path, {
           ...init,
           credentials: "include",
-          headers: { ...(init.headers ?? {}), authorization: `Bearer ${token.current}` },
+          headers: {
+            ...(init.headers ?? {}),
+            authorization: `Bearer ${token.current}`,
+          },
         });
 
       const first = await send();
@@ -159,7 +168,10 @@ export function SessionProvider({
   const logout = useCallback(async () => {
     // Best-effort: the server revokes the family, but a failed network call must not strand the
     // user in a session they asked to leave. The local end happens either way.
-    await fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => undefined);
+    await fetch("/api/auth/logout", {
+      method: "POST",
+      credentials: "include",
+    }).catch(() => undefined);
     endSession();
   }, [endSession]);
 
@@ -186,5 +198,7 @@ export function SessionProvider({
     [me, authFetch, reload, logout, switchTenant],
   );
 
-  return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
+  return (
+    <SessionContext.Provider value={value}>{children}</SessionContext.Provider>
+  );
 }

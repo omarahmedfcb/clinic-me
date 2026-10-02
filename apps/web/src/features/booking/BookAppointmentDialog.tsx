@@ -6,7 +6,15 @@ import { Spinner } from "../../design-system/Spinner.tsx";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import { intlLocale } from "../../i18n/format.ts";
 import type { DoctorSummary } from "../schedules/schedules-api.ts";
-import { loadPatientById, loadServices, loadSlots, searchPatients, type PatientMatch, type ServiceOption, type Slot } from "./booking-api.ts";
+import {
+  loadPatientById,
+  loadServices,
+  loadSlots,
+  searchPatients,
+  type PatientMatch,
+  type ServiceOption,
+  type Slot,
+} from "./booking-api.ts";
 import { NewPatientDialog } from "../patients/NewPatientDialog.tsx";
 
 /**
@@ -105,7 +113,10 @@ export function BookAppointmentDialog({
   }, [fetchSlots]);
 
   const clock = (iso: string): string =>
-    new Date(iso).toLocaleTimeString(intlLocale(locale), { hour: "2-digit", minute: "2-digit" });
+    new Date(iso).toLocaleTimeString(intlLocale(locale), {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
   return (
     <Modal
@@ -128,7 +139,7 @@ export function BookAppointmentDialog({
           results intact, so a mis-click costs one tap rather than retyping a name.
         */}
         {patient === null && (
-          <div className="flex items-end gap-2">
+          <div className="flex items-center gap-2">
             <div className="flex-1">
               <TextInput
                 label={t("booking.patient")}
@@ -154,7 +165,11 @@ export function BookAppointmentDialog({
               The duplicate risk the old placement guarded against is real, which is why the search
               is still the first thing on the row and this sits after it.
             */}
-            <Button size="sm" variant="secondary" onClick={() => setIntakeOpen(true)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setIntakeOpen(true)}
+            >
               {t("intake.new")}
             </Button>
           </div>
@@ -166,7 +181,9 @@ export function BookAppointmentDialog({
                 booked at all — the search returned nothing and the dialog offered no way forward. */}
             {searched && matches.length === 0 && (
               <li className="rounded-lg border border-dashed border-border px-3 py-3 text-center">
-                <p className="text-sm text-ink-muted">{t("booking.noPatients")}</p>
+                <p className="text-sm text-ink-muted">
+                  {t("booking.noPatients")}
+                </p>
               </li>
             )}
             {intakeOpen && (
@@ -198,7 +215,9 @@ export function BookAppointmentDialog({
                   className="w-full rounded-lg border border-border px-3 py-2 text-start text-sm hover:border-border-strong"
                 >
                   <bdi className="font-medium">{match.fullNameAr}</bdi>
-                  <span className="numeric block text-xs text-ink-muted">{match.phoneE164}</span>
+                  <span className="numeric block text-xs text-ink-muted">
+                    {match.phoneE164}
+                  </span>
                 </button>
               </li>
             ))}
@@ -207,9 +226,15 @@ export function BookAppointmentDialog({
           <div className="flex items-center justify-between rounded-lg border border-border bg-surface-sunken px-3 py-2">
             <div className="text-sm">
               <bdi className="font-medium">{patient.fullNameAr}</bdi>
-              <span className="numeric block text-xs text-ink-muted">{patient.phoneE164}</span>
+              <span className="numeric block text-xs text-ink-muted">
+                {patient.phoneE164}
+              </span>
             </div>
-            <Button size="sm" variant="secondary" onClick={() => setPatient(null)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setPatient(null)}
+            >
               {t("booking.changePatient")}
             </Button>
           </div>
@@ -220,7 +245,10 @@ export function BookAppointmentDialog({
             label={t("booking.doctor")}
             value={doctorId}
             onChange={(event) => setDoctorId(event.target.value)}
-            options={doctors.map((d) => ({ value: d.id, label: `${d.title} ${d.fullName} — ${d.specialty}` }))}
+            options={doctors.map((d) => ({
+              value: d.id,
+              label: `${d.title} ${d.fullName} — ${d.specialty}`,
+            }))}
             placeholder={t("transfer.request.pickDoctor")}
           />
         )}
@@ -244,16 +272,22 @@ export function BookAppointmentDialog({
         />
 
         <div>
-          <span className="block text-sm font-medium text-ink">{t("booking.slots")}</span>
+          <span className="block text-sm font-medium text-ink">
+            {t("booking.slots")}
+          </span>
           {loadingSlots ? (
             <div className="py-4">
               <Spinner />
             </div>
           ) : slots === null || doctorId === "" || serviceId === "" ? (
-            <p className="py-2 text-sm text-ink-muted">{t("booking.pickFirst")}</p>
+            <p className="py-2 text-sm text-ink-muted">
+              {t("booking.pickFirst")}
+            </p>
           ) : slots.length === 0 ? (
             // An empty day and an unchosen service look identical unless they are worded apart.
-            <p className="py-2 text-sm text-ink-muted">{t("booking.noSlots")}</p>
+            <p className="py-2 text-sm text-ink-muted">
+              {t("booking.noSlots")}
+            </p>
           ) : (
             <div className="flex flex-wrap gap-2 pt-2">
               {slots.map((slot) => (
@@ -270,7 +304,9 @@ export function BookAppointmentDialog({
             </div>
           )}
           {patient === null && slots !== null && slots.length > 0 && (
-            <p className="pt-2 text-xs text-ink-subtle">{t("booking.needPatient")}</p>
+            <p className="pt-2 text-xs text-ink-subtle">
+              {t("booking.needPatient")}
+            </p>
           )}
         </div>
       </div>

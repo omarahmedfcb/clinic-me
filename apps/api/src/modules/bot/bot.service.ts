@@ -7,6 +7,7 @@ import { withTenant } from "../../prisma/with-tenant.ts";
 import type { CallerContext } from "../patients/patients.service.ts";
 import { isIntakeIncomplete } from "../patients/domain/intake-completeness.ts";
 import { latinSearchKey } from "../patients/domain/transliterate.ts";
+import { recordNotification } from "../notifications/notifications.service.ts";
 
 /** One household member, and the whole of what the bot learns about them. */
 export interface BotHouseholdMember {
@@ -205,7 +206,7 @@ export async function createComplaint(
   now: Date,
 ): Promise<{ ok: true; complaintId: string; referenceNumber: string } | { ok: false; code: "NOT_FOUND" }> {
   return withTenant(ctx.tenantId, ctx.actor, async (tx) => {
-    const patient = await tx.patient.findFirst({ where: { id: input.patientId }, select: { id: true } });
+    const patient = await tx.patient.findFirst({ where: { id: input.patientId }, select: { id: true, fullNameAr: true } });
     if (patient === null) return { ok: false as const, code: "NOT_FOUND" as const };
 
     // Up to three attempts against the (tenantId, referenceNumber) unique index before giving up --
@@ -225,6 +226,14 @@ export async function createComplaint(
             source: input.source,
             consentMessageId: input.consentMessageId ?? null,
           }),
+        });
+        await recordNotification(tx, ctx.actor.userId, {
+          kind: "COMPLAINT_RECEIVED",
+          appointmentId: null,
+          patientId: input.patientId,
+          source: input.source,
+          occurredAt: now,
+          payload: { complaintId: id, referenceNumber, patientName: patient.fullNameAr },
         });
         return { ok: true as const, complaintId: id, referenceNumber };
       } catch (error) {

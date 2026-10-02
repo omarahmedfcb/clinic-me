@@ -37,6 +37,7 @@ export class NotificationsController {
     return {
       tenantId: request.authClaims.tenantId,
       membershipId: request.authClaims.membershipId,
+      role: request.authClaims.role,
       actor: actorContext.getOrThrow(),
     };
   }
@@ -45,7 +46,7 @@ export class NotificationsController {
   @Get("count")
   @RequirePermission("appointments.read")
   async count(@Req() request: AuthenticatedRequest) {
-    return { unread: await unreadCount(this.caller(request)) };
+    return unreadCount(this.caller(request));;
   }
 
   @Get()
