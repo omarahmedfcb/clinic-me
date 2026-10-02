@@ -154,18 +154,61 @@ function timeOnly(clinicLocalTime: string): string {
   return clinicLocalTime.split(" ")[1] ?? clinicLocalTime;
 }
 
-/** A tiny pre-pass for the handful of relative-date words a patient is likely to type instead of a
- *  literal date, in either language -- resolved against the clinic's own calendar before falling
- *  through to `parseFlexibleDate`'s literal formats. Anything this does not recognise passes through
- *  unchanged, so a genuine "12-10-2026" is untouched by it. */
-function normaliseRelativeDate(text: string, timezone: string): string {
-  const trimmed = text.trim();
+const TODAY_WORDS = ["اليوم", "النهاردة", "النهارده", "today"];
+const TOMORROW_WORDS = ["بكرة", "بكره", "غدا", "غداً", "tomorrow"];
+/** Normalised (see `normaliseForMatch`) so "الأحد"/"الاحد" and "Sun"/"sunday" all match regardless
+ *  of spelling or case -- a patient naming the day is only ever a courtesy alongside the date that
+ *  follows, never checked against it, so there's nothing to gain from being strict about spelling. */
+const WEEKDAY_NAMES = new Set(
+  [
+    "الاحد", "الاثنين", "الثلاثاء", "الاربعاء", "الخميس", "الجمعة", "السبت",
+    "sunday", "sun", "monday", "mon", "tuesday", "tue", "tues",
+    "wednesday", "wed", "thursday", "thu", "thurs", "friday", "fri", "saturday", "sat",
+  ].map((w) => normaliseForMatch(w)),
+);
+
+/** A leading weekday name ("الاحد 5-10", "Sunday 12/10") is dropped, never checked against the date
+ *  that follows -- a patient who names the wrong day for their own date still gets the date they
+ *  typed, not a silent "correction" to a day they didn't ask for. Only ever strips one leading
+ *  word, so a date that happens to start with something matching a weekday's normalised form in
+ *  some other context is not at risk -- this only looks at the very first token. */
+function stripLeadingWeekdayName(text: string): string {
+  const firstSpace = text.indexOf(" ");
+  if (firstSpace === -1) return text;
+  const first = normaliseForMatch(text.slice(0, firstSpace));
+  return WEEKDAY_NAMES.has(first) ? text.slice(firstSpace + 1).trim() : text;
+}
+
+/**
+ * Everything `BOOKING_DATE`/`BOOKING_DATE_FREE` accept as a typed date, resolved against the
+ * clinic's own calendar: relative words ("بكرة"/"tomorrow"), an optional leading weekday name
+ * (dropped, see `stripLeadingWeekdayName`), a bare day-month with no year ("5-10" -- assumed this
+ * year, rolled to next year if that date has already passed), and anything `parseFlexibleDate`
+ * already handled (a full "D-M-YYYY" or ISO date). Returns an ISO date, or `null` if none of these
+ * recognise it.
+ */
+function parseFlowDate(rawText: string, timezone: string): string | null {
   const today = todayInClinic(timezone);
-  const todayWords = ["اليوم", "النهاردة", "النهارده", "today"];
-  const tomorrowWords = ["بكرة", "بكره", "غدا", "غداً", "tomorrow"];
-  if (todayWords.some((w) => trimmed === w)) return today;
-  if (tomorrowWords.some((w) => trimmed === w)) return addDaysIso(today, 1);
-  return trimmed;
+  const trimmed = rawText.trim();
+  if (TODAY_WORDS.some((w) => trimmed === w)) return today;
+  if (TOMORROW_WORDS.some((w) => trimmed === w)) return addDaysIso(today, 1);
+
+  const withoutWeekday = stripLeadingWeekdayName(trimmed);
+
+  const noYearMatch = /^(\d{1,2})[-/](\d{1,2})$/.exec(withoutWeekday);
+  if (noYearMatch !== null) {
+    const [, day, month] = noYearMatch;
+    const thisYear = Number(today.slice(0, 4));
+    const paddedMonth = month!.padStart(2, "0");
+    const paddedDay = day!.padStart(2, "0");
+    const candidate = `${thisYear}-${paddedMonth}-${paddedDay}`;
+    if (Number.isNaN(new Date(`${candidate}T00:00:00Z`).getTime())) return null;
+    // Already past this year -- a patient typing "5-10" in November almost certainly means next
+    // October, not one that's already gone by, so roll forward rather than reject outright.
+    return candidate < today ? `${thisYear + 1}-${paddedMonth}-${paddedDay}` : candidate;
+  }
+
+  return parseFlexibleDate(withoutWeekday);
 }
 
 function pageSlots(slots: { iso: string; token: string; label: string }[], page: number) {
@@ -185,6 +228,20 @@ function slotRowId(indexOnPage: number): string {
 
 const BOOKING_WORDS = ["حجز", "احجز", "أحجز", "ميعاد", "موعد", "مواعيد", "book", "appointment", "schedule"];
 const COMPLAINT_WORDS = ["شكو", "اشتكي", "مشكلة", "بلاغ", "complain", "complaint", "issue", "problem"];
+
+/** Exact-match only (via `normaliseForMatch`), deliberately not a substring check like
+ *  `matchByKeyword` uses elsewhere: "شكرا" must be the *whole* message, not a word inside a longer
+ *  one ("شكرا بس حابب أغير الميعاد" -- thanks, but I'd like to change the appointment -- is a real
+ *  request and must not be swallowed as a closing remark because it happens to contain "شكرا"). */
+const CLOSING_WORDS = [
+  "شكرا", "شكراً", "تسلم", "تسلملي", "متشكر", "يسلمو", "تمام", "كويس", "حلو",
+  "thanks", "thank you", "thx", "ok", "okay", "cool", "great", "👍", "🙏",
+];
+
+function isClosingRemark(text: string): boolean {
+  const norm = normaliseForMatch(text);
+  return CLOSING_WORDS.some((w) => norm === normaliseForMatch(w));
+}
 
 /** Keyword-first on purpose: instant, free, and right often enough that a GPT round trip would only
  *  add latency to the common case. Only a message that matches neither list pays for one -- and even
@@ -369,6 +426,15 @@ export async function runFlow(ctx: FlowContext): Promise<FlowResult> {
  *  patient's own words if this turn is free text -- classified for intent so a clear opener skips
  *  straight past the menu -- or `null` for an interactive tap with no state (shows the menu). */
 async function beginTurn(ctx: FlowContext, lang: Lang, openingText: string | null): Promise<FlowResult> {
+  // A closing remark ("شكرا", "تمام", "thanks") is not an ambiguous *opener* -- it is very often the
+  // very next message after this file itself just said "تم الحجز ... لو محتاج حاجة تانية أنا موجود"
+  // (bookingSuccess/complaintSuccess), and showing the full intent menu in reply to "thanks" reads as
+  // not having listened. Recognised the same way a tapped button would be, before intent
+  // classification gets a chance to call it ambiguous.
+  if (openingText !== null && isClosingRemark(openingText)) {
+    return { handled: true, nextState: null, outgoing: { kind: "text", text: T.closingAcknowledge(lang) } };
+  }
+
   const welcomeLine = ctx.isNewSession ? `${T.welcome(lang, ctx.tenant.clinicName)}\n\n` : "";
 
   const intent = openingText === null ? null : await classifyIntent(openingText);
@@ -746,7 +812,7 @@ async function stepBookingDate(ctx: FlowContext, state: Extract<FlowState, { ste
 
   const text = textOf(ctx.input);
   if (text !== null) {
-    const parsed = parseFlexibleDate(normaliseRelativeDate(text, ctx.tenant.timezone));
+    const parsed = parseFlowDate(text, ctx.tenant.timezone);
     if (parsed !== null) {
       if (parsed < todayInClinic(ctx.tenant.timezone)) {
         return { handled: true, nextState: state, outgoing: { kind: "text", text: T.bookingDatePast(state.lang) } };
@@ -760,7 +826,7 @@ async function stepBookingDate(ctx: FlowContext, state: Extract<FlowState, { ste
 
 async function stepBookingDateFree(ctx: FlowContext, state: Extract<FlowState, { step: "BOOKING_DATE_FREE" }>): Promise<FlowResult> {
   const text = textOf(ctx.input);
-  const parsed = text === null ? null : parseFlexibleDate(normaliseRelativeDate(text, ctx.tenant.timezone));
+  const parsed = text === null ? null : parseFlowDate(text, ctx.tenant.timezone);
   if (parsed === null) {
     return { handled: true, nextState: state, outgoing: { kind: "text", text: T.bookingDateInvalid(state.lang) } };
   }

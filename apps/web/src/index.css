@@ -59,7 +59,9 @@
    * also why Plex's Latin faces are not downloaded at all (`scripts/brand/fetch-fonts.mjs`).
    * Self-hosted: no CDN request at runtime.
    */
-  --font-sans: "Inter", "IBM Plex Sans Arabic", "Segoe UI", "Noto Sans Arabic", system-ui, sans-serif;
+  --font-sans:
+    "Inter", "IBM Plex Sans Arabic", "Segoe UI", "Noto Sans Arabic", system-ui,
+    sans-serif;
 
   --color-surface: #ffffff;
   --color-surface-sunken: #f7faf9;
@@ -201,6 +203,11 @@ body {
   font-family: var(--font-sans);
   color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
+}
+
+button,
+a {
+  cursor: pointer;
 }
 
 /*

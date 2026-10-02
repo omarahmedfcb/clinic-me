@@ -27,7 +27,9 @@ export type DiallingCountry = (typeof DIALLING_CODES)[number]["country"];
  * the fallback. Read once at call time rather than at module scope, because a unit spec that
  * imports this file must not need a `navigator`.
  */
-export function defaultDiallingCountry(locales: readonly string[] = navigator.languages ?? []): DiallingCountry {
+export function defaultDiallingCountry(
+  locales: readonly string[] = navigator.languages ?? [],
+): DiallingCountry {
   for (const tag of locales) {
     const region = tag.split("-")[1]?.toUpperCase();
     const match = DIALLING_CODES.find((entry) => entry.country === region);
@@ -58,10 +60,11 @@ export function PhoneField({
   disabled?: boolean;
 }) {
   const { t } = useLocale();
-  const entry = DIALLING_CODES.find((row) => row.country === country) ?? DIALLING_CODES[0];
+  const entry =
+    DIALLING_CODES.find((row) => row.country === country) ?? DIALLING_CODES[0];
 
   return (
-    <div className="flex items-end gap-2">
+    <div className="flex items-start gap-2">
       {/*
         The prefix is a control, not decoration: a clinic in Riyadh types the same nine digits an
         Egyptian one does, and asking them to remember `+966` is asking them to do the computer's
@@ -72,7 +75,10 @@ export function PhoneField({
           label={t("login.phone.country")}
           value={country}
           data-testid="login-country"
-          options={DIALLING_CODES.map((row) => ({ value: row.country, label: `${row.prefix}` }))}
+          options={DIALLING_CODES.map((row) => ({
+            value: row.country,
+            label: `${row.prefix}`,
+          }))}
           onChange={(event) => onCountry(event.target.value as DiallingCountry)}
           disabled={disabled}
         />

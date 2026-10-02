@@ -34,7 +34,8 @@ export const T = {
   intentComplaint: (lang: Lang) => pick(lang, "الإبلاغ عن مشكلة", "Report an issue"),
   intentUnclear: (lang: Lang) =>
     pick(lang, "معلش، مفهمتش قصدك. اختار من دول:", "Sorry, I didn't quite catch that. Please choose:"),
-
+  closingAcknowledge: (lang: Lang) =>
+    pick(lang, "تحت أمرك في أي وقت 🙏", "Happy to help anytime 🙏"),
   // -- identity ------------------------------------------------------------------------------
   identityConfirmSingle: (lang: Lang, name: string, phone: string) =>
     pick(lang, `لقيت الرقم ده مسجل باسم ${name} (${phone}). ده حضرتك؟`, `This number is registered as ${name} (${phone}). Is that you?`),
