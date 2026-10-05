@@ -4,6 +4,8 @@
 
 import { prisma } from "../../prisma/client.ts";
 import { resolveBotActor, type BotActor } from "../webchat/webchat-clinics.ts";
+import type { BotApiClient } from "./bot-api-client.ts";
+import { resolveWhatsAppAccess } from "./whatsapp-connections.ts";
 
 export interface WhatsAppTenant {
   id: string;
@@ -21,6 +23,13 @@ export interface WhatsAppTenant {
   bot: BotActor;
 }
 
+/** A `WhatsAppTenant` plus what this clinic sends and calls /bot/* with. Kept off the base type so the
+ *  flow (which needs neither) and its spec do not depend on credentials. */
+export interface ResolvedWhatsAppTenant extends WhatsAppTenant {
+  accessToken: string;
+  client: BotApiClient;
+}
+
 /**
  * The clinic whose WhatsApp number received this message, and its AI_AGENT membership -- reusing
  * `resolveBotActor` from the web chat rather than re-deriving "does this clinic have a bot" a
@@ -31,7 +40,7 @@ export interface WhatsAppTenant {
  * Unbound, like `webchat-clinics.ts#getBookableClinic`: resolving *which* tenant a request is for is
  * exactly the lookup that has to run before any tenant is known, so it cannot itself be tenant-scoped.
  */
-export async function resolveTenantByPhoneNumberId(phoneNumberId: string): Promise<WhatsAppTenant | null> {
+export async function resolveTenantByPhoneNumberId(phoneNumberId: string): Promise<ResolvedWhatsAppTenant | null> {
   const tenant = await prisma.tenant.findFirst({
     where: { whatsappPhoneNumberId: phoneNumberId, status: "ACTIVE" },
     select: { id: true, timezone: true, whatsappPhoneNumberId: true, name: true, nameEn: true },
@@ -41,6 +50,9 @@ export async function resolveTenantByPhoneNumberId(phoneNumberId: string): Promi
   const bot = await resolveBotActor(tenant.id);
   if (bot === null) return null;
 
+  const access = await resolveWhatsAppAccess(tenant.id, tenant.whatsappPhoneNumberId);
+  if (access === null) return null;
+
   return {
     id: tenant.id,
     timezone: tenant.timezone,
@@ -48,5 +60,7 @@ export async function resolveTenantByPhoneNumberId(phoneNumberId: string): Promi
     clinicNameEn: tenant.nameEn,
     phoneNumberId: tenant.whatsappPhoneNumberId,
     bot,
+    accessToken: access.accessToken,
+    client: access.client,
   };
 }

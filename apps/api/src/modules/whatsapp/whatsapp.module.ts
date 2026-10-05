@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { WhatsAppWebhookController } from "./whatsapp.controller.ts";
+import { WhatsAppSignupController } from "./whatsapp-signup.controller.ts";
 
 /**
  * No throttler here, unlike bot.module.ts / webchat.module.ts. Meta's webhook has to accept every
@@ -8,5 +9,5 @@ import { WhatsAppWebhookController } from "./whatsapp.controller.ts";
  * one) -- the spam control that matters is whatsapp-throttle.ts's per-sender limit, applied after
  * signature verification and before a message reaches GPT, not a 429 on the route itself.
  */
-@Module({ controllers: [WhatsAppWebhookController] })
-export class WhatsAppModule {}
+@Module({ controllers: [WhatsAppWebhookController, WhatsAppSignupController] })
+export class WhatsAppModule { }

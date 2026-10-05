@@ -53,6 +53,7 @@ const TENANT_POLICY = {
   PaymentAdjustment: "scoped",
   Consent: "scoped",
   BotCredential: "scoped",
+  WhatsAppConnection: "scoped",
   WebhookDelivery: "scoped",
   AccessGrant: "scoped",
   TreatmentPlan: "scoped",

@@ -5,7 +5,7 @@
 // Plain fetch, same reasoning as gpt-client.ts and bot-api-client.ts: one call, one shape, no HTTP
 // client dependency for it.
 
-const GRAPH_API_VERSION = "v21.0";
+const GRAPH_API_VERSION = process.env["WHATSAPP_GRAPH_VERSION"] ?? "v26.0";
 
 /**
  * One access token for now (`WHATSAPP_ACCESS_TOKEN`), same simplification as
@@ -15,7 +15,8 @@ const GRAPH_API_VERSION = "v21.0";
  * may not even need to become per-clinic -- worth confirming against Meta's own docs when the second
  * clinic is onboarded, rather than guessed now.
  */
-function accessToken(): string {
+function accessToken(clinicToken?: string): string {
+  if (clinicToken) return clinicToken;
   const token = process.env["WHATSAPP_ACCESS_TOKEN"];
   if (!token) throw new Error("WHATSAPP_ACCESS_TOKEN is not set -- see .env.example.");
   return token;
@@ -33,10 +34,11 @@ export async function sendWhatsAppText(
   phoneNumberId: string,
   toWaId: string,
   body: string,
+  token?: string
 ): Promise<{ externalMessageId: string }> {
   const response = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${accessToken()}` },
+    headers: { "content-type": "application/json", authorization: `Bearer ${accessToken(token)}` },
     body: JSON.stringify({
       messaging_product: "whatsapp",
       to: toWaId,
@@ -80,6 +82,7 @@ export async function sendWhatsAppButtons(
   toWaId: string,
   bodyText: string,
   buttons: WhatsAppButton[],
+  token?: string
 ): Promise<{ externalMessageId: string }> {
   if (buttons.length === 0 || buttons.length > 3) {
     throw new Error(`sendWhatsAppButtons: need 1-3 buttons, got ${buttons.length}`);
@@ -92,7 +95,7 @@ export async function sendWhatsAppButtons(
 
   const response = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${accessToken()}` },
+    headers: { "content-type": "application/json", authorization: `Bearer ${accessToken(token)}` },
     body: JSON.stringify({
       messaging_product: "whatsapp",
       to: toWaId,
@@ -144,6 +147,7 @@ export async function sendWhatsAppList(
   bodyText: string,
   buttonLabel: string,
   sections: WhatsAppListSection[],
+  token?: string
 ): Promise<{ externalMessageId: string }> {
   const totalRows = sections.reduce((sum, section) => sum + section.rows.length, 0);
   if (totalRows === 0 || totalRows > 10) {
@@ -166,7 +170,7 @@ export async function sendWhatsAppList(
 
   const response = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${accessToken()}` },
+    headers: { "content-type": "application/json", authorization: `Bearer ${accessToken(token)}` },
     body: JSON.stringify({
       messaging_product: "whatsapp",
       to: toWaId,

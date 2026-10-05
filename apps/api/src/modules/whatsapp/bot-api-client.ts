@@ -28,8 +28,12 @@ export interface BotCredentialConfig {
  * `process.env` -- everything downstream of `BotApiClient` is already written against an instance,
  * not a global, so that change stays local to this one function.
  */
+export function defaultApiBaseUrl(): string {
+  return process.env["API_BASE_URL"] ?? "http://localhost:3000";
+}
+
 export function defaultBotCredentialConfig(): BotCredentialConfig {
-  const apiBaseUrl = process.env["API_BASE_URL"] ?? "http://localhost:3000";
+  const apiBaseUrl = defaultApiBaseUrl();
   const credentialId = process.env["BOT_CREDENTIAL_ID"];
   const secret = process.env["BOT_CREDENTIAL_SECRET"];
   if (!credentialId || !secret) {

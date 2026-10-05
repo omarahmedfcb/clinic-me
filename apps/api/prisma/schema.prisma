@@ -467,6 +467,7 @@ model Tenant {
   platformClinicContracts  PlatformClinicContract[]
   botCredentials           BotCredential[]
   webhookDeliveries        WebhookDelivery[]
+  whatsappConnection       WhatsAppConnection?
 
   @@map("tenants")
 }
@@ -1506,10 +1507,35 @@ model BotCredential {
   tenant     Tenant     @relation(fields: [tenantId], references: [id])
   membership Membership @relation(fields: [membershipId], references: [id])
   issuedBy   User       @relation("BotCredentialIssuer", fields: [issuedByUserId], references: [id])
+  whatsappConnections WhatsAppConnection[]
 
   @@index([tenantId])
   @@map("bot_credentials")
 }
+
+model WhatsAppConnection {
+  id                 String   @id @db.Uuid
+  tenantId           String   @unique @map("tenant_id") @db.Uuid
+  wabaId             String   @map("waba_id")
+  phoneNumberId      String   @unique @map("phone_number_id")
+  businessId         String?  @map("business_id")
+  displayPhoneNumber String?  @map("display_phone_number")
+  verifiedName       String?  @map("verified_name")
+  /// ACTIVE | TOKEN_INVALID | DISCONNECTED, by a CHECK.
+  status             String   @default("ACTIVE")
+  accessTokenEnc     String   @map("access_token_enc")
+  botCredentialId    String   @map("bot_credential_id") @db.Uuid
+  botSecretEnc       String   @map("bot_secret_enc")
+  connectedAt        DateTime @default(now()) @map("connected_at") @db.Timestamptz(6)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant        Tenant        @relation(fields: [tenantId], references: [id])
+  botCredential BotCredential @relation(fields: [botCredentialId], references: [id])
+
+  @@map("whatsapp_connections")
+}
+
 
 /// One thing the bot is owed. docs/WHATSAPP-BOT-CONTRACT.md §6.
 ///

@@ -12,6 +12,7 @@ import { PlatformConsole } from "./features/platform/PlatformConsole.tsx";
 import { AppShell } from "./features/shell/AppShell.tsx";
 import { WebchatPage } from "./features/webchat/WebchatPage.tsx";
 import { refreshAccessToken } from "./features/auth/refresh-session.ts";
+import { SignupPage } from "./features/signup/SignupPage.tsx";
 
 /**
  * Which screen is on: the login page, or the authenticated shell.
@@ -38,6 +39,10 @@ export const isPlatformPath = (): boolean =>
  *  this page. Same reasoning as isPlatformPath: one definition, checked before the session logic. */
 export const isWebchatPath = (): boolean =>
   window.location.pathname.startsWith("/book");
+
+/** Public clinic signup through Meta Embedded Signup: no session, like /book. */
+export const isSignupPath = (): boolean =>
+  window.location.pathname.startsWith("/signup");
 
 type Screen =
   | { kind: "loading" }
@@ -72,6 +77,9 @@ export function App() {
     // The web chat has no session at all -- a patient here has never logged in and never will.
     if (isWebchatPath()) return;
 
+    // Nor does signup: the person has no clinic, so a refresh attempt is only a 401 in the console.
+    if (isSignupPath()) return;
+
     void (async () => {
       try {
         const accessToken = await refreshAccessToken();
@@ -104,6 +112,8 @@ export function App() {
    * chosen. See docs/ARCHITECTURE.md §12 and apps/api/src/modules/webchat.
    */
   if (isWebchatPath()) return <WebchatPage />;
+
+  if (isSignupPath()) return <SignupPage />;
 
   /**
    * **The operator's console, outside the clinic application entirely** — pilot-readiness 0b–0f.

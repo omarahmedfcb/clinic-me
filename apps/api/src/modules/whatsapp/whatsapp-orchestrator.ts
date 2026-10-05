@@ -11,11 +11,10 @@
 // left are inside the flow itself: guessing intent from a vague opener, and answering an
 // off-script question without derailing the step the patient is on (see whatsapp-flow.ts's header).
 
-import { getDefaultBotApiClient } from "./bot-api-client.ts";
 import { clearAiChain, ingestInboundMessage, recordOutboundMessage } from "./whatsapp-conversation.ts";
 import { sendWhatsAppButtons, sendWhatsAppList, sendWhatsAppText } from "./whatsapp-graph-client.ts";
 import { runFlow, WELCOME_IDLE_GAP_MS, type FlowOutgoing, type FlowState } from "./whatsapp-flow.ts";
-import type { WhatsAppTenant } from "./whatsapp-tenants.ts";
+import { ResolvedWhatsAppTenant } from "./whatsapp-tenants.ts";
 
 const FALLBACK_REPLY =
   "معذرة، حدث خطأ أثناء إتمام طلبك. من فضلك حاول مرة أخرى.\n" +
@@ -28,7 +27,7 @@ const FALLBACK_REPLY =
 export type InboundWhatsAppInput = { kind: "text"; text: string } | { kind: "interactive"; id: string };
 
 export interface InboundWhatsAppMessage {
-  tenant: WhatsAppTenant;
+  tenant: ResolvedWhatsAppTenant;
   waId: string;
   phoneE164: string;
   externalMessageId: string;
@@ -40,20 +39,27 @@ export interface InboundWhatsAppMessage {
  *  whatsapp-graph-client.ts's own types) -- this is purely "which of the three send functions",
  *  plus the flat text this turn's `Message` row is logged with regardless of which one fired. */
 async function sendFlowOutgoing(
-  tenant: WhatsAppTenant,
+  tenant: ResolvedWhatsAppTenant,
   waId: string,
   outgoing: FlowOutgoing,
 ): Promise<{ externalMessageId: string; loggedText: string }> {
   if (outgoing.kind === "text") {
-    const sent = await sendWhatsAppText(tenant.phoneNumberId, waId, outgoing.text);
+    const sent = await sendWhatsAppText(tenant.phoneNumberId, waId, outgoing.text, tenant.accessToken);
     return { externalMessageId: sent.externalMessageId, loggedText: outgoing.text };
   }
   if (outgoing.kind === "buttons") {
-    const sent = await sendWhatsAppButtons(tenant.phoneNumberId, waId, outgoing.body, outgoing.buttons);
+    const sent = await sendWhatsAppButtons(tenant.phoneNumberId, waId, outgoing.body, outgoing.buttons, tenant.accessToken);
     const optionsLine = outgoing.buttons.map((b) => b.title).join(" / ");
     return { externalMessageId: sent.externalMessageId, loggedText: `${outgoing.body}\n[${optionsLine}]` };
   }
-  const sent = await sendWhatsAppList(tenant.phoneNumberId, waId, outgoing.body, outgoing.buttonLabel, outgoing.sections);
+  const sent = await sendWhatsAppList(
+    tenant.phoneNumberId,
+    waId,
+    outgoing.body,
+    outgoing.buttonLabel,
+    outgoing.sections,
+    tenant.accessToken,
+  );
   const optionsLine = outgoing.sections.flatMap((section) => section.rows.map((row) => row.title)).join(" / ");
   return { externalMessageId: sent.externalMessageId, loggedText: `${outgoing.body}\n[${optionsLine}]` };
 }
@@ -91,7 +97,7 @@ export async function handleInboundWhatsAppMessage(input: InboundWhatsAppMessage
   try {
     const result = await runFlow({
       tenant,
-      client: getDefaultBotApiClient(),
+      client: tenant.client,
       phoneE164: input.phoneE164,
       input: input.input,
       state: ingest.flowState as FlowState | null,

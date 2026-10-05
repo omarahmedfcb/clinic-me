@@ -15,7 +15,7 @@ import type { MetaInboundMessage, MetaWebhookPayload } from "./meta-webhook-payl
 import { handleVerificationHandshake, verifyMetaSignature, META_SIGNATURE_HEADER } from "./whatsapp-signing.ts";
 import { checkSpamLimit, debounceMessage, SPAM_LIMIT_REPLY } from "./whatsapp-throttle.ts";
 import { sendWhatsAppText } from "./whatsapp-graph-client.ts";
-import { resolveTenantByPhoneNumberId, type WhatsAppTenant } from "./whatsapp-tenants.ts";
+import { ResolvedWhatsAppTenant, resolveTenantByPhoneNumberId, type WhatsAppTenant } from "./whatsapp-tenants.ts";
 import { handleInboundWhatsAppMessage } from "./whatsapp-orchestrator.ts";
 
 @Controller("webhooks/whatsapp")
@@ -90,7 +90,7 @@ export class WhatsAppWebhookController {
     }
   }
 
-  private async handleOneMessage(tenant: WhatsAppTenant, message: MetaInboundMessage): Promise<void> {
+  private async handleOneMessage(tenant: ResolvedWhatsAppTenant, message: MetaInboundMessage): Promise<void> {
     // Text and tapped interactive replies (buttons, list rows) are acted on; anything else (image,
     // location, and so on) is not, same as before.
     if (!message.from || !message.id) return;
@@ -103,7 +103,7 @@ export class WhatsAppWebhookController {
     const spam = checkSpamLimit(waId);
     if (!spam.allowed) {
       if (spam.shouldWarn) {
-        await sendWhatsAppText(tenant.phoneNumberId, waId, SPAM_LIMIT_REPLY).catch((error: unknown) => {
+        await sendWhatsAppText(tenant.phoneNumberId, waId, SPAM_LIMIT_REPLY, tenant.accessToken).catch((error: unknown) => {
           console.error("WhatsApp: failed to send the slow-down reply", error);
         });
       }
