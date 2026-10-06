@@ -1,12 +1,18 @@
 {
-  "rewrites": [
+  "routes": [
     {
-      "source": "/api/:path*",
-      "destination": "https://snack-gently-overlabor.ngrok-free.dev/:path*"
+      "src": "/api/(.*)",
+      "dest": "https://snack-gently-overlabor.ngrok-free.dev/$1",
+      "transforms": [
+        {
+          "type": "request.headers",
+          "op": "set",
+          "target": { "key": "ngrok-skip-browser-warning" },
+          "args": "1"
+        }
+      ]
     },
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
