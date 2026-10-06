@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://snack-gently-overlabor.ngrok-free.dev/api/:path*"
+      "destination": "https://snack-gently-overlabor.ngrok-free.dev/:path*"
     },
     {
       "source": "/(.*)",
