@@ -2,13 +2,22 @@ import { useRef, useState, type FormEvent } from "react";
 import { BRAND } from "../../brand/brand.ts";
 import { BrandLockup } from "../../brand/Logo.tsx";
 import { Button } from "../../design-system/Button.tsx";
-import { PasswordField, passwordVisibility } from "../../design-system/fields.tsx";
+import {
+  PasswordField,
+  passwordVisibility,
+} from "../../design-system/fields.tsx";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import { notificationSound } from "../notifications/sound.ts";
 import type { TranslationKey } from "../../i18n/strings.ts";
 import { LanguageToggle } from "./LanguageToggle.tsx";
 import { BuildStamp } from "./BuildStamp.tsx";
-import { defaultDiallingCountry, DIALLING_CODES, PhoneField, toE164, type DiallingCountry } from "./PhoneField.tsx";
+import {
+  defaultDiallingCountry,
+  DIALLING_CODES,
+  PhoneField,
+  toE164,
+  type DiallingCountry,
+} from "./PhoneField.tsx";
 import { login } from "./login-api.ts";
 import { fetchMe, type CurrentUser } from "./session.tsx";
 
@@ -49,10 +58,17 @@ import { fetchMe, type CurrentUser } from "./session.tsx";
  */
 
 /** Client-side checks. Deliberately only emptiness — see the note on `submit`. */
-function fieldErrors(identifier: string, password: string): { identifier?: TranslationKey; password?: TranslationKey } {
+function fieldErrors(
+  identifier: string,
+  password: string,
+): { identifier?: TranslationKey; password?: TranslationKey } {
   return {
-    ...(identifier.trim().length === 0 ? { identifier: "login.error.phoneRequired" as const } : {}),
-    ...(password.length === 0 ? { password: "login.error.passwordRequired" as const } : {}),
+    ...(identifier.trim().length === 0
+      ? { identifier: "login.error.phoneRequired" as const }
+      : {}),
+    ...(password.length === 0
+      ? { password: "login.error.passwordRequired" as const }
+      : {}),
   };
 }
 
@@ -67,7 +83,9 @@ export function LoginPage({
   // Reactive, not the module-level `t`: that one is bound to Arabic at import time, so the toggle
   // would flip the direction and leave every string in the language it started in.
   const { t } = useLocale();
-  const [country, setCountry] = useState<DiallingCountry>(() => defaultDiallingCountry());
+  const [country, setCountry] = useState<DiallingCountry>(() =>
+    defaultDiallingCountry(),
+  );
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
@@ -81,7 +99,9 @@ export function LoginPage({
    */
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [formError, setFormError] = useState<TranslationKey | undefined>(undefined);
+  const [formError, setFormError] = useState<TranslationKey | undefined>(
+    undefined,
+  );
   const [touched, setTouched] = useState(false);
 
   /**
@@ -98,7 +118,8 @@ export function LoginPage({
 
   const errors = fieldErrors(identifier, password);
   const showFieldErrors = touched;
-  const prefix = DIALLING_CODES.find((row) => row.country === country)?.prefix ?? "+20";
+  const prefix =
+    DIALLING_CODES.find((row) => row.country === country)?.prefix ?? "+20";
 
   async function submit(event: FormEvent): Promise<void> {
     /*
@@ -194,7 +215,9 @@ export function LoginPage({
         <div className="absolute inset-0 bg-linear-to-t from-ink/90 via-ink/55 to-ink/20" />
         <div className="relative flex h-full flex-col justify-end gap-3 p-10">
           <BrandLockup width={200} className="opacity-95" />
-          <p className="max-w-sm text-sm text-white/85">{t("login.panel.tagline")}</p>
+          <p className="max-w-sm text-sm text-white/85">
+            {t("login.panel.tagline")}
+          </p>
         </div>
       </aside>
 
@@ -203,7 +226,9 @@ export function LoginPage({
           <header className="mb-6">
             {/* On narrow screens the panel is gone, so the logo appears here instead. */}
             <BrandLockup width={132} className="mb-4 lg:hidden" />
-            <h1 className="text-2xl font-semibold text-ink">{t("login.title")}</h1>
+            <h1 className="text-2xl font-semibold text-ink">
+              {t("login.title")}
+            </h1>
             <p className="mt-1 text-sm text-ink-muted">{t("login.subtitle")}</p>
           </header>
 
@@ -217,13 +242,21 @@ export function LoginPage({
               onCountry={setCountry}
               value={identifier}
               onChange={setIdentifier}
-              error={showFieldErrors && errors.identifier ? t(errors.identifier) : undefined}
+              error={
+                showFieldErrors && errors.identifier
+                  ? t(errors.identifier)
+                  : undefined
+              }
               disabled={submitting}
             />
 
             <PasswordField
               label={t("login.password.label")}
-              error={showFieldErrors && errors.password ? t(errors.password) : undefined}
+              error={
+                showFieldErrors && errors.password
+                  ? t(errors.password)
+                  : undefined
+              }
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               visible={passwordVisible}
@@ -256,7 +289,11 @@ export function LoginPage({
             {formError !== undefined && (
               // role="alert" so a screen reader announces it without the user hunting for it, and
               // aria-live so a second failure with the same text is announced again.
-              <p role="alert" aria-live="assertive" className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
+              <p
+                role="alert"
+                aria-live="assertive"
+                className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger"
+              >
                 {t(formError)}
               </p>
             )}
@@ -271,7 +308,16 @@ export function LoginPage({
               Phase 6. A link to a flow that does not exist is worse than a sentence telling you who
               to ask — it produces a support call about a broken page.
             */}
-            <p className="text-center text-xs text-ink-muted">{t("login.noAccount")}</p>
+            <p className="text-center text-xs text-ink-muted">
+              {t("login.noAccount")}{" "}
+              <a
+                href="/signup"
+                data-testid="platform-console-link"
+                className="text-ink-subtle underline decoration-border-strong underline-offset-2 hover:text-primary"
+              >
+                {t("login.signUpNow")}
+              </a>
+            </p>
 
             {/*
               The operator's console — the only thing that says it exists. An operator holds no

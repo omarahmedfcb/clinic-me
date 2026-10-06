@@ -268,7 +268,8 @@ const AR = {
   "login.phone.hint.SA": "مثال: 0501234567",
   "login.phone.hint.AE": "مثال: 0501234567",
   "login.rememberMe": "تذكرني على هذا الجهاز",
-  "login.noAccount": "ليس لديك حساب؟ تواصل مع مسؤول العيادة",
+  "login.noAccount": "ليس لديك حساب؟",
+  "login.signUpNow": "سجل الان",
   "login.operatorConsole": "دخول فريق التشغيل",
 
   "language.toggle.toEnglish": "EN",
@@ -1667,7 +1668,8 @@ const EN: Partial<Record<TranslationKey, string>> = {
   "login.phone.hint.SA": "For example 0501234567",
   "login.phone.hint.AE": "For example 0501234567",
   "login.rememberMe": "Remember me on this device",
-  "login.noAccount": "No account? Contact your clinic administrator",
+  "login.noAccount": "No account?",
+  "login.signUpNow": "Sign Up Now",
   "login.operatorConsole": "Operations team sign-in",
 
   "language.toggle.toEnglish": "EN",
