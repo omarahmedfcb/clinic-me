@@ -44,11 +44,13 @@ export function LanguageToggle({ inline = false }: { inline?: boolean } = {}) {
       aria-label={t("language.toggle.label")}
       lang={next}
       className={
-        (inline ? "" : "absolute top-4 end-4 ") +
+        (inline ? "" : "absolute top-4 inset-e-4 ") +
         "rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-ink-muted transition-colors hover:bg-surface-sunken hover:text-ink"
       }
     >
-      {next === "en" ? t("language.toggle.toEnglish") : t("language.toggle.toArabic")}
+      {next === "en"
+        ? t("language.toggle.toEnglish")
+        : t("language.toggle.toArabic")}
     </button>
   );
 }

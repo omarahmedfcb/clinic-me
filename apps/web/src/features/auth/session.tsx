@@ -109,7 +109,6 @@ export function SessionProvider({
   const token = useRef(initialToken);
   const [me, setMe] = useState<CurrentUser>(initialMe);
   /** The in-flight refresh, shared by every caller that hits a 401 at the same moment. */
-  const refreshing = useRef<Promise<boolean> | null>(null);
 
   /**
    * Ends the session locally and returns to the login screen.
