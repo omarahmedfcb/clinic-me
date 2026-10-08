@@ -18,6 +18,7 @@ out/
 .env.*.local
 **/.env
 **/.env.*
+**/*.env
 
 # Logs
 npm-debug.log*

@@ -1,18 +1,9 @@
 {
-  "routes": [
+  "rewrites": [
     {
-      "src": "/api/(.*)",
-      "dest": "https://snack-gently-overlabor.ngrok-free.dev/$1",
-      "transforms": [
-        {
-          "type": "request.headers",
-          "op": "set",
-          "target": { "key": "ngrok-skip-browser-warning" },
-          "args": "1"
-        }
-      ]
+      "source": "/api/:path*",
+      "destination": "https://api.nomed-os.com/:path*"
     },
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/index.html" }
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
