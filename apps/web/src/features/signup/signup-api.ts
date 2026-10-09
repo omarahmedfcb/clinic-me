@@ -16,7 +16,7 @@ export interface SignupPayload {
   password: string;
   code: string;
   wabaId: string;
-  phoneNumberId: string;
+  phoneNumberId?: string;
   businessId?: string;
   skipRegistration: boolean;
 }

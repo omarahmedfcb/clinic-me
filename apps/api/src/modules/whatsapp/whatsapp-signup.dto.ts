@@ -50,9 +50,11 @@ export class WhatsAppSignupDto {
   @Matches(/^\d{5,32}$/)
   wabaId!: string;
 
+  // Absent for a number moved over from the WhatsApp Business app: Meta's event names only the WABA.
+  @IsOptional()
   @IsString()
   @Matches(/^\d{5,32}$/)
-  phoneNumberId!: string;
+  phoneNumberId?: string;
 
   @IsOptional()
   @IsString()

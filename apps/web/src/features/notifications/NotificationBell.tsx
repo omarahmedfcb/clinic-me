@@ -7,6 +7,7 @@ import { useSession } from "../auth/session.tsx";
 import { setSoundEnabled, soundEnabled } from "./sound-preference.ts";
 import { notificationSound } from "./sound.ts";
 import { NOTIFICATION_POLL_MS } from "../../lib/polling.ts";
+import { Bell, Volume2, VolumeX } from "lucide-react";
 
 /**
  * The notification bell: an unread count, a dropdown of recent items, and mark-as-read.
@@ -41,7 +42,8 @@ interface NotificationItem {
     | "APPOINTMENT_BOOKED"
     | "APPOINTMENT_CANCELLED"
     | "APPOINTMENT_RESCHEDULED"
-    | "COMPLAINT_RECEIVED";
+    | "COMPLAINT_RECEIVED"
+    | "HANDOFF_REQUESTED";
   occurredAt: string;
   source: string;
   payload: {
@@ -50,8 +52,16 @@ interface NotificationItem {
     from?: string;
     reason?: string | null;
     referenceNumber?: string;
+    phone?: string;
   };
   read: boolean;
+}
+
+/** A WhatsApp chat the assistant is paused on, because a person has it. */
+interface PausedChat {
+  conversationId: string;
+  phone: string;
+  pausedUntil: string;
 }
 
 const POLL_MS = NOTIFICATION_POLL_MS;
@@ -66,6 +76,7 @@ export function NotificationBell() {
   const [loading, setLoading] = useState(false);
   const [sound, setSound] = useState(() => soundEnabled(window.localStorage));
   const [audioBlocked, setAudioBlocked] = useState(false);
+  const [paused, setPaused] = useState<PausedChat[]>([]);
   const panel = useRef<HTMLDivElement>(null);
   /** The previous count, so a rise can be told from a first load or a mark-as-read. */
   const firstPoll = useRef(true);
@@ -141,10 +152,18 @@ export function NotificationBell() {
 
     setLoading(true);
     try {
-      const response = await authFetch("/api/notifications");
+      const [response, pausedResponse] = await Promise.all([
+        authFetch("/api/notifications"),
+        // Chats the assistant is paused on. A failure here only hides that section.
+        authFetch("/api/whatsapp/handoffs").catch(() => null),
+      ]);
       if (response.ok)
         setItems(
           ((await response.json()) as { items: NotificationItem[] }).items,
+        );
+      if (pausedResponse?.ok)
+        setPaused(
+          ((await pausedResponse.json()) as { items: PausedChat[] }).items,
         );
     } finally {
       setLoading(false);
@@ -166,6 +185,28 @@ export function NotificationBell() {
     await refreshCount();
   }
 
+  async function resumeBot(conversationId: string): Promise<void> {
+    const response = await authFetch(
+      `/api/whatsapp/handoffs/${conversationId}/resume`,
+      { method: "POST" },
+    );
+    if (response.ok)
+      setPaused((current) =>
+        current.filter((chat) => chat.conversationId !== conversationId),
+      );
+  }
+  function toggleSound(): void {
+    const next = !sound;
+    setSound(next);
+    setSoundEnabled(window.localStorage, next);
+    if (next) {
+      notificationSound.unlock();
+      void notificationSound.play().then((played) => setAudioBlocked(!played));
+    } else {
+      setAudioBlocked(false);
+    }
+  }
+
   const time = new Intl.DateTimeFormat(intlLocale(locale), {
     timeZone: "Africa/Cairo",
     dateStyle: "short",
@@ -173,49 +214,37 @@ export function NotificationBell() {
     hour12: false,
   });
 
-  return (
-    <div className="relative flex items-center gap-1" ref={panel}>
-      <Button
-        variant="ghost"
-        size="sm"
-        aria-label={
-          sound ? t("notifications.sound.on") : t("notifications.sound.off")
-        }
-        title={
-          sound ? t("notifications.sound.on") : t("notifications.sound.off")
-        }
-        onClick={() => {
-          const next = !sound;
-          setSound(next);
-          setSoundEnabled(window.localStorage, next);
-          if (next) {
-            // Turning sound ON is itself a user gesture -- the best moment to unlock, and to find
-            // out immediately whether the browser will allow it rather than at the next booking.
-            notificationSound.unlock();
-            void notificationSound
-              .play()
-              .then((played) => setAudioBlocked(!played));
-          } else {
-            setAudioBlocked(false);
-          }
-        }}
-      >
-        {sound ? "🔔" : "🔕"}
-      </Button>
+  const clock = new Intl.DateTimeFormat(intlLocale(locale), {
+    timeZone: "Africa/Cairo",
+    timeStyle: "short",
+    hour12: false,
+  });
 
-      <Button variant="ghost" size="sm" onClick={() => void toggle()}>
-        {t("notifications.open")}
+  return (
+    <div className="relative flex items-center" ref={panel}>
+      <button
+        type="button"
+        aria-label={
+          unread > 0
+            ? `${t("notifications.open")} (${unread})`
+            : t("notifications.open")
+        }
+        aria-expanded={open}
+        onClick={() => void toggle()}
+        className="relative inline-flex size-10 items-center justify-center rounded-lg text-ink-muted transition-colors hover:bg-primary-soft hover:text-primary"
+      >
+        <Bell size={22} strokeWidth={1.75} aria-hidden="true" />
         {unread > 0 && (
-          <span className="ms-2 rounded-full bg-danger px-1.5 py-0.5 text-[11px] text-white">
-            {unread}
+          <span className="numeric absolute -top-0.5 -inset-e-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[11px] font-medium text-white">
+            {unread > 99 ? "99+" : unread}
           </span>
         )}
-      </Button>
+      </button>
 
       {audioBlocked && (
         <div
           role="alert"
-          className="absolute end-0 top-full z-30 mt-1 w-72 rounded-lg border border-border bg-warning-soft px-3 py-2 text-xs text-warning"
+          className="absolute inset-e-0 top-full z-30 mt-1 w-[min(18rem,calc(100vw-1.5rem))] rounded-lg border border-border bg-warning-soft px-3 py-2 text-xs text-warning"
         >
           {t("notifications.sound.blocked")}
           <button
@@ -240,7 +269,7 @@ export function NotificationBell() {
           build on a physical side, and a dropdown is exactly where a hardcoded one goes unnoticed:
           it is accidentally correct in whichever language it was written in.
         */
-        <div className="absolute end-0 top-full z-20 mt-2 w-80 rounded-xl border border-border bg-surface shadow-lg">
+        <div className="absolute inset-e-0 top-full z-20 mt-2 w-[min(20rem,calc(100vw-1.5rem))] rounded-xl border border-border bg-surface shadow-lg">
           <div className="flex items-center justify-between border-b border-border px-3 py-2">
             <span className="text-sm font-semibold">
               {t("notifications.title")}
@@ -256,6 +285,60 @@ export function NotificationBell() {
             )}
           </div>
 
+          <button
+            type="button"
+            role="switch"
+            aria-checked={sound}
+            onClick={toggleSound}
+            className="flex w-full items-center gap-2 border-b border-border px-3 py-2 text-sm text-ink-muted hover:bg-surface-sunken"
+          >
+            {sound ? (
+              <Volume2
+                size={16}
+                aria-hidden="true"
+                className="shrink-0 text-primary"
+              />
+            ) : (
+              <VolumeX size={16} aria-hidden="true" className="shrink-0" />
+            )}
+            {sound ? t("notifications.sound.on") : t("notifications.sound.off")}
+          </button>
+
+          {paused.length > 0 && (
+            <div className="border-b border-border">
+              <p className="px-3 pt-2 text-xs font-semibold text-ink-muted">
+                {t("notifications.handoff.title")}
+              </p>
+              <ul>
+                {paused.map((chat) => (
+                  <li
+                    key={chat.conversationId}
+                    className="flex items-center gap-2 px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p
+                        dir="ltr"
+                        className="truncate text-start text-sm text-ink"
+                      >
+                        {chat.phone}
+                      </p>
+                      <p className="text-[11px] text-ink-muted">
+                        {t("notifications.handoff.until")}{" "}
+                        {clock.format(new Date(chat.pausedUntil))}
+                      </p>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void resumeBot(chat.conversationId)}
+                    >
+                      {t("notifications.handoff.resume")}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <ul className="max-h-96 overflow-y-auto">
             {loading && <li className="px-3 py-4 text-sm text-ink-muted">…</li>}
 
@@ -290,7 +373,7 @@ export function NotificationBell() {
                 </div>
 
                 <p className="mt-0.5 text-sm text-ink-subtle">
-                  {item.payload.patientName ?? ""}
+                  {item.payload.patientName ?? item.payload.phone ?? ""}
                   {item.payload.start !== undefined &&
                     ` · ${time.format(new Date(item.payload.start))}`}
                   {item.payload.referenceNumber !== undefined &&

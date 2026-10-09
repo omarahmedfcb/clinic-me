@@ -327,6 +327,7 @@ enum NotificationKind {
   TRANSFER_LAPSED
   /// A patient filed a complaint over WhatsApp. Owner and admin only.
   COMPLAINT_RECEIVED
+  HANDOFF_REQUESTED
 }
 
 enum AttachmentCategory {
@@ -1523,6 +1524,15 @@ model WhatsAppConnection {
   verifiedName       String?  @map("verified_name")
   /// ACTIVE | TOKEN_INVALID | DISCONNECTED, by a CHECK.
   status             String   @default("ACTIVE")
+  /// NEW_NUMBER | COEXISTENCE, by a CHECK. COEXISTENCE: the clinic keeps using the number in the
+  /// WhatsApp Business app next to the bot, so a human can answer on it (handoff is possible).
+  numberMode         String    @default("NEW_NUMBER") @map("number_mode")
+  /// Why `status` left ACTIVE: a Meta account_update event name, or INVALID_TOKEN. Null while ACTIVE.
+  disconnectReason   String?   @map("disconnect_reason")
+  statusChangedAt    DateTime? @map("status_changed_at") @db.Timestamptz(6)
+  /// When Meta accepted both 24-hour onboarding syncs (contacts, history). COEXISTENCE only.
+  syncRequestedAt    DateTime? @map("sync_requested_at") @db.Timestamptz(6)
+
   accessTokenEnc     String   @map("access_token_enc")
   botCredentialId    String   @map("bot_credential_id") @db.Uuid
   botSecretEnc       String   @map("bot_secret_enc")
@@ -1786,6 +1796,13 @@ model Conversation {
   /// idle-session boundary that decides when the welcome message reappears (whatsapp-flow.ts's
   /// `WELCOME_IDLE_GAP_MS`).
   flowState              Json?              @map("flow_state")
+  /// While this is in the future the bot stays silent on this conversation: a human has it, either
+  /// because the patient asked for one or because staff replied from the WhatsApp Business app.
+  /// It simply lapses (4 hours, whatsapp-handoff.ts) unless staff hand the chat back sooner.
+  botPausedUntil         DateTime?          @map("bot_paused_until") @db.Timestamptz(6)
+  /// PATIENT_REQUEST | STAFF_REPLY, by a CHECK.
+  botPausedReason        String?            @map("bot_paused_reason")
+
   createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
 

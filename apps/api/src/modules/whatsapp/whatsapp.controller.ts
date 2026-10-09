@@ -17,6 +17,8 @@ import { checkSpamLimit, debounceMessage, SPAM_LIMIT_REPLY } from "./whatsapp-th
 import { sendWhatsAppText } from "./whatsapp-graph-client.ts";
 import { ResolvedWhatsAppTenant, resolveTenantByPhoneNumberId, type WhatsAppTenant } from "./whatsapp-tenants.ts";
 import { handleInboundWhatsAppMessage } from "./whatsapp-orchestrator.ts";
+import { handleStaffEchoes } from "./whatsapp-handoff.ts";
+import { setConnectionStatus, tenantsByWaba } from "./whatsapp-connections.ts";
 
 @Controller("webhooks/whatsapp")
 export class WhatsAppWebhookController {
@@ -71,6 +73,21 @@ export class WhatsAppWebhookController {
     for (const entry of payload.entry ?? []) {
       for (const change of entry.changes ?? []) {
         const value = change.value;
+
+        // Coexistence adds four webhook fields next to `messages`. None of them is a patient writing.
+        if (change.field === "smb_message_echoes") {
+          await handleStaffEchoes(value?.metadata?.phone_number_id ?? "", value?.message_echoes ?? []);
+          continue;
+        }
+        if (change.field === "history" || change.field === "smb_app_state_sync") {
+          this.acknowledgeSync(change.field, value?.history);
+          continue;
+        }
+        if (change.field === "account_update") {
+          await this.handleAccountUpdate(entry.id ?? value?.waba_info?.waba_id, value?.event);
+          continue;
+        }
+
         const phoneNumberId = value?.metadata?.phone_number_id;
         const messages = value?.messages;
         // Absent or empty `messages` is a delivery-status callback (sent/delivered/read/failed for
@@ -89,6 +106,35 @@ export class WhatsAppWebhookController {
       }
     }
   }
+
+  /**
+ * Contacts and chat history, pushed by Meta after a coexistence onboarding. We asked for them only
+ * because Meta requires it (whatsapp-coexistence.ts); the data is dropped on purpose. A clinic
+ * that declines to share history gets error 2593109, which is an answer, not a fault.
+ */
+  private acknowledgeSync(field: string, history: Array<{ metadata?: { progress?: number }; errors?: Array<{ code?: number }> }> | undefined): void {
+    for (const chunk of history ?? []) {
+      if (chunk.errors?.some((error) => error.code === 2593109)) {
+        console.info("WhatsApp coexistence: the clinic chose not to share chat history");
+      } else if (chunk.metadata?.progress === 100) {
+        console.info(`WhatsApp coexistence: ${field} sync finished (not stored)`);
+      }
+    }
+  }
+
+  /**
+   * Meta telling us the clinic removed our app, or the number was offboarded -- for coexistence that
+   * includes the Business app phone going unused for about 14 days. The bot can no longer send, so
+   * the connection is flagged and the owner sees a reconnect banner instead of a bot that went quiet.
+   */
+  private async handleAccountUpdate(wabaId: string | undefined, event: string | undefined): Promise<void> {
+    if (!wabaId || (event !== "PARTNER_REMOVED" && event !== "ACCOUNT_OFFBOARDED")) return;
+    for (const connection of await tenantsByWaba(wabaId)) {
+      await setConnectionStatus(connection.tenantId, "DISCONNECTED", event);
+    }
+  }
+
+
 
   private async handleOneMessage(tenant: ResolvedWhatsAppTenant, message: MetaInboundMessage): Promise<void> {
     // Text and tapped interactive replies (buttons, list rows) are acted on; anything else (image,

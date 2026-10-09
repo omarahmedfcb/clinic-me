@@ -3,6 +3,7 @@ import "dotenv/config";
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import cookieParser from "cookie-parser";
+import { json } from "express";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "./app.module.ts";
 import { assertTimezoneDataAvailable } from "./common/timezone-support.ts";
@@ -50,6 +51,23 @@ async function bootstrap(): Promise<void> {
   // (a reordered key, different whitespace) -- indistinguishable from a forged request if that
   // happened, which is exactly the failure mode a signature check exists to rule out.
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
+
+  /**
+ * Meta's coexistence history webhook can carry thousands of messages in one delivery, far past the
+ * 100 kB default of the JSON parser. A 413 there is a failed delivery Meta retries and eventually
+ * counts against the webhook, so this one route parses a large body -- registered before Nest's own
+ * parser, which skips a body that is already parsed -- while every other route keeps the default.
+ * `rawBody` is kept by hand here because the signature is checked against the exact bytes.
+ */
+  app.use(
+    "/webhooks/whatsapp",
+    json({
+      limit: "25mb",
+      verify: (request, _response, buffer) => {
+        (request as { rawBody?: Buffer }).rawBody = buffer;
+      },
+    }),
+  );
 
   /**
    * TRUST_PROXY is a correctness setting, not a deployment convenience.

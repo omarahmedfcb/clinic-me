@@ -42,7 +42,8 @@ export interface NotificationItem {
 export interface NotificationInput {
   kind: NotificationKind;
   appointmentId: string | null;
-  patientId: string;
+  /** Null for a notification about a chat, not a patient (a handoff request from a number we have no record of). */
+  patientId: string | null;
   source: string;
   occurredAt: Date;
   payload: Record<string, unknown>;

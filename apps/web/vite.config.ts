@@ -52,7 +52,7 @@ const DEV_HTTPS = process.argv.includes("--host");
  * long-running dev API instead, because the port answered and the proxy could not be told
  * otherwise. Defaults to 3000, so nothing changes for anyone not setting it.
  */
-const API_TARGET = process.env["VITE_API_TARGET"] ?? "http://localhost:3000";
+const API_TARGET = process.env["VITE_API_TARGET"] ?? "https://api.nomed-os.com";
 
 const API_PROXY = {
   "/api": {

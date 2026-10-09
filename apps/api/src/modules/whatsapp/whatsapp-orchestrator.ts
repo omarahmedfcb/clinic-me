@@ -15,6 +15,8 @@ import { clearAiChain, ingestInboundMessage, recordOutboundMessage } from "./wha
 import { sendWhatsAppButtons, sendWhatsAppList, sendWhatsAppText } from "./whatsapp-graph-client.ts";
 import { runFlow, WELCOME_IDLE_GAP_MS, type FlowOutgoing, type FlowState } from "./whatsapp-flow.ts";
 import { ResolvedWhatsAppTenant } from "./whatsapp-tenants.ts";
+import { handleHumanRequest, wantsHuman } from "./whatsapp-handoff.ts";
+import { noteSendFailure } from "./whatsapp-connections.ts";
 
 const FALLBACK_REPLY =
   "معذرة، حدث خطأ أثناء إتمام طلبك. من فضلك حاول مرة أخرى.\n" +
@@ -91,6 +93,21 @@ export async function handleInboundWhatsAppMessage(input: InboundWhatsAppMessage
   }
 
   if (ingest.alreadyProcessed) return;
+  // A person has this chat (the patient asked for one, or staff replied from the Business app): the
+  // message is logged above and the bot says nothing. The pause lapses by itself, or staff hand it back.
+  if (ingest.botPausedUntil !== null && ingest.botPausedUntil.getTime() > Date.now()) return;
+
+  if (input.input.kind === "text" && wantsHuman(input.input.text, ingest.flowState as FlowState | null)) {
+    await handleHumanRequest({
+      tenant,
+      waId: input.waId,
+      conversationId: ingest.conversationId,
+      contactId: ingest.contactId,
+      text: input.input.text,
+    });
+    return;
+  }
+
 
   let outgoing: FlowOutgoing;
   let nextState: FlowState | null;
@@ -138,5 +155,8 @@ export async function handleInboundWhatsAppMessage(input: InboundWhatsAppMessage
     // Surfacing it here rather than swallowing it silently is what makes it visible in the same
     // place every other unattended-job failure in this codebase is expected to show up: the logs.
     console.error("WhatsApp: failed to send or record reply", error);
+    // A token Meta no longer accepts is the connection's problem, not this message's: flag it so the
+    // clinic owner is told, instead of every later reply failing the same way in the logs.
+    await noteSendFailure(tenant.id, error);
   }
 }

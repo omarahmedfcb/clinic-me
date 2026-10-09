@@ -23,6 +23,36 @@ function accessToken(clinicToken?: string): string {
 }
 
 /**
+ * A failed send, with Meta's own error code kept. Code 190 is "this access token is no longer valid"
+ * (expired, revoked, or the clinic removed our app) -- the one failure that is the connection's fault
+ * and not the message's, which is what lets the caller flag the connection instead of just logging.
+ * The message text is unchanged, so anything matching on it keeps working.
+ */
+export class WhatsAppSendError extends Error {
+  constructor(
+    readonly httpStatus: number,
+    readonly metaCode: number | null,
+    message: string,
+  ) {
+    super(message);
+  }
+
+  get tokenInvalid(): boolean {
+    return this.metaCode === 190;
+  }
+}
+
+function sendError(label: string, httpStatus: number, body: string): WhatsAppSendError {
+  let metaCode: number | null = null;
+  try {
+    metaCode = (JSON.parse(body) as { error?: { code?: number } }).error?.code ?? null;
+  } catch {
+    // Not JSON: leave the code unknown.
+  }
+  return new WhatsAppSendError(httpStatus, metaCode, `${label}: ${httpStatus} ${body}`);
+}
+
+/**
  * Sends a plain-text reply. `phoneNumberId` is the clinic's own Meta phone number id (the same
  * value stored in `tenants.whatsapp_phone_number_id` and used to resolve the tenant on the way in),
  * never a value the model or the patient supplies.
@@ -51,7 +81,7 @@ export async function sendWhatsAppText(
 
   if (!response.ok) {
     const errorBody = await response.text();
-    throw new Error(`WhatsApp send failed: ${response.status} ${errorBody}`);
+    throw sendError("WhatsApp send failed", response.status, errorBody);
   }
 
   const data = (await response.json()) as { messages?: Array<{ id: string }> };
@@ -110,7 +140,7 @@ export async function sendWhatsAppButtons(
 
   if (!response.ok) {
     const errorBody = await response.text();
-    throw new Error(`WhatsApp interactive-button send failed: ${response.status} ${errorBody}`);
+    throw sendError("WhatsApp interactive-button send failed", response.status, errorBody);
   }
 
   const data = (await response.json()) as { messages?: Array<{ id: string }> };
@@ -191,7 +221,7 @@ export async function sendWhatsAppList(
 
   if (!response.ok) {
     const errorBody = await response.text();
-    throw new Error(`WhatsApp interactive-list send failed: ${response.status} ${errorBody}`);
+    throw sendError("WhatsApp interactive-list send failed", response.status, errorBody);
   }
 
   const data = (await response.json()) as { messages?: Array<{ id: string }> };

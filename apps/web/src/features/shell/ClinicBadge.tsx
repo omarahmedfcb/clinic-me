@@ -36,12 +36,15 @@ export function ClinicBadge({
   const { t } = useLocale();
 
   return (
-    <div className="flex min-w-0 items-center gap-3" data-testid="clinic-badge">
+    <div
+      className="flex min-w-0 items-center gap-2 sm:gap-3"
+      data-testid="clinic-badge"
+    >
       {logoUrl === null ? (
         <span
           aria-hidden="true"
           data-testid="clinic-initials"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-white"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary sm:h-10 sm:w-10 text-sm font-semibold text-white"
         >
           {clinicInitials(clinicName)}
         </span>
@@ -54,7 +57,7 @@ export function ClinicBadge({
           aria-hidden="true"
           data-testid="clinic-logo"
           title={clinicName}
-          className="h-10 w-10 shrink-0 rounded-full border border-border bg-surface object-contain p-0.5"
+          className="h-9 w-9 sm:h-10 sm:w-10 shrink-0 rounded-full border border-border bg-surface object-contain p-0.5"
         />
       )}
 
@@ -63,7 +66,10 @@ export function ClinicBadge({
           The page's heading. `h1` and not a styled `<p>`: it is the primary heading of every screen
           in the shell, and the one thing that must visibly change when the clinic switches.
         */}
-        <h1 className="truncate text-xl font-semibold text-ink" data-testid="clinic-name">
+        <h1
+          className="truncate text-base font-semibold text-ink sm:text-xl"
+          data-testid="clinic-name"
+        >
           {clinicName}
         </h1>
 
@@ -78,7 +84,7 @@ export function ClinicBadge({
           data-testid="account-menu"
           aria-label={t("shell.accountMenu")}
           onClick={onAccount}
-          className="truncate text-xs text-ink-muted underline decoration-border-strong underline-offset-2 hover:decoration-ink"
+          className="block max-w-full truncate text-xs text-ink-muted underline decoration-border-strong underline-offset-2 hover:decoration-ink"
         >
           {userName} · {roleText} · {t("shell.myProfile")}
         </button>

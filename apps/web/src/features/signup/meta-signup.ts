@@ -21,7 +21,9 @@ declare global {
 export interface EmbeddedSignupResult {
   code: string;
   wabaId: string;
-  phoneNumberId: string;
+  /** Absent for a number moved over from the WhatsApp Business app: Meta's completion event for that
+ *  flow names the WABA only, and the server finds the number itself. */
+  phoneNumberId?: string;
   businessId?: string;
   /** A number moved over from the WhatsApp Business app is already registered for Cloud API. */
   skipRegistration: boolean;
@@ -52,7 +54,16 @@ export function loadFacebookSdk(appId: string, version: string): Promise<Faceboo
   return sdkReady;
 }
 
-export function launchEmbeddedSignup(fb: FacebookSdk, configId: string): Promise<EmbeddedSignupOutcome> {
+/**
+ * `existingNumber` opens Meta's "connect your existing WhatsApp Business app number" flow
+ * (coexistence): the clinic scans a QR code from the Business app and keeps using the number there.
+ * Without it Meta runs the default flow, which registers a brand-new number.
+ */
+export function launchEmbeddedSignup(
+  fb: FacebookSdk,
+  configId: string,
+  options: { existingNumber?: boolean } = {},
+): Promise<EmbeddedSignupOutcome> {
   return new Promise((resolve) => {
     let code: string | undefined;
     let assets: Omit<EmbeddedSignupResult, "code"> | undefined;
@@ -79,12 +90,15 @@ export function launchEmbeddedSignup(fb: FacebookSdk, configId: string): Promise
 
         const wabaId = data.data?.waba_id ?? data.data?.waba_ids?.[0];
         const phoneNumberId = data.data?.phone_number_id;
-        if (typeof wabaId !== "string" || typeof phoneNumberId !== "string") return;
+        const coexistence = data.event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING";
+        if (typeof wabaId !== "string") return;
+        // The coexistence completion event carries no phone_number_id; any other flow must have one.
+        if (typeof phoneNumberId !== "string" && !coexistence) return;
         assets = {
           wabaId,
-          phoneNumberId,
+          ...(typeof phoneNumberId === "string" ? { phoneNumberId } : {}),
           businessId: typeof data.data?.business_id === "string" ? data.data.business_id : undefined,
-          skipRegistration: data.event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING",
+          skipRegistration: coexistence,
         };
         tryFinish();
       } catch {
@@ -100,7 +114,14 @@ export function launchEmbeddedSignup(fb: FacebookSdk, configId: string): Promise
         code = received;
         tryFinish();
       },
-      { config_id: configId, response_type: "code", override_default_response_type: true, extras: { setup: {} } },
-    );
+      {
+        config_id: configId,
+        response_type: "code",
+        override_default_response_type: true,
+        extras: {
+          setup: {},
+          ...(options.existingNumber ? { featureType: "whatsapp_business_app_onboarding" } : {}),
+        },
+      },);
   });
 }

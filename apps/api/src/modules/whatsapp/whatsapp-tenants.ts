@@ -5,7 +5,7 @@
 import { prisma } from "../../prisma/client.ts";
 import { resolveBotActor, type BotActor } from "../webchat/webchat-clinics.ts";
 import type { BotApiClient } from "./bot-api-client.ts";
-import { resolveWhatsAppAccess } from "./whatsapp-connections.ts";
+import { NumberMode, resolveWhatsAppAccess } from "./whatsapp-connections.ts";
 
 export interface WhatsAppTenant {
   id: string;
@@ -28,6 +28,9 @@ export interface WhatsAppTenant {
 export interface ResolvedWhatsAppTenant extends WhatsAppTenant {
   accessToken: string;
   client: BotApiClient;
+  /** COEXISTENCE: staff can also answer on this number from the Business app, so a human handoff
+ *  has somewhere to go. NEW_NUMBER: nobody can, and the bot says so when asked. */
+  numberMode: NumberMode;
 }
 
 /**
@@ -62,5 +65,6 @@ export async function resolveTenantByPhoneNumberId(phoneNumberId: string): Promi
     bot,
     accessToken: access.accessToken,
     client: access.client,
+    numberMode: access.numberMode
   };
 }

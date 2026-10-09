@@ -22,10 +22,12 @@ import {
   findAuthorizedNumber,
   MetaOnboardingError,
   registerPhoneNumber,
+  resolveAuthorizedNumber,
   subscribeAppToWaba,
 } from "./meta-onboarding.ts";
 import { accessTokenAad, botSecretAad } from "./whatsapp-connections.ts";
 import { buildClinicSlug, randomRegistrationPin } from "./whatsapp-signup-helpers.ts";
+import { runCoexistenceSync } from "./whatsapp-coexistence.ts";
 
 export interface SignupInput {
   clinicName: string;
@@ -39,7 +41,9 @@ export interface SignupInput {
   code: string;
   /** From the `WA_EMBEDDED_SIGNUP` message event: the browser's claim, verified against Meta below. */
   wabaId: string;
-  phoneNumberId: string;
+  /** Absent when the number came from the WhatsApp Business app: Meta's completion event names the
+   *  WABA only, so the server finds the number from the clinic's own token. */
+  phoneNumberId?: string;
   businessId?: string;
   /** True for a number migrated from the WhatsApp Business app (coexistence): already registered. */
   skipRegistration: boolean;
@@ -78,11 +82,11 @@ export async function signUpClinic(input: SignupInput, request: { ip: string; us
   const phoneTaken = await prisma.user.findFirst({ where: { phoneE164: ownerPhone }, select: { id: true } });
   if (phoneTaken !== null) return { ok: false, reason: "OWNER_PHONE_TAKEN" };
 
-  const numberTaken = await prisma.tenant.findFirst({
-    where: { whatsappPhoneNumberId: input.phoneNumberId },
-    select: { id: true },
-  });
-  if (numberTaken !== null) return { ok: false, reason: "NUMBER_ALREADY_CONNECTED" };
+  const isTaken = async (phoneNumberId: string): Promise<boolean> =>
+    (await prisma.tenant.findFirst({ where: { whatsappPhoneNumberId: phoneNumberId }, select: { id: true } })) !== null;
+  if (input.phoneNumberId !== undefined && (await isTaken(input.phoneNumberId))) {
+    return { ok: false, reason: "NUMBER_ALREADY_CONNECTED" };
+  }
 
   const passwordHash = await hashPassword(input.password);
 
@@ -100,7 +104,7 @@ export async function signUpClinic(input: SignupInput, request: { ip: string; us
 
   let number;
   try {
-    number = await findAuthorizedNumber(accessToken, input.wabaId, input.phoneNumberId);
+    number = await resolveAuthorizedNumber(accessToken, input.wabaId, input.phoneNumberId ?? null);
   } catch (error) {
     if (error instanceof MetaOnboardingError) {
       console.warn(`WhatsApp signup: ${error.message}`);
@@ -109,11 +113,19 @@ export async function signUpClinic(input: SignupInput, request: { ip: string; us
     throw error;
   }
   if (number === null) return { ok: false, reason: "META_NUMBER_MISMATCH" };
+  // When the browser named no number, the one found above is only now known to be free.
+  if (await isTaken(number.phoneNumberId)) return { ok: false, reason: "NUMBER_ALREADY_CONNECTED" };
+
+  const numberMode = input.skipRegistration ? "COEXISTENCE" : "NEW_NUMBER";
+  if (input.skipRegistration !== number.isOnBizApp) {
+    // The browser's claim and Meta's record disagree. The claim only picks the flow; log the mismatch.
+    console.warn(`WhatsApp signup: browser said skipRegistration=${input.skipRegistration}, Meta says is_on_biz_app=${number.isOnBizApp}`);
+  }
 
   try {
     await subscribeAppToWaba(accessToken, input.wabaId);
     if (!input.skipRegistration) {
-      await registerPhoneNumber(accessToken, input.phoneNumberId, randomRegistrationPin());
+      await registerPhoneNumber(accessToken, number.phoneNumberId, randomRegistrationPin());
     }
   } catch (error) {
     if (error instanceof MetaOnboardingError) {
@@ -142,7 +154,7 @@ export async function signUpClinic(input: SignupInput, request: { ip: string; us
 
   // Tenant and owner in one unbound transaction, exactly as the platform console's createClinic does.
   await withPlatformActor(system, async (tx) => {
-    await tx.tenant.create({ data: { ...tenantData, whatsappPhoneNumberId: input.phoneNumberId } });
+    await tx.tenant.create({ data: { ...tenantData, whatsappPhoneNumberId: number.phoneNumberId } });
     await tx.user.create({
       data: {
         id: ownerUserId,
@@ -170,7 +182,8 @@ export async function signUpClinic(input: SignupInput, request: { ip: string; us
         data: injected({
           id: uuidv7(),
           wabaId: input.wabaId,
-          phoneNumberId: input.phoneNumberId,
+          phoneNumberId: number.phoneNumberId,
+          numberMode,
           businessId: input.businessId ?? null,
           displayPhoneNumber: number.displayPhoneNumber,
           verifiedName: number.verifiedName,
@@ -191,6 +204,10 @@ export async function signUpClinic(input: SignupInput, request: { ip: string; us
     }).catch((suspendError: unknown) => console.error("WhatsApp signup: could not suspend", suspendError));
     throw error;
   }
+
+  // Meta's 24-hour window for the contactsn and history syncs starts now. Not awaited: the clinic is
+  // already signed up, and a failure here is logged for the operator rather than shown to them.
+  if (numberMode === "COEXISTENCE") void runCoexistenceSync(tenantId, accessToken, number.phoneNumberId);
 
   return { ok: true, tenantId, displayPhoneNumber: number.displayPhoneNumber };
 }

@@ -44,6 +44,8 @@ export interface IngestResult {
    *  side already relies on for idempotency. The caller must not run this message through the bot
    *  a second time. */
   alreadyProcessed: boolean;
+  /** In the future: a human has this chat and the bot must stay silent (whatsapp-handoff.ts). */
+  botPausedUntil: Date | null;
 }
 
 /**
@@ -74,7 +76,7 @@ export async function ingestInboundMessage(
     if (existing !== null) {
       const conversation = await tx.conversation.findFirst({
         where: { id: existing.conversationId },
-        select: { lastAiResponseId: true, flowState: true },
+        select: { lastAiResponseId: true, flowState: true, botPausedUntil: true },
       });
       return {
         conversationId: existing.conversationId,
@@ -83,6 +85,7 @@ export async function ingestInboundMessage(
         flowState: conversation?.flowState ?? null,
         isNewSession: false,
         alreadyProcessed: true,
+        botPausedUntil: conversation?.botPausedUntil ?? null,
       };
     }
 
@@ -95,7 +98,7 @@ export async function ingestInboundMessage(
 
     const existingConversation = await tx.conversation.findFirst({
       where: { contactId: contact.id, status: "OPEN" },
-      select: { id: true, lastAiResponseId: true, flowState: true, lastMessageAt: true },
+      select: { id: true, lastAiResponseId: true, flowState: true, lastMessageAt: true, botPausedUntil: true },
     });
 
     // No prior message ever, or the gap since the last one is past the idle threshold -- either way
@@ -119,7 +122,7 @@ export async function ingestInboundMessage(
           status: "OPEN",
           openedAt: input.occurredAt,
         }),
-        select: { id: true, lastAiResponseId: true, flowState: true, lastMessageAt: true },
+        select: { id: true, lastAiResponseId: true, flowState: true, lastMessageAt: true, botPausedUntil: true },
       }));
 
     await tx.message.create({
@@ -157,6 +160,7 @@ export async function ingestInboundMessage(
       flowState: isNewSession ? null : conversation.flowState,
       isNewSession,
       alreadyProcessed: false,
+      botPausedUntil: conversation.botPausedUntil,
     };
   });
 }

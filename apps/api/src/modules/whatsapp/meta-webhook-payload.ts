@@ -25,11 +25,35 @@ export interface MetaInboundMessage {
   interactive?: MetaInteractiveReply;
 }
 
+/** A message a person sent from the WhatsApp Business app on a coexistence number (`smb_message_echoes`). */
+export interface MetaEchoMessage {
+  id?: string;
+  from?: string;
+  /** The patient's wa_id, digits only. */
+  to?: string;
+  timestamp?: string;
+  type?: string;
+}
+
 export interface MetaWebhookPayload {
   entry?: Array<{
+    /** The WABA id. `account_update` is addressed by it. */
+    id?: string;
     changes?: Array<{
+      /** "messages" | "smb_message_echoes" | "history" | "smb_app_state_sync" | "account_update" | ... */
+      field?: string;
       value?: {
         metadata?: { phone_number_id?: string };
+        /** `smb_message_echoes`. */
+        message_echoes?: MetaEchoMessage[];
+        /** `account_update`: PARTNER_REMOVED, ACCOUNT_OFFBOARDED, ... */
+        event?: string;
+        waba_info?: { waba_id?: string };
+        /** `history`: progress chunks, or an error when the clinic declined to share it. */
+        history?: Array<{
+          metadata?: { phase?: number; chunk_order?: number; progress?: number };
+          errors?: Array<{ code?: number; message?: string }>;
+        }>;
         /** Present on an inbound message; absent on a delivery-status callback (sent/delivered/
          *  read/failed for a message *we* sent) -- the two share this same webhook shape, and a
          *  status callback is simply skipped by the caller checking this is present and non-empty. */

@@ -36,6 +36,19 @@ export const T = {
     pick(lang, "معلش، مفهمتش قصدك. اختار من دول:", "Sorry, I didn't quite catch that. Please choose:"),
   closingAcknowledge: (lang: Lang) =>
     pick(lang, "تحت أمرك في أي وقت 🙏", "Happy to help anytime 🙏"),
+  // -- human handoff -------------------------------------------------------------------------
+  handoffRequested: (lang: Lang) =>
+    pick(
+      lang,
+      "تمام، هحوّلك لحد من فريق العيادة وهيرد عليك في أقرب وقت 🙏",
+      "Sure, I'm passing you to a member of the clinic team. They'll reply as soon as they can 🙏",
+    ),
+  handoffUnavailable: (lang: Lang) =>
+    pick(
+      lang,
+      "معلش، التواصل مع موظف مش متاح على الرقم ده حالياً. أقدر أساعدك في حجز ميعاد أو تسجيل شكوى.",
+      "Sorry, talking to a staff member isn't available on this number right now. I can help you book an appointment or file a complaint.",
+    ),
   // -- identity ------------------------------------------------------------------------------
   identityConfirmSingle: (lang: Lang, name: string, phone: string) =>
     pick(lang, `لقيت الرقم ده مسجل باسم ${name} (${phone}). ده حضرتك؟`, `This number is registered as ${name} (${phone}). Is that you?`),
