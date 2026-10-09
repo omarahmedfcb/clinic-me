@@ -3,7 +3,7 @@ import "dotenv/config";
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import cookieParser from "cookie-parser";
-import { json } from "express";
+import { json, type NextFunction, type Request, type Response } from "express";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "./app.module.ts";
 import { assertTimezoneDataAvailable } from "./common/timezone-support.ts";
@@ -59,14 +59,17 @@ async function bootstrap(): Promise<void> {
  * parser, which skips a body that is already parsed -- while every other route keeps the default.
  * `rawBody` is kept by hand here because the signature is checked against the exact bytes.
  */
-  app.use(
-    "/webhooks/whatsapp",
-    json({
-      limit: "25mb",
-      verify: (request, _response, buffer) => {
-        (request as { rawBody?: Buffer }).rawBody = buffer;
-      },
-    }),
+  const whatsappWebhookJson = json({
+    limit: "25mb",
+    verify: (request, _response, buffer) => {
+      (request as { rawBody?: Buffer }).rawBody = buffer;
+    },
+  });
+  // Wrapped in an arrow function on purpose. Nest skips registering ITS global JSON parser whenever it
+  // finds a middleware literally named `jsonParser` (which is what express's `json()` returns), and
+  // that would leave every other route without a parsed body. The wrapper has no such name.
+  app.use("/webhooks/whatsapp", (request: Request, response: Response, next: NextFunction) =>
+    whatsappWebhookJson(request, response, next),
   );
 
   /**
