@@ -146,11 +146,11 @@ export function OperatorLogin({ onSignedIn }: { onSignedIn: (name: string) => vo
                 with wrong error-correction bytes still looks exactly like a right one.
               */}
               <div
-                className="mx-auto mt-3 w-44 rounded bg-white p-2"
+                className="mx-auto mt-3 w-64 max-w-full rounded bg-white p-2 [&>svg]:h-auto [&>svg]:w-full"
                 data-testid="totp-qr"
                 // The SVG is generated from the URI on this machine and contains no markup from it:
                 // `qrSvg` emits a fixed shape whose only variable is a path of rectangles.
-                dangerouslySetInnerHTML={{ __html: qrSvg(step.otpauthUri, { scale: 4 }) }}
+                dangerouslySetInnerHTML={{ __html: qrSvg(step.otpauthUri, { scale: 6 }) }}
               />
 
               <p className="mt-3 text-xs text-ink-muted">{t("platform.totp.manualKey")}</p>

@@ -128,9 +128,9 @@ describe("the printed sheets", () => {
     renderSheets();
     await screen.findAllByText("عيادة النيل");
     const root = screen.getByTestId("print-root");
-    // Q45: the patient has no English name, so the sheet prints the transliteration search already
-    // maintains -- upper-cased, because it is a search key rather than a display name.
-    expect(root.textContent).toContain("MARYAM HASSAN");
+    // The patient has no English name, so the sheet prints the Arabic name as stored, never a transliteration.
+    expect(root.textContent).toContain("مريم حسن");
+    expect(root.textContent).not.toContain("MARYAM HASSAN");
     expect(root.textContent).toContain("+201000000000");
     expect(root.textContent).toContain("د. سارة منصور");
     expect(root.textContent).toContain("12345");

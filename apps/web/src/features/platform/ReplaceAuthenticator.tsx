@@ -96,10 +96,10 @@ export function ReplaceAuthenticator({
         <div className="flex flex-col gap-3">
           <p className="text-sm text-ink">{t("recovery.replaceScan")}</p>
           <div
-            className="mx-auto w-44 rounded bg-white p-2"
+            className="mx-auto w-64 max-w-full rounded bg-white p-2 [&>svg]:h-auto [&>svg]:w-full"
             data-testid="replace-qr"
             // Generated on this machine from the URI; `qrSvg` emits a fixed shape of rectangles.
-            dangerouslySetInnerHTML={{ __html: qrSvg(step.otpauthUri, { scale: 4 }) }}
+            dangerouslySetInnerHTML={{ __html: qrSvg(step.otpauthUri, { scale: 6 }) }}
           />
           <p className="numeric select-all break-all rounded bg-surface-sunken px-2 py-1 text-sm" data-testid="replace-secret">
             {step.secretBase32}

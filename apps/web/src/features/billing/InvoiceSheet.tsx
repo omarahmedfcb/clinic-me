@@ -37,6 +37,7 @@ export function InvoiceSheet({
 }) {
   const [clinic, setClinic] = useState<ClinicIdentity | null>(null);
   const [logo, setLogo] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,6 +52,7 @@ export function InvoiceSheet({
       }
       setClinic(identity);
       setLogo(url);
+      setReady(true);
     })();
     return () => {
       cancelled = true;
@@ -59,6 +61,22 @@ export function InvoiceSheet({
   }, [authFetch]);
 
   const host = usePrintHost(onClose);
+
+  // The button only mounts this sheet, so the sheet opens the print dialog itself once the letterhead
+  // has loaded, and closes afterwards. Two frames: it has to be laid out before the dialog snapshots it.
+  const printed = useRef(false);
+  useEffect(() => {
+    if (!ready || host === null || printed.current) return;
+    printed.current = true;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        window.print();
+        onClose();
+      }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, host]);
+
   if (host === null) return null;
 
   return createPortal(

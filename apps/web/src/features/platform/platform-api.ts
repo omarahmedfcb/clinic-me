@@ -51,6 +51,8 @@ export interface NewClinicInput {
   phone: string;
   adminFullName: string;
   adminPhone: string;
+  /** Printed on the clinic's documents when present. Left out of the request when blank. */
+  nameEn?: string;
 }
 
 export interface Operator {
@@ -310,6 +312,63 @@ export const createClinic = (
   input: NewClinicInput,
 ): Promise<{ ok: true; tenantId: string; adminUserId: string; temporaryPassword: string } | Refused> =>
   post("/platform/clinics", input);
+
+export type CreateWithWhatsAppFailure =
+  | "INVALID_PHONE"
+  | "OWNER_PHONE_TAKEN"
+  | "SLUG_TAKEN"
+  | "NUMBER_ALREADY_CONNECTED"
+  | "META_CODE_REJECTED"
+  | "META_NUMBER_MISMATCH"
+  | "META_SETUP_FAILED"
+  | "INVALID_FIELD"
+  | "UNKNOWN";
+
+/** The clinic's details plus what Meta's popup handed back; the server verifies the Meta half. */
+export interface CreateWithWhatsAppPayload {
+  clinicName: string;
+  clinicNameEn?: string;
+  slug: string;
+  timezone: string;
+  country: "EG" | "SA" | "AE";
+  currency: string;
+  address: string;
+  clinicPhone: string;
+  ownerFullName: string;
+  ownerPhone: string;
+  code: string;
+  wabaId: string;
+  phoneNumberId?: string;
+  businessId?: string;
+  skipRegistration: boolean;
+}
+
+export async function createClinicWithWhatsApp(
+  payload: CreateWithWhatsAppPayload,
+): Promise<
+  | { ok: true; tenantId: string; adminUserId: string; temporaryPassword: string; displayPhoneNumber: string | null }
+  | { ok: false; failure: CreateWithWhatsAppFailure }
+> {
+  const response = await send("/platform/clinics/whatsapp", { method: "POST", body: JSON.stringify(payload) });
+  if (response.ok) {
+    const data = (await response.json()) as {
+      tenantId: string;
+      adminUserId: string;
+      temporaryPassword: string;
+      displayPhoneNumber: string | null;
+    };
+    return { ok: true, ...data };
+  }
+
+  const body = (await response.json().catch(() => ({}))) as { reason?: string; code?: string };
+  const known: CreateWithWhatsAppFailure[] = [
+    "INVALID_PHONE", "OWNER_PHONE_TAKEN", "SLUG_TAKEN", "NUMBER_ALREADY_CONNECTED",
+    "META_CODE_REJECTED", "META_NUMBER_MISMATCH", "META_SETUP_FAILED",
+  ];
+  const reason = known.find((value) => value === body.reason);
+  if (reason) return { ok: false, failure: reason };
+  return { ok: false, failure: body.code === "INVALID_FIELD" ? "INVALID_FIELD" : "UNKNOWN" };
+}
 
 export const setSuspension = (
   tenantId: string,

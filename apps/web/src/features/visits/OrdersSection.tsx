@@ -3,6 +3,8 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "../../design-system/Button.tsx";
+import { DrugNameField } from "./DrugNameField.tsx";
+import { PrintSheetButton } from "./PrintSheetButton.tsx";
 import { TextInput, Textarea } from "../../design-system/fields.tsx";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import {
@@ -10,7 +12,6 @@ import {
   loadPrescription,
   saveInvestigations,
   savePrescription,
-  suggestMedications,
   type InvestigationLine,
   type PrescriptionLine,
 } from "./draft-api.ts";
@@ -65,6 +66,12 @@ export function InvestigationsSection({ authFetch, appointmentId, visitId }: Pro
     if (value !== null) setItems(value.items);
   }
 
+  // What is on the screen is what prints: unsaved rows are saved first.
+  async function saveFirst(): Promise<boolean> {
+    await save();
+    return true;
+  }
+
   return (
     <section className="grid gap-3 rounded-lg border border-border p-3">
       <h2 className="text-sm font-semibold text-ink">{t("investigations.title")}</h2>
@@ -108,13 +115,14 @@ export function InvestigationsSection({ authFetch, appointmentId, visitId }: Pro
         onChange={(event) => setFreeText(event.target.value)}
       />
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="secondary" onClick={() => setItems([...items, { ...EMPTY_INVESTIGATION }])}>
           {t("investigations.add")}
         </Button>
         <Button size="sm" loading={saving} onClick={() => void save()}>
           {t("profile.add")}
         </Button>
+        <PrintSheetButton kind="investigations" onBeforePrint={saveFirst} />
       </div>
     </section>
   );
@@ -125,7 +133,6 @@ export function PrescriptionSection({ authFetch, appointmentId, visitId }: Props
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<PrescriptionLine[]>([]);
   const [saving, setSaving] = useState(false);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -150,6 +157,12 @@ export function PrescriptionSection({ authFetch, appointmentId, visitId }: Props
     if (value !== null) setItems(value.items);
   }
 
+  // What is on the screen is what prints: unsaved rows are saved first.
+  async function saveFirst(): Promise<boolean> {
+    await save();
+    return true;
+  }
+
   const setLine = (index: number, patch: Partial<PrescriptionLine>): void =>
     setItems(items.map((row, at) => (at === index ? { ...row, ...patch } : row)));
 
@@ -161,14 +174,12 @@ export function PrescriptionSection({ authFetch, appointmentId, visitId }: Props
 
       {items.map((item, index) => (
         <div key={index} className="grid gap-2 sm:grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_auto] sm:items-end">
-          <TextInput
+          <DrugNameField
             label={t("prescription.medication")}
-            list="medication-suggestions"
             value={item.medicationName}
-            onChange={(event) => {
-              setLine(index, { medicationName: event.target.value });
-              void suggestMedications(authFetch, appointmentId, event.target.value).then(setSuggestions);
-            }}
+            authFetch={authFetch}
+            appointmentId={appointmentId}
+            onChange={(name) => setLine(index, { medicationName: name })}
           />
           {/* Q45: strength and form identify the product, quantity is what the pharmacist
               dispenses. Null rather than "" when blank, so an untouched field stays absent. */}
@@ -208,14 +219,6 @@ export function PrescriptionSection({ authFetch, appointmentId, visitId }: Props
         </div>
       ))}
 
-      {/* A native datalist: the suggestions are this clinic's own prescribing history and nothing
-          more (Q8), so there is no ranking to build and nothing to look authoritative. */}
-      <datalist id="medication-suggestions" aria-label={t("prescription.suggestions")}>
-        {suggestions.map((name) => (
-          <option key={name} value={name} />
-        ))}
-      </datalist>
-
       <Textarea
         label={t("prescription.notes")}
         rows={2}
@@ -223,13 +226,14 @@ export function PrescriptionSection({ authFetch, appointmentId, visitId }: Props
         onChange={(event) => setNotes(event.target.value)}
       />
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="secondary" onClick={() => setItems([...items, { ...EMPTY_MEDICATION }])}>
           {t("prescription.add")}
         </Button>
         <Button size="sm" loading={saving} onClick={() => void save()}>
           {t("profile.add")}
         </Button>
+        <PrintSheetButton kind="prescription" onBeforePrint={saveFirst} />
       </div>
     </section>
   );

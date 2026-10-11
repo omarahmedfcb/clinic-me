@@ -1,8 +1,8 @@
-import { IsBoolean, IsOptional, IsString, Matches, MaxLength, MinLength } from "class-validator";
+import { IsBoolean, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from "class-validator";
 
 const MAX_FIELD = 200;
 
-/** Everything the signup page sends. The Meta ids are the browser's claim; the service verifies them. */
+/** Everything the console's new-clinic form sends. The Meta ids are the browser's claim; the service verifies them. */
 export class WhatsAppSignupDto {
   @IsString()
   @MinLength(2)
@@ -13,6 +13,23 @@ export class WhatsAppSignupDto {
   @IsString()
   @MaxLength(MAX_FIELD)
   clinicNameEn?: string;
+
+  // Lower-case, digits and hyphens, the same rule as the console's own create-clinic.
+  @IsString()
+  @Matches(/^[a-z0-9]+(-[a-z0-9]+)*$/)
+  @MaxLength(60)
+  slug!: string;
+
+  @IsString()
+  @MaxLength(60)
+  timezone!: string;
+
+  @IsIn(["EG", "SA", "AE"])
+  country!: "EG" | "SA" | "AE";
+
+  @IsString()
+  @Matches(/^[A-Z]{3}$/)
+  currency!: string;
 
   @IsString()
   @MinLength(3)
@@ -33,12 +50,6 @@ export class WhatsAppSignupDto {
   @MinLength(6)
   @MaxLength(30)
   ownerPhone!: string;
-
-  // Same floor as a staff password change (auth.dto.ts).
-  @IsString()
-  @MinLength(12)
-  @MaxLength(MAX_FIELD)
-  password!: string;
 
   @IsString()
   @MinLength(10)

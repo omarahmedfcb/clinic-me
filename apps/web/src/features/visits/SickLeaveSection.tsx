@@ -1,10 +1,11 @@
 // Sick leave on the visit screen — Q46. Days, a start date and an optional note; printed as its
-// own page in the same job as the prescription, in English, on the letterhead.
+// its own sheet with its own print button, in English, on the letterhead.
 
 import { useEffect, useState } from "react";
 import { Button } from "../../design-system/Button.tsx";
 import { TextInput, Textarea } from "../../design-system/fields.tsx";
 import { useLocale } from "../../i18n/locale-context.tsx";
+import { PrintSheetButton } from "./PrintSheetButton.tsx";
 import { loadSickLeave, saveSickLeave, type SickLeave } from "./sick-leave-api.ts";
 
 type AuthFetch = (path: string, init?: RequestInit) => Promise<Response>;
@@ -50,16 +51,17 @@ export function SickLeaveSection({
   const validDays = days.trim() !== "" && Number.isInteger(parsedDays) && parsedDays > 0;
   const ready = validDays && from !== "";
 
-  async function persist(next: { days: number | null; from: string | null; note: string | null }) {
+  async function persist(next: { days: number | null; from: string | null; note: string | null }): Promise<boolean> {
     setBusy(true);
     setFailed(false);
     const saved = await saveSickLeave(authFetch, appointmentId, visitId, next);
     setBusy(false);
     if (saved === null) {
       setFailed(true);
-      return;
+      return false;
     }
     onChange(saved);
+    return true;
   }
 
   return (
@@ -100,7 +102,7 @@ export function SickLeaveSection({
         />
       </div>
 
-      <div className="mt-3 flex gap-2">
+      <div className="mt-3 flex flex-wrap gap-2">
         <Button
           size="sm"
           disabled={!ready}
@@ -128,6 +130,14 @@ export function SickLeaveSection({
         >
           {t("sickLeave.clear")}
         </Button>
+        {/* The certificate on the paper is the one on the screen: it is saved first, then printed. */}
+        <PrintSheetButton
+          kind="sickLeave"
+          disabled={!ready}
+          onBeforePrint={() =>
+            persist({ days: parsedDays, from, note: note.trim() === "" ? null : note.trim() })
+          }
+        />
       </div>
     </section>
   );

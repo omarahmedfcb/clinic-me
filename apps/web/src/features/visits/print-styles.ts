@@ -1,6 +1,8 @@
 // The print stylesheet, as a value so a test can assert it rather than eyeball a sheet. Q9, Q29.
 // Everything outside the sheet is hidden by ONE rule, so a new panel cannot leak onto the paper.
 
+import { SHEET_KINDS } from "./print-sheet-event.ts";
+
 /**
  * Why the hiding rule is an allow-list.
  *
@@ -23,6 +25,11 @@ export const PRINT_STYLESHEET = `
   body > *:not(#print-root) { display: none !important; }
 
   #print-root { display: block !important; }
+
+  /* One button, one sheet: PrintSection marks the body with the sheet being printed. */
+${SHEET_KINDS.map(
+  (kind) => `  body[data-print-sheet="${kind}"] .print-sheet:not([data-sheet="${kind}"]) { display: none !important; }`,
+).join("\n")}
 
   /* One document per sheet. A prescription continuing onto the back of a report is not a document. */
   .print-sheet { page-break-after: always; break-after: page; }

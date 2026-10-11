@@ -27,6 +27,7 @@ import { NO_SICK_LEAVE, type SickLeave } from "./sick-leave-api.ts";
 import { EndVisitSection } from "./EndVisitSection.tsx";
 import { VisitTotalSection } from "./VisitTotalSection.tsx";
 import { PrintSection } from "./PrintSection.tsx";
+import { PrintSheetButton } from "./PrintSheetButton.tsx";
 import type { Vitals } from "../../domain/vitals.ts";
 
 type AuthFetch = (path: string, init?: RequestInit) => Promise<Response>;
@@ -219,6 +220,11 @@ export function VisitDraftScreen({
           />
         ))}
       </form>
+
+      {/* The medical report prints the complaint, diagnosis and plan typed above. */}
+      <div className="mt-3">
+        <PrintSheetButton kind="report" />
+      </div>
 
       {!completed && (state.kind === "failed" || state.kind === "stale") && (
         <div className="mt-4">

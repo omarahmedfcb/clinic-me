@@ -284,6 +284,7 @@ describe("the manifest itself is legible", () => {
       "POST /platform/clinics/:tenantId/contracts",
       "POST /platform/clinics/:tenantId/file",
       "POST /platform/clinics/:tenantId/suspension",
+      "POST /platform/clinics/whatsapp",
       "POST /platform/login",
       "POST /platform/operators",
       "POST /platform/operators/:userId/role",

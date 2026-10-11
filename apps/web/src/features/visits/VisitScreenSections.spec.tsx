@@ -207,14 +207,14 @@ describe("the visit screen after Q21-Q27", () => {
     const print = vi.spyOn(window, "print").mockImplementation(() => undefined);
     renderScreen(authFetch);
 
-    await userEvent.click(await screen.findByTestId("print-button"));
+    await userEvent.click(await screen.findByTestId("print-prescription"));
 
     // Recorded first, because the dialog is modal and its outcome is not observable: a browser
     // reports nothing about whether paper came out, so "the doctor pressed print" is the honest
     // thing this can know.
+    await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
     const recorded = authFetch.mock.calls.find(([path]) => path.includes("/prescription/printed"));
     expect(recorded?.[1]?.method).toBe("POST");
-    expect(print).toHaveBeenCalledTimes(1);
     print.mockRestore();
   });
 

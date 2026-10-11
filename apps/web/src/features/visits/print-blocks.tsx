@@ -15,11 +15,13 @@ import {
 } from "./print-english.ts";
 
 /** A labelled cell. The label is small and grey on screen and prints as plain black text. */
-function Field({ label, value }: { label: string; value: string }) {
+function Field({ label, value, auto }: { label: string; value: string; auto?: boolean }) {
   return (
     <div className="print-line">
       <span className="block text-[10px] uppercase tracking-wide text-neutral-600">{label}</span>
-      <span className="block text-sm">{value === "" ? "—" : value}</span>
+      <span className="block text-sm" {...(auto === true ? { dir: "auto" } : {})}>
+        {value === "" ? "—" : value}
+      </span>
     </div>
   );
 }
@@ -55,7 +57,7 @@ export function Letterhead({ clinic, logo }: { clinic: ClinicIdentity | null; lo
           <p className="text-xs">{clinic.printedWorkingHours}</p>
         )}
       </div>
-      {logo !== null && <img src={logo} alt="" className="h-20 w-auto shrink-0" />}
+      {logo !== null && <img src={logo} alt="" className="max-h-28 max-w-[45mm] w-auto shrink-0 object-contain" />}
     </header>
   );
 }
@@ -68,7 +70,7 @@ export function PatientBlock({ patient }: { patient: PatientHeader }) {
   return (
     <section className="mt-4 grid grid-cols-3 gap-x-6 gap-y-2 border border-neutral-400 p-3">
       <div className="col-span-2">
-        <Field label={EN.name} value={name} />
+        <Field label={EN.name} value={name} auto />
       </div>
       <Field label={EN.fileNo} value={fileReference(patient)} />
       <Field label={EN.dob} value={printedDate(patient.dateOfBirth)} />

@@ -31,6 +31,7 @@ const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 export class CreateClinicDto {
   @IsString() @MinLength(2) @MaxLength(200) name!: string;
+  @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
   @IsString() @Matches(SLUG) @MaxLength(60) slug!: string;
   /** An IANA zone. Never a literal here — `CLAUDE.md` allows `Africa/Cairo` in seed data only. */
   @IsString() @MaxLength(60) timezone!: string;

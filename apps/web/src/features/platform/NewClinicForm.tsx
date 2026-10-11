@@ -1,12 +1,18 @@
 // Creating a clinic and its first admin — 0b. Split out of `PlatformConsole.tsx` when the back
 // office arrived and that file passed the 300-line convention.
 
+import { useState } from "react";
 import { Button } from "../../design-system/Button.tsx";
 import { Card } from "../../design-system/display.tsx";
 import { Select, TextInput } from "../../design-system/fields.tsx";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import type { TranslationKey } from "../../i18n/strings.ts";
+import { cx } from "../../lib/cx.ts";
 import type { NewClinicInput } from "./platform-api.ts";
+
+/** "new": a number nobody has used on WhatsApp. "existing": the clinic's WhatsApp Business app number (coexistence). */
+export type NumberType = "new" | "existing";
+export type NewClinicSubmit = { whatsapp: false } | { whatsapp: true; existingNumber: boolean };
 
 export const BLANK_CLINIC: NewClinicInput = {
   name: "",
@@ -18,6 +24,7 @@ export const BLANK_CLINIC: NewClinicInput = {
   phone: "",
   adminFullName: "",
   adminPhone: "",
+  nameEn: "",
 };
 
 /** The server's rule, spelled once here so the screen can say so before the request is sent. */
@@ -43,10 +50,11 @@ export function NewClinicForm({
   draft: NewClinicInput;
   busy: boolean;
   onChange: (next: NewClinicInput) => void;
-  onSubmit: () => void;
+  onSubmit: (mode: NewClinicSubmit) => void;
   onCancel: () => void;
 }) {
   const { t } = useLocale();
+  const [numberType, setNumberType] = useState<NumberType | null>(null);
   const set = (key: keyof NewClinicInput) => (value: string) => onChange({ ...draft, [key]: value });
   const badSlug = slugProblem(draft.slug);
 
@@ -70,6 +78,14 @@ export function NewClinicForm({
           value={draft.slug}
           data-testid="clinic-slug"
           onChange={(e) => set("slug")(e.target.value)}
+        />
+        <TextInput
+          label={t("platform.clinicNameEn")}
+          hint={t("platform.clinicNameEnHint")}
+          dir="ltr"
+          value={draft.nameEn ?? ""}
+          data-testid="clinic-name-en"
+          onChange={(e) => set("nameEn")(e.target.value)}
         />
         <TextInput label={t("platform.address")} value={draft.address} data-testid="clinic-address" onChange={(e) => set("address")(e.target.value)} />
         <TextInput
@@ -109,9 +125,57 @@ export function NewClinicForm({
           onChange={(e) => set("adminPhone")(e.target.value)}
         />
       </div>
-      <div className="mt-3 flex gap-2">
-        <Button loading={busy} disabled={!ready} data-testid="create-clinic" onClick={onSubmit}>
-          {t("platform.create")}
+
+      <fieldset className="mt-4 flex flex-col gap-2 border-t border-border pt-4" disabled={busy}>
+        <legend className="mb-2 text-sm font-semibold text-ink">{t("signup.numberType.title")}</legend>
+        {(["new", "existing"] as const).map((value) => (
+          <label
+            key={value}
+            className={cx(
+              "flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5",
+              numberType === value ? "border-primary bg-primary-soft/40" : "border-border",
+            )}
+          >
+            <input
+              type="radio"
+              name="number-type"
+              value={value}
+              checked={numberType === value}
+              data-testid={`number-type-${value}`}
+              onChange={() => setNumberType(value)}
+              className="mt-1"
+            />
+            <span>
+              <span className="block text-sm font-medium text-ink">{t(`signup.numberType.${value}.title` as TranslationKey)}</span>
+              <span className="block text-xs text-ink-muted">{t(`signup.numberType.${value}.body` as TranslationKey)}</span>
+            </span>
+          </label>
+        ))}
+        {numberType === "existing" && (
+          <p role="note" className="rounded-lg bg-warning-soft px-3 py-2 text-xs text-warning">
+            {t("signup.numberType.existing.note")}
+          </p>
+        )}
+        <p className="rounded-lg bg-surface-sunken px-3 py-2 text-xs text-ink-muted">{t("signup.whatsapp.note")}</p>
+      </fieldset>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button
+          loading={busy}
+          disabled={!ready || numberType === null}
+          data-testid="create-clinic-whatsapp"
+          onClick={() => onSubmit({ whatsapp: true, existingNumber: numberType === "existing" })}
+        >
+          {t("signup.submit")}
+        </Button>
+        <Button
+          variant="secondary"
+          loading={busy}
+          disabled={!ready}
+          data-testid="create-clinic"
+          onClick={() => onSubmit({ whatsapp: false })}
+        >
+          {t("platform.createWithoutWhatsApp")}
         </Button>
         <Button variant="ghost" onClick={onCancel}>
           {t("common.cancel")}

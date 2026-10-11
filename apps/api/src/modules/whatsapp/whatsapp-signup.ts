@@ -1,6 +1,6 @@
-// Self-serve clinic signup through Meta Embedded Signup. The one place that turns "a clinic finished
-// Meta's form" into: a tenant, its OWNER, a bot credential, and a WhatsApp connection -- the same
-// four things that used to be a console click plus a hand-pasted .env.
+// Clinic creation through Meta Embedded Signup, run by the platform operator from the console. The
+// one place that turns "the clinic finished Meta's form" into: a tenant, its OWNER, a bot credential,
+// and a WhatsApp connection -- the same four things that used to be a console click plus a hand-pasted .env.
 //
 // Order is deliberate. Everything that can be refused locally (phones, a taken number, a missing
 // key, password hashing) happens BEFORE the Meta code is exchanged, because the code lives 30
@@ -12,9 +12,10 @@ import { injected } from "../../prisma/injected.ts";
 import { withPlatformActor, withTenant, type ActorContext } from "../../prisma/with-tenant.ts";
 import { systemActor } from "../audit/system-actor.ts";
 import { hashPassword } from "../auth/password.ts";
-import { loginCountry, normalisePhone } from "../auth/phone.ts";
+import { normalisePhone } from "../auth/phone.ts";
 import { issueBotCredential } from "../bot/bot-credential.service.ts";
-import { newTenantData } from "../platform/new-clinic.ts";
+import { generateTemporaryPassword } from "../memberships/staff.service.ts";
+import { newTenantData, type SupportedCountry } from "../platform/new-clinic.ts";
 import { setClinicSuspension } from "../platform/platform-clinics.ts";
 import { encryptSecret, loadEncryptionKey } from "./connection-crypto.ts";
 import {
@@ -32,11 +33,15 @@ import { runCoexistenceSync } from "./whatsapp-coexistence.ts";
 export interface SignupInput {
   clinicName: string;
   clinicNameEn?: string;
+  /** Typed by the operator, like the console's own form. Absent: built from the English name. */
+  slug?: string;
+  timezone: string;
+  country: SupportedCountry;
+  currency: string;
   address: string;
   clinicPhone: string;
   ownerFullName: string;
   ownerPhone: string;
-  password: string;
   /** From `FB.login`'s authResponse. */
   code: string;
   /** From the `WA_EMBEDDED_SIGNUP` message event: the browser's claim, verified against Meta below. */
@@ -52,27 +57,20 @@ export interface SignupInput {
 export type SignupRefusal =
   | "INVALID_PHONE"
   | "OWNER_PHONE_TAKEN"
+  | "SLUG_TAKEN"
   | "NUMBER_ALREADY_CONNECTED"
   | "META_CODE_REJECTED"
   | "META_NUMBER_MISMATCH"
   | "META_SETUP_FAILED";
 
 export type SignupResult =
-  | { ok: true; tenantId: string; displayPhoneNumber: string | null }
+  | { ok: true; tenantId: string; ownerUserId: string; displayPhoneNumber: string | null; temporaryPassword: string }
   | { ok: false; reason: SignupRefusal };
 
-function requiredEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is not set -- see .env.example.`);
-  return value;
-}
-
 export async function signUpClinic(input: SignupInput, request: { ip: string; userAgent: string }): Promise<SignupResult> {
-  // Configuration, read first so a missing value is a 500 before anything is spent. Timezone and
-  // currency are deployment settings, not literals (CLAUDE.md: no timezone literals in src/).
-  const country = loginCountry();
-  const timezone = requiredEnv("SIGNUP_TIMEZONE");
-  const currency = requiredEnv("SIGNUP_CURRENCY");
+  // Configuration, read first so a missing value is a 500 before anything is spent. Country,
+  // timezone and currency now come from the operator's form, as in the console's own create-clinic.
+  const { country, timezone, currency } = input;
   const key = loadEncryptionKey();
 
   const ownerPhone = normalisePhone(input.ownerPhone, country);
@@ -88,7 +86,14 @@ export async function signUpClinic(input: SignupInput, request: { ip: string; us
     return { ok: false, reason: "NUMBER_ALREADY_CONNECTED" };
   }
 
-  const passwordHash = await hashPassword(input.password);
+  const slug = input.slug ?? buildClinicSlug(input.clinicNameEn);
+  if ((await prisma.tenant.findFirst({ where: { slug }, select: { id: true } })) !== null) {
+    return { ok: false, reason: "SLUG_TAKEN" };
+  }
+
+  // The operator never learns a password the owner chose: a temporary one, replaced at first sign-in.
+  const temporaryPassword = generateTemporaryPassword();
+  const passwordHash = await hashPassword(temporaryPassword);
 
   // ---- Meta -------------------------------------------------------------------------------------
   let accessToken: string;
@@ -139,7 +144,7 @@ export async function signUpClinic(input: SignupInput, request: { ip: string; us
   const tenantData = newTenantData({
     name: input.clinicName,
     nameEn: input.clinicNameEn ?? null,
-    slug: buildClinicSlug(input.clinicNameEn),
+    slug,
     phone: clinicPhone,
     address: input.address,
     timezone,
@@ -161,7 +166,7 @@ export async function signUpClinic(input: SignupInput, request: { ip: string; us
         fullName: input.ownerFullName,
         phoneE164: ownerPhone,
         passwordHash,
-        mustChangePassword: false,
+        mustChangePassword: true,
         status: "ACTIVE",
       },
     });
@@ -200,7 +205,7 @@ export async function signUpClinic(input: SignupInput, request: { ip: string; us
     console.error(`WhatsApp signup: tenant ${tenantId} was created but did not finish`, error);
     await setClinicSuspension(system, tenantId, {
       suspended: true,
-      reason: "Self-serve WhatsApp signup did not finish; needs an operator.",
+      reason: "WhatsApp setup did not finish; needs an operator.",
     }).catch((suspendError: unknown) => console.error("WhatsApp signup: could not suspend", suspendError));
     throw error;
   }
@@ -209,5 +214,5 @@ export async function signUpClinic(input: SignupInput, request: { ip: string; us
   // already signed up, and a failure here is logged for the operator rather than shown to them.
   if (numberMode === "COEXISTENCE") void runCoexistenceSync(tenantId, accessToken, number.phoneNumberId);
 
-  return { ok: true, tenantId, displayPhoneNumber: number.displayPhoneNumber };
+  return { ok: true, tenantId, ownerUserId, displayPhoneNumber: number.displayPhoneNumber, temporaryPassword };
 }

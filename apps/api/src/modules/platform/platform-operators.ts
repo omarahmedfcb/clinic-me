@@ -178,15 +178,19 @@ export async function beginTotpEnrolment(
 ): Promise<OperatorResult<{ secretBase32: string; otpauthUri: string }>> {
   const user = await prisma.user.findFirst({
     where: { id: userId, isPlatformAdmin: true, status: "ACTIVE" },
-    select: { phoneE164: true, totpConfirmedAt: true },
+    select: { phoneE164: true, totpConfirmedAt: true, totpSecret: true },
   });
   if (user === null) return { ok: false, code: "NOT_FOUND", params: {} };
   if (user.totpConfirmedAt !== null) return { ok: false, code: "TOTP_ALREADY_ENROLLED", params: {} };
 
-  const secretBase32 = generateTotpSecret();
-  await withPlatformActor(actor, (tx) =>
-    tx.user.update({ where: { id: userId }, data: { totpSecret: secretBase32, totpConfirmedAt: null } }),
-  );
+  // Signing in again before confirming shows the SAME key: a fresh one every time would silently
+  // invalidate the entry the operator already added to their authenticator.
+  const secretBase32 = user.totpSecret ?? generateTotpSecret();
+  if (user.totpSecret === null) {
+    await withPlatformActor(actor, (tx) =>
+      tx.user.update({ where: { id: userId }, data: { totpSecret: secretBase32, totpConfirmedAt: null } }),
+    );
+  }
 
   return {
     ok: true,

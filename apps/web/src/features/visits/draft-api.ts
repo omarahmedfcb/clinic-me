@@ -309,6 +309,23 @@ export async function suggestMedications(
   return response.ok ? ((await response.json()) as string[]) : [];
 }
 
+export interface DrugHit {
+  /** The English commercial name: what goes into the prescription's text field. */
+  name: string;
+  arabic: string;
+  scientific: string | null;
+}
+
+/** The public Egyptian drug list: English or Arabic commercial name, or the scientific name. */
+export async function suggestDrugs(
+  authFetch: AuthFetch,
+  appointmentId: string,
+  query: string,
+): Promise<DrugHit[]> {
+  const response = await authFetch(`/api/appointments/${appointmentId}/drugs?q=${encodeURIComponent(query)}`);
+  return response.ok ? ((await response.json()) as DrugHit[]) : [];
+}
+
 export interface CompletedVisit {
   visitId: string;
   revision: number;

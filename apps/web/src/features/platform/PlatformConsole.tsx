@@ -10,7 +10,8 @@ import { formatMinor, intlLocale } from "../../i18n/format.ts";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import type { TranslationKey } from "../../i18n/strings.ts";
 import { ClientFilePanel } from "./ClientFilePanel.tsx";
-import { NewClinicForm, BLANK_CLINIC } from "./NewClinicForm.tsx";
+import { NewClinicForm, BLANK_CLINIC, type NewClinicSubmit } from "./NewClinicForm.tsx";
+import { createClinicThroughMeta } from "./clinic-whatsapp-create.ts";
 import { OperatorLogin } from "./OperatorLogin.tsx";
 import { OperatorsPanel } from "./OperatorsPanel.tsx";
 import { RecoveryCodesBanner } from "./RecoveryCodesBanner.tsx";
@@ -347,16 +348,20 @@ export function PlatformConsole() {
                   setCreating(false);
                   setDraft(BLANK_CLINIC);
                 }}
-                onSubmit={async () => {
+                onSubmit={async (mode: NewClinicSubmit) => {
                   setBusy(true);
                   setRefusal(null);
-                  const result = await createClinic(draft);
+                  const input = { ...draft, nameEn: (draft.nameEn ?? "").trim() === "" ? undefined : draft.nameEn?.trim() };
+                  const result = mode.whatsapp
+                    ? await createClinicThroughMeta(input, mode.existingNumber)
+                    : await createClinic(input);
                   setBusy(false);
                   if (!result.ok) {
-                    setRefusal(refusalText(t, result.code, result.params));
+                    setRefusal("messageKey" in result ? t(result.messageKey) : refusalText(t, result.code, result.params));
                     return;
                   }
-                  setIssued({ what: "clinic", who: draft.adminFullName, password: result.temporaryPassword });
+                  const password = "temporaryPassword" in result ? result.temporaryPassword : "";
+                  setIssued({ what: "clinic", who: draft.adminFullName, password });
                   setCreating(false);
                   setDraft(BLANK_CLINIC);
                   await refresh();

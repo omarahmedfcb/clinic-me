@@ -295,14 +295,16 @@ export function formatBits(mask: number): number {
 
 function writeFormat(grid: Grid, mask: number): void {
   const bits = formatBits(mask);
-  for (let i = 0; i <= 5; i += 1) place(grid, 8, i, ((bits >> i) & 1) === 1);
-  place(grid, 8, 7, ((bits >> 6) & 1) === 1);
-  place(grid, 8, 8, ((bits >> 7) & 1) === 1);
-  place(grid, 7, 8, ((bits >> 8) & 1) === 1);
-  for (let i = 9; i < 15; i += 1) place(grid, 14 - i, 8, ((bits >> i) & 1) === 1);
+  const bit = (i: number): boolean => ((bits >> i) & 1) === 1;
+  // `place` takes (row, column); the spec's coordinates below are (column, row), hence the swap.
+  for (let i = 0; i <= 5; i += 1) place(grid, i, 8, bit(i));
+  place(grid, 7, 8, bit(6));
+  place(grid, 8, 8, bit(7));
+  place(grid, 8, 7, bit(8));
+  for (let i = 9; i < 15; i += 1) place(grid, 8, 14 - i, bit(i));
 
-  for (let i = 0; i < 8; i += 1) place(grid, grid.n - 1 - i, 8, ((bits >> i) & 1) === 1);
-  for (let i = 8; i < 15; i += 1) place(grid, 8, grid.n - 15 + i, ((bits >> i) & 1) === 1);
+  for (let i = 0; i < 8; i += 1) place(grid, 8, grid.n - 1 - i, bit(i));
+  for (let i = 8; i < 15; i += 1) place(grid, grid.n - 15 + i, 8, bit(i));
   place(grid, grid.n - 8, 8, true);
 }
 
@@ -323,8 +325,9 @@ function placeData(grid: Grid, codewords: readonly number[]): void {
   let upward = true;
 
   for (let right = grid.n - 1; right >= 1; right -= 2) {
-    // Column 6 is the vertical timing pattern and is not part of the zigzag.
-    const pair = right === 6 ? 5 : right;
+    // Column 6 is the vertical timing pattern: the pairs after it are (5,4), (3,2), (1,0).
+    if (right === 6) right = 5;
+    const pair = right;
     for (let step = 0; step < grid.n; step += 1) {
       const row = upward ? grid.n - 1 - step : step;
       for (const column of [pair, pair - 1]) {

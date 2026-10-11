@@ -62,27 +62,16 @@ export const EN = {
 } as const;
 
 /**
- * The name that goes on an English sheet.
- *
- * Order: the recorded English name, then the transliteration the patient search already maintains
- * (`name_search_latin`, D19), then the Arabic name. The last is a deliberate fallback rather than a
- * blank: a sheet that cannot name its patient is not a document, and Arabic on an English form is
- * still the right patient. `PrintSection` shows the doctor which of the three will print before the
- * dialog opens, because a transliteration is a guess and only they can catch a wrong one.
+ * The name that goes on a sheet: the English name when one was recorded, otherwise the name exactly
+ * as stored, which is usually Arabic. It is never transliterated -- a machine's guess at a person's name is not
+ * something to hand across a counter.
  */
 export function printedPatientName(patient: {
   fullNameEn: string | null;
-  nameSearchLatin?: string | null;
   fullNameAr: string;
-}): { name: string; source: "english" | "transliteration" | "arabic" } {
+}): { name: string; source: "english" | "arabic" } {
   const english = patient.fullNameEn?.trim() ?? "";
   if (english !== "") return { name: english, source: "english" };
-
-  const latin = patient.nameSearchLatin?.trim() ?? "";
-  // `name_search_latin` holds the transliteration *plus* the normalised English name, space
-  // separated, so it can contain both. Upper-cased because it is a search key, not a display name.
-  if (latin !== "") return { name: latin.toUpperCase(), source: "transliteration" };
-
   return { name: patient.fullNameAr, source: "arabic" };
 }
 

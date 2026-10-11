@@ -134,6 +134,8 @@ export interface NewClinic {
   phone: string;
   adminFullName: string;
   adminPhone: string;
+  /** Printed on the clinic's documents when present. */
+  nameEn?: string;
 }
 
 /**

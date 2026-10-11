@@ -16,34 +16,25 @@ import {
  * that is off by one on a document an employer counts days from.
  */
 
-describe("which name goes on an English sheet", () => {
+describe("which name goes on a sheet", () => {
   const base = { fullNameAr: "مريم حسن عبد الله" };
 
   test("the recorded English name wins", () => {
-    expect(
-      printedPatientName({ ...base, fullNameEn: "Maryam Hassan", nameSearchLatin: "ignored" }),
-    ).toEqual({ name: "Maryam Hassan", source: "english" });
+    expect(printedPatientName({ ...base, fullNameEn: "Maryam Hassan" })).toEqual({
+      name: "Maryam Hassan",
+      source: "english",
+    });
   });
 
-  test("otherwise the transliteration search already maintains", () => {
-    // Not a new transliterator: `name_search_latin` is the one the patient search built (D19), so
-    // the sheet and the search agree about how this patient's name is spelled in Latin.
-    expect(
-      printedPatientName({ ...base, fullNameEn: null, nameSearchLatin: "maryam hassan abdullah" }),
-    ).toEqual({ name: "MARYAM HASSAN ABDULLAH", source: "transliteration" });
-  });
-
-  test("blank is treated as absent, not as a name", () => {
-    // A whitespace-only English name would otherwise print as an empty line where the patient's
-    // name belongs, which looks like a rendering fault rather than missing data.
-    expect(printedPatientName({ ...base, fullNameEn: "   ", nameSearchLatin: "  " })).toEqual({
+  test("otherwise the name as stored, never a transliteration", () => {
+    expect(printedPatientName({ ...base, fullNameEn: null })).toEqual({
       name: "مريم حسن عبد الله",
       source: "arabic",
     });
   });
 
-  test("the Arabic name is the last resort, and it is a name rather than a blank", () => {
-    expect(printedPatientName({ ...base, fullNameEn: null, nameSearchLatin: null })).toEqual({
+  test("blank is treated as absent, not as a name", () => {
+    expect(printedPatientName({ ...base, fullNameEn: "   " })).toEqual({
       name: "مريم حسن عبد الله",
       source: "arabic",
     });

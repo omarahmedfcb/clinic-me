@@ -1,8 +1,7 @@
-// The print button, and the three sheets it prints — Q9, Q29.
+// The four sheets, and the listener that prints one of them when a button asks — Q9, Q29, Q46.
 // Browser print by ruling. "Save as PDF" is the browser's, and there is no PDF service here.
 
-import { useEffect, useState } from "react";
-import { Button } from "../../design-system/Button.tsx";
+import { useEffect, useRef, useState } from "react";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import { recordPrescriptionPrinted } from "./clinic-identity-api.ts";
 import {
@@ -15,7 +14,8 @@ import {
   type VisitPrescription,
 } from "./draft-api.ts";
 import { PrintDocuments } from "./PrintDocuments.tsx";
-import { printedPatientName } from "./print-english.ts";
+import { PRINT_SHEET_EVENT, type SheetKind } from "./print-sheet-event.ts";
+import type { TranslationKey } from "../../i18n/strings.ts";
 import { recordSickLeavePrinted, type SickLeave } from "./sick-leave-api.ts";
 
 type AuthFetch = (path: string, init?: RequestInit) => Promise<Response>;
@@ -74,53 +74,50 @@ export function PrintSection({
     };
   }, [authFetch, appointmentId, visitId]);
 
-  async function print(): Promise<void> {
-    // The count is recorded before the dialog opens, because the dialog is modal and its outcome is
-    // not observable: a browser reports nothing about whether paper came out. Q9 asks for a count of
-    // sheets produced, and "the doctor pressed print" is the honest thing this can know.
-    await recordPrescriptionPrinted(authFetch, appointmentId, visitId);
-    // Q46: the certificate goes out in the same job, so it is counted in the same press. The route
-    // refuses when no certificate exists, which is why this is unconditional and harmless.
-    if (sickLeave.days !== null) {
-      await recordSickLeavePrinted(authFetch, appointmentId, visitId);
+  // The newest closure, so the one listener below never prints with stale props.
+  const handler = useRef<(kind: SheetKind) => Promise<void>>(async () => undefined);
+  handler.current = async (kind) => {
+    // The sheets were loaded when the screen opened; edits saved since must be on the paper.
+    if (kind === "prescription") {
+      const fresh = await loadPrescription(authFetch, appointmentId, visitId);
+      if (fresh !== null) setPrescription(fresh);
+      // Recorded before the dialog opens: its outcome is not observable (Q9 counts presses).
+      await recordPrescriptionPrinted(authFetch, appointmentId, visitId);
     }
+    if (kind === "investigations") {
+      const fresh = await loadInvestigations(authFetch, appointmentId, visitId);
+      if (fresh !== null) setInvestigations(fresh);
+    }
+    if (kind === "sickLeave") await recordSickLeavePrinted(authFetch, appointmentId, visitId);
 
-    // Q43: the document name and the patient, because "save as PDF" uses the document title as the
-    // filename and every sheet this clinic produced would otherwise be called "Clinic OS". Restored
-    // afterwards so the tab does not keep a patient's name in it.
+    // Two frames: the sheet re-renders with the fresh data before the dialog snapshots the page.
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+    // Q43: "save as PDF" names the file after the document title, so it carries the document and
+    // the patient. Restored afterwards so the tab does not keep a patient's name in it.
     const previous = document.title;
-    document.title = `${t("print.prescription")} — ${patient?.fullNameAr ?? ""}`.trim();
+    document.title = `${t(`print.${kind === "sickLeave" ? "report" : kind}` as TranslationKey)} — ${patient?.fullNameAr ?? ""}`.trim();
+    document.body.dataset["printSheet"] = kind;
     try {
       window.print();
     } finally {
+      delete document.body.dataset["printSheet"];
       document.title = previous;
     }
-  }
+  };
+
+  useEffect(() => {
+    const listener = (event: Event): void => {
+      void handler.current((event as CustomEvent<SheetKind>).detail);
+    };
+    window.addEventListener(PRINT_SHEET_EVENT, listener);
+    return () => window.removeEventListener(PRINT_SHEET_EVENT, listener);
+  }, []);
 
   if (patient === null) return null;
 
-  const printedName = printedPatientName(patient);
-
   return (
     <>
-      <div className="mt-4">
-        <Button data-testid="print-button" variant="secondary" onClick={() => void print()}>
-          {t("print.button")}
-        </Button>
-        {/* Q45: the sheet is English, so the doctor is told which name will appear on it *before*
-            the dialog opens. A transliteration is a guess, and the doctor is the only person who
-            can catch a wrong one — after printing is too late. */}
-        <p className="mt-2 text-xs text-ink-muted" data-testid="printed-name-preview">
-          <span dir="ltr">{printedName.name}</span>
-          {printedName.source === "transliteration" && (
-            <span className="ms-2 text-warning">{t("print.nameTransliterated")}</span>
-          )}
-          {printedName.source === "arabic" && (
-            <span className="ms-2 text-warning">{t("print.nameArabicFallback")}</span>
-          )}
-        </p>
-      </div>
-
       <PrintDocuments
         authFetch={authFetch}
         visit={{

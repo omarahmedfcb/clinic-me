@@ -25,6 +25,7 @@ import { TenantGuard } from "../../common/tenant.guard.ts";
 import { getAppointmentDetail } from "../appointments/appointment-detail.ts";
 import type { CallerContext } from "../appointments/appointments.service.ts";
 import { getClinicalHistory, getClinicalSummary } from "./clinical.service.ts";
+import { searchDrugs } from "./drug-catalogue.ts";
 import { getAppointmentVisit } from "./visit-detail.ts";
 import { openDraft, saveDraft, type DraftRefusal } from "./visit-draft.ts";
 import { addClinicalProfileEntry, getClinicalProfile } from "./clinical-profile.ts";
@@ -508,6 +509,16 @@ export class ClinicalController {
     @Query() query: MedicationQueryDto,
   ) {
     return suggestMedications(this.caller(request), query.q);
+  }
+
+  /**
+   * The public Egyptian drug list, for the prescription's name field: English or Arabic commercial
+   * name, or the scientific name. A reference list, not clinic data -- nothing tenant-scoped is read.
+   */
+  @Get("drugs")
+  @RequirePermission("visits.readContent")
+  drugs(@Param("id", ParseUUIDPipe) _appointmentId: string, @Query() query: MedicationQueryDto) {
+    return searchDrugs(query.q);
   }
 }
 

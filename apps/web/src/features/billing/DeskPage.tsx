@@ -407,7 +407,13 @@ export function DeskPage({
       </div>
 
       {printing !== null && (
-        <ReceiptSheet authFetch={authFetch} charge={charge} receipt={printing} currency={currency} />
+        <ReceiptSheet
+          authFetch={authFetch}
+          charge={charge}
+          receipt={printing}
+          currency={currency}
+          onDone={() => setPrinting(null)}
+        />
       )}
       {invoicing && (
         <InvoiceSheet

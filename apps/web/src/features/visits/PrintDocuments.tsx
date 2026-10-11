@@ -15,6 +15,7 @@ import {
 import { Letterhead, PatientBlock, PrintFooter, SignatureBlock, VisitBlock } from "./print-blocks.tsx";
 import { EN, printedDate, sickLeaveEnd } from "./print-english.ts";
 import { PRINT_STYLESHEET } from "./print-styles.ts";
+import type { SheetKind } from "./print-sheet-event.ts";
 import type { InvestigationLine, PatientHeader, PrescriptionLine } from "./draft-api.ts";
 
 type AuthFetch = (path: string, init?: RequestInit) => Promise<Response>;
@@ -140,8 +141,8 @@ function PrescriptionTable({ items }: { items: PrescriptionLine[] }) {
 export function PrintDocuments({ authFetch, visit }: Props) {
   const branding = useBranding(authFetch, visit.doctorId);
 
-  const sheet = (title: string, body: React.ReactNode) => (
-    <article className="print-sheet mb-8 bg-white p-6 text-black" dir="ltr" lang="en">
+  const sheet = (kind: SheetKind, title: string, body: React.ReactNode) => (
+    <article className="print-sheet mb-8 bg-white p-6 text-black" dir="ltr" lang="en" data-sheet={kind}>
       <Letterhead clinic={branding.clinic} logo={branding.logo} />
       <h2 className="mt-4 text-center text-base font-bold tracking-wide">{title}</h2>
       <PatientBlock patient={visit.patient} />
@@ -178,6 +179,7 @@ export function PrintDocuments({ authFetch, visit }: Props) {
       <style>{PRINT_STYLESHEET}</style>
 
       {sheet(
+        "prescription",
         EN.prescription,
         <>
           {visit.prescription.items.length === 0 ? (
@@ -201,6 +203,7 @@ export function PrintDocuments({ authFetch, visit }: Props) {
       )}
 
       {sheet(
+        "report",
         EN.report,
         <dl className="mt-3 grid gap-2 text-sm">
           {(
@@ -225,6 +228,7 @@ export function PrintDocuments({ authFetch, visit }: Props) {
       )}
 
       {sheet(
+        "investigations",
         EN.investigations,
         visit.investigations.items.length === 0 && visit.investigations.freeText === null ? (
           <p className="mt-3 text-sm">{EN.nothingRequested}</p>
@@ -248,6 +252,7 @@ export function PrintDocuments({ authFetch, visit }: Props) {
       {leave.days !== null &&
         leave.from !== null &&
         sheet(
+          "sickLeave",
           EN.sickLeave,
           <>
             <p className="mt-4 text-sm">{EN.sickLeaveSentence}</p>

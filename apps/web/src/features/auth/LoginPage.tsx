@@ -303,23 +303,6 @@ export function LoginPage({
             </Button>
 
             {/*
-              Deliberately plain text, not a link. There is no self-service reset: admin-initiated
-              reset is on the users screen, and the OTP path designed in D21 waits on WhatsApp in
-              Phase 6. A link to a flow that does not exist is worse than a sentence telling you who
-              to ask — it produces a support call about a broken page.
-            */}
-            <p className="text-center text-xs text-ink-muted">
-              {t("login.noAccount")}{" "}
-              <a
-                href="/signup"
-                data-testid="platform-console-link"
-                className="text-ink-subtle underline decoration-border-strong underline-offset-2 hover:text-primary"
-              >
-                {t("login.signUpNow")}
-              </a>
-            </p>
-
-            {/*
               The operator's console — the only thing that says it exists. An operator holds no
               membership, so this page refuses them with the same sentence as a wrong password, and
               that is deliberate: an unauthenticated caller must not learn which accounts exist. A

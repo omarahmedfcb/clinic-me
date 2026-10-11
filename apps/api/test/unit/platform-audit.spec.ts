@@ -48,6 +48,7 @@ const WRITE_ROUTES: { route: string; audited: "clinic-trail" | "vendor-trail" | 
   { route: "POST /platform/totp/replace", audited: "own-account" },
   { route: "POST /platform/totp/replace/confirm", audited: "vendor-trail" },
   { route: "POST /platform/clinics", audited: "clinic-trail" },
+  { route: "POST /platform/clinics/whatsapp", audited: "clinic-trail" },
   { route: "POST /platform/clinics/:tenantId/suspension", audited: "clinic-trail" },
   { route: "POST /platform/clinics/:tenantId/admins/:userId/password", audited: "clinic-trail" },
   { route: "POST /platform/clinics/:tenantId/contracts", audited: "clinic-trail" },
