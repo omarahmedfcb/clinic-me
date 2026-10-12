@@ -10,10 +10,16 @@ import { BRAND } from "./brand.ts";
  * `currentColor` cannot reach it, which is why the monochrome variant is a separate file rather
  * than a prop.
  */
-export function BrandMark({ size = 28, className }: { size?: number; className?: string }) {
+export function BrandMark({
+  size = 28,
+  className,
+}: {
+  size?: number;
+  className?: string;
+}) {
   return (
     <img
-      src={BRAND.markSvg}
+      src={BRAND.nomedLogo}
       width={size}
       height={size}
       // Decorative wherever it sits beside the product's name, which is every current use. The
@@ -27,7 +33,13 @@ export function BrandMark({ size = 28, className }: { size?: number; className?:
 }
 
 /** The mark with the wordmark under it. One screen shows the logo large, and this is it. */
-export function BrandLockup({ width = 220, className }: { width?: number; className?: string }) {
+export function BrandLockup({
+  width = 220,
+  className,
+}: {
+  width?: number;
+  className?: string;
+}) {
   return (
     <img
       src={BRAND.lockupWebp}
@@ -50,8 +62,15 @@ export function BrandLockup({ width = 220, className }: { width?: number; classN
  */
 export function PoweredBy({ className }: { className?: string }) {
   return (
-    <span className={`inline-flex items-center gap-1.5 text-[9px] text-ink-subtle ${className ?? ""}`}>
-      <img src={BRAND.markMonoSvg} alt="" aria-hidden="true" style={{ width: 10, height: "auto" }} />
+    <span
+      className={`inline-flex items-center gap-1.5 text-[9px] text-ink-subtle ${className ?? ""}`}
+    >
+      <img
+        src={BRAND.nomedLogo}
+        alt=""
+        aria-hidden="true"
+        style={{ width: 48, height: "auto" }}
+      />
       {BRAND.poweredBy}
     </span>
   );

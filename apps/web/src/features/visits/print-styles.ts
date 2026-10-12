@@ -19,7 +19,10 @@ export const PRINT_MARKERS = ["print-root", "print-sheet", "print-letterhead", "
 
 export const PRINT_STYLESHEET = `
 @media print {
-  @page { size: A4; margin: 12mm; }
+  /* Margin 0 is what stops the browser printing its own header and footer (the page URL and date);
+     the paper margin is the sheet's padding instead. */
+  @page { size: A4; margin: 0; }
+  .print-sheet { padding: 12mm !important; margin: 0 !important; }
 
   /* An allow-list: everything the application renders is hidden, and only the sheet is shown. */
   body > *:not(#print-root) { display: none !important; }

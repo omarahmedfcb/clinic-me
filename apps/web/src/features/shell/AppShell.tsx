@@ -195,7 +195,7 @@ export function AppShell() {
     <div className="min-h-dvh bg-surface-sunken text-ink flex">
       <aside className="hidden w-60 shrink-0 border-e border-border bg-surface md:flex md:flex-col">
         <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
-          <BrandMark size={28} />
+          <BrandMark size={44} />
           <span className="text-lg font-semibold text-ink">{BRAND.name}</span>
         </div>
         <SidebarNav
@@ -259,7 +259,7 @@ export function AppShell() {
 
           <div className="flex items-center gap-2 md:ms-auto">
             <div className="hidden items-center gap-2 md:flex">
-              <Avatar name={me.user.fullName} src={myPhoto} size="sm" />
+              <Avatar name={me.user.fullName} src={myPhoto} size="header" />
               {clinicSwitcher("hidden lg:inline")}
             </div>
 

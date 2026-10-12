@@ -139,6 +139,13 @@ describe("the printed sheets", () => {
     expect(root.textContent).toContain("+20227351234");
   });
 
+  test("the letterhead is not a <header>, which index.css hides when printing", async () => {
+    renderSheets();
+    await screen.findAllByText("عيادة النيل");
+    expect(document.querySelectorAll("#print-root header").length).toBe(0);
+    expect(document.querySelector("#print-root #print-letterhead")).not.toBeNull();
+  });
+
   test("every element the stylesheet targets is actually emitted, and the reverse", async () => {
     renderSheets();
     await screen.findAllByText("عيادة النيل");

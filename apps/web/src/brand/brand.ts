@@ -21,7 +21,7 @@ export const BRAND = {
   poweredBy: "Powered by NOMED OS",
   /** Paths, not imports: these are in `public/` so they are cacheable and not re-encoded per build. */
   markSvg: "/brand/nomed-mark.svg",
-  markMonoSvg: "/brand/nomed-mark-mono.svg",
+  nomedLogo: "/brand/nomed-logo.png",
   lockupWebp: "/brand/nomed-lockup.webp",
   loginBackground: "/brand/login-bg.webp",
 } as const;

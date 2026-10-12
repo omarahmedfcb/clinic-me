@@ -19,7 +19,8 @@ function Field({ label, value, auto }: { label: string; value: string; auto?: bo
   return (
     <div className="print-line">
       <span className="block text-[10px] uppercase tracking-wide text-neutral-600">{label}</span>
-      <span className="block text-sm" {...(auto === true ? { dir: "auto" } : {})}>
+      {/* dir="auto" keeps Arabic letters joined; text-left keeps the name directly under its label. */}
+      <span className="block text-left text-sm" {...(auto === true ? { dir: "auto" } : {})}>
         {value === "" ? "—" : value}
       </span>
     </div>
@@ -41,11 +42,14 @@ export function Letterhead({ clinic, logo }: { clinic: ClinicIdentity | null; lo
     .join("  ·  ");
 
   return (
-    <header
+    // A <div>, not a <header>: index.css hides every <header> when printing (it is the app's top bar),
+    // which silently removed the clinic name and logo from the paper.
+    <div
       id="print-letterhead"
       className="print-letterhead flex items-start justify-between gap-6 border-b-2 border-black pb-3"
     >
-      <div className="min-w-0">
+      {/* LEFT: clinic name, tagline, address, phones. To move it, change this wrapper's classes. */}
+      <div className="min-w-0 text-left">
         <h1 className="text-2xl font-bold leading-tight">{name}</h1>
         {clinic?.tagline != null && clinic.tagline !== "" && (
           <p className="text-xs italic">{clinic.tagline}</p>
@@ -57,8 +61,9 @@ export function Letterhead({ clinic, logo }: { clinic: ClinicIdentity | null; lo
           <p className="text-xs">{clinic.printedWorkingHours}</p>
         )}
       </div>
+      {/* RIGHT: the clinic's logo (size: max-h-28 / max-w-[45mm]). `justify-between` above pins it right. */}
       {logo !== null && <img src={logo} alt="" className="max-h-28 max-w-[45mm] w-auto shrink-0 object-contain" />}
-    </header>
+    </div>
   );
 }
 

@@ -99,13 +99,13 @@ function PrescriptionTable({ items }: { items: PrescriptionLine[] }) {
     <table className="mt-3 w-full border-collapse text-sm">
       <thead>
         <tr className="border-y border-black text-start text-[10px] uppercase tracking-wide">
-          <th className="w-8 py-1 pe-2">{EN.no}</th>
-          <th className="py-1 pe-2">{EN.medication}</th>
-          <th className="py-1 pe-2">{EN.strength}</th>
-          <th className="py-1 pe-2">{EN.form}</th>
-          <th className="py-1 pe-2">{EN.dosage}</th>
-          <th className="py-1 pe-2">{EN.duration}</th>
-          <th className="py-1">{EN.quantity}</th>
+          <th className="w-8 py-1 pe-2 text-start">{EN.no}</th>
+          <th className="py-1 pe-2 text-start">{EN.medication}</th>
+          <th className="py-1 pe-2 text-start">{EN.strength}</th>
+          <th className="py-1 pe-2 text-start">{EN.form}</th>
+          <th className="py-1 pe-2 text-start">{EN.dosage}</th>
+          <th className="py-1 pe-2 text-start">{EN.duration}</th>
+          <th className="py-1 text-start">{EN.quantity}</th>
         </tr>
       </thead>
       <tbody>

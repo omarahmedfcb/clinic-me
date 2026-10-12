@@ -3,8 +3,12 @@
 
 import { useLocale } from "../i18n/locale-context.tsx";
 
-const SIZES = { sm: "h-7 w-7 text-[10px]", md: "h-9 w-9 text-xs", lg: "h-16 w-16 text-base" } as const;
-
+const SIZES = {
+  sm: "h-7 w-7 text-[10px]",
+  md: "h-9 w-9 text-xs",
+  lg: "h-16 w-16 text-base",
+  header: "h-12 w-12 text-sm",
+} as const;
 /**
  * Initials from a name, in whatever script it is written in.
  *
@@ -13,10 +17,14 @@ const SIZES = { sm: "h-7 w-7 text-[10px]", md: "h-9 w-9 text-xs", lg: "h-16 w-16
  * read أا, as would «هشام محمود الديب» — every second person reduced to the same two letters.
  */
 export function initialsOf(name: string): string {
-  const words = name.trim().split(/\s+/).filter((word) => word !== "");
+  const words = name
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word !== "");
   const first = words.at(0)?.charAt(0) ?? "";
   const family = words.length > 1 ? (words.at(-1) ?? "") : "";
-  const bare = family.startsWith("ال") && family.length > 2 ? family.slice(2) : family;
+  const bare =
+    family.startsWith("ال") && family.length > 2 ? family.slice(2) : family;
   return `${first}${bare.charAt(0)}`;
 }
 
@@ -47,5 +55,12 @@ export function Avatar({
 
   // The name is already beside every avatar this app draws, so the image itself is decorative and
   // an alt repeating the name would make a screen reader say it twice.
-  return <img src={src} alt={t("avatar.alt")} title={name} className={`${shape} bg-surface-sunken`} />;
+  return (
+    <img
+      src={src}
+      alt={t("avatar.alt")}
+      title={name}
+      className={`${shape} bg-surface-sunken`}
+    />
+  );
 }

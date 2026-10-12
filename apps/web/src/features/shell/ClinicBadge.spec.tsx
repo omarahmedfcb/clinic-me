@@ -63,7 +63,7 @@ describe("the clinic's mark in the top bar", () => {
       const html = container.innerHTML;
 
       expect(html).not.toContain(BRAND.markSvg);
-      expect(html).not.toContain(BRAND.markMonoSvg);
+      expect(html).not.toContain(BRAND.nomedLogo);
       expect(html).not.toContain(BRAND.lockupWebp);
       expect(html).not.toContain(BRAND.name);
     }

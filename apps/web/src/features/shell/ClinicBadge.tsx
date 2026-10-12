@@ -44,7 +44,7 @@ export function ClinicBadge({
         <span
           aria-hidden="true"
           data-testid="clinic-initials"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary sm:h-10 sm:w-10 text-sm font-semibold text-white"
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary sm:h-16 sm:w-16 text-lg font-semibold text-white"
         >
           {clinicInitials(clinicName)}
         </span>
@@ -57,7 +57,7 @@ export function ClinicBadge({
           aria-hidden="true"
           data-testid="clinic-logo"
           title={clinicName}
-          className="h-9 w-9 sm:h-10 sm:w-10 shrink-0 rounded-full border border-border bg-surface object-contain p-0.5"
+          className="h-12 w-12 sm:h-16 sm:w-16 shrink-0 rounded-full border border-border bg-surface object-contain p-0.5"
         />
       )}
 
@@ -67,7 +67,7 @@ export function ClinicBadge({
           in the shell, and the one thing that must visibly change when the clinic switches.
         */}
         <h1
-          className="truncate text-base font-semibold text-ink sm:text-xl"
+          className="truncate text-lg font-semibold text-ink sm:text-2xl"
           data-testid="clinic-name"
         >
           {clinicName}
