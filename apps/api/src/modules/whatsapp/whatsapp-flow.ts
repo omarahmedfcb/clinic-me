@@ -62,17 +62,17 @@ const MAX_UNMATCHED_ATTEMPTS = 3;
 type FlowStateBase = { missCount?: number };
 export type FlowState = FlowStateBase &
   (
-  | { step: "PHONE_CHOICE"; lang: Lang }
-  | { step: "PHONE_ASK"; lang: Lang }
-  | { step: "IDENTITY_PICK"; lang: Lang; phoneE164: string; options: { patientId: string; name: string }[] }
-  | { step: "IDENTITY_YESNO"; lang: Lang; phoneE164: string; patientId: string; patientName: string }
-  | { step: "NAME_ASK"; lang: Lang; phoneE164: string }
-  | ({ step: "BOOKING_COMPLAINT"; lang: Lang } & Person)
-  | ({ step: "BOOKING_DOCTOR"; lang: Lang } & Person)
-  | ({ step: "BOOKING_SERVICE"; lang: Lang; doctorId: string; doctorName: string } & Person)
-  | ({ step: "BOOKING_DATE"; lang: Lang; doctorId: string; doctorName: string; serviceId: string; serviceName: string } & Person)
-  | ({ step: "BOOKING_DATE_FREE"; lang: Lang; doctorId: string; doctorName: string; serviceId: string; serviceName: string } & Person)
-  | ({
+    | { step: "PHONE_CHOICE"; lang: Lang }
+    | { step: "PHONE_ASK"; lang: Lang }
+    | { step: "IDENTITY_PICK"; lang: Lang; phoneE164: string; options: { patientId: string; name: string }[] }
+    | { step: "IDENTITY_YESNO"; lang: Lang; phoneE164: string; patientId: string; patientName: string }
+    | { step: "NAME_ASK"; lang: Lang; phoneE164: string }
+    | ({ step: "BOOKING_COMPLAINT"; lang: Lang } & Person)
+    | ({ step: "BOOKING_DOCTOR"; lang: Lang } & Person)
+    | ({ step: "BOOKING_SERVICE"; lang: Lang; doctorId: string; doctorName: string } & Person)
+    | ({ step: "BOOKING_DATE"; lang: Lang; doctorId: string; doctorName: string; serviceId: string; serviceName: string } & Person)
+    | ({ step: "BOOKING_DATE_FREE"; lang: Lang; doctorId: string; doctorName: string; serviceId: string; serviceName: string } & Person)
+    | ({
       step: "BOOKING_SLOT";
       lang: Lang;
       doctorId: string;
@@ -83,7 +83,7 @@ export type FlowState = FlowStateBase &
       slots: { iso: string; token: string; label: string }[];
       page: number;
     } & Person)
-  | ({
+    | ({
       step: "BOOKING_CONFIRM";
       lang: Lang;
       doctorId: string;
@@ -236,15 +236,95 @@ function slotRowId(indexOnPage: number): string {
  *  `matchByKeyword` uses elsewhere: "شكرا" must be the *whole* message, not a word inside a longer
  *  one ("شكرا بس حابب أغير الميعاد" -- thanks, but I'd like to change the appointment -- is a real
  *  request and must not be swallowed as a closing remark because it happens to contain "شكرا"). */
+/** Thanks and sign-offs, in the registers Egyptian patients actually use. Matched as whole words
+ *  or phrases anywhere in a SHORT message ("حبيبي تسلم", "تسلم ايدك يا دكتور", "thanks a lot"), never
+ *  as a substring of a longer word. */
 const CLOSING_WORDS = [
-  "شكرا", "شكراً", "تسلم", "تسلملي", "متشكر", "يسلمو", "تمام", "كويس", "حلو",
-  "thanks", "thank you", "thx", "ok", "okay", "cool", "great", "👍", "🙏",
+  "شكرا", "شكرا ليك", "شكرا لك", "تسلم", "تسلم ايدك", "تسلملي", "يسلمو", "يسلموا", "متشكر", "متشكره", "ممنون", "ممنونه",
+  "ربنا يخليك", "ربنا يكرمك", "ربنا يباركلك", "الله يكرمك", "الله يخليك", "جزاك الله خيرا", "تحت امرك",
+  "مع السلامه", "سلام", "باي", "تمام", "كويس", "حلو", "ماشي", "اوك", "اوكي",
+  "thanks", "thank you", "thx", "ty", "ok", "okay", "cool", "great", "bye", "goodbye",
 ];
 
-function isClosingRemark(text: string): boolean {
-  const norm = normaliseForMatch(text);
-  return CLOSING_WORDS.some((w) => norm === normaliseForMatch(w));
+/** A message that says anything about booking is a request, whatever else it says: "شكرا بس حابب
+ *  أغير الميعاد" (thanks, but I'd like to change the appointment) must never be swallowed as a
+ *  goodbye. */
+const BOOKING_HINTS = ["احجز", "احجزلي", "حجز", "ميعاد", "موعد", "مواعيد", "كشف", "book", "booking", "appointment", "reserve", "reschedule"];
+
+/** Past this many words a message is a sentence with something to say, not a sign-off. */
+const MAX_CLOSING_WORDS = 6;
+
+/** Lower-cased, diacritic-free, punctuation turned to spaces, padded with a space on each side so
+ *  `includes(" word ")` matches whole words only. */
+function paddedWords(text: string): string {
+  const words = normaliseForMatch(text).replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter((w) => w !== "");
+  return ` ${words.join(" ")} `;
 }
+
+function hasWord(padded: string, phrase: string): boolean {
+  return padded.includes(` ${normaliseForMatch(phrase)} `);
+}
+
+/** A substring test, not whole-word: these only ever veto a sign-off, and Arabic carries its
+ *  article on the word ("الميعاد", "الكشف"), which a whole-word match would miss. */
+function mentionsBooking(text: string): boolean {
+  const norm = normaliseForMatch(text);
+  return BOOKING_HINTS.some((hint) => norm.includes(normaliseForMatch(hint)));
+}
+
+/** A message that is clearly a thank-you or a goodbye, decided locally with no model call. */
+function isClosingRemark(text: string): boolean {
+  // A bare emoji (👍 🙏 😊 ❤️) carries no request a booking could be started from.
+  if (text.trim() !== "" && !/[\p{L}\p{N}]/u.test(text)) return true;
+
+  const padded = paddedWords(text);
+  const wordCount = padded.trim() === "" ? 0 : padded.trim().split(" ").length;
+  if (wordCount === 0 || wordCount > MAX_CLOSING_WORDS) return false;
+  if (mentionsBooking(text)) return false;
+  return CLOSING_WORDS.some((word) => hasWord(padded, word));
+}
+
+/** The tie-breaker for a short message the word lists could not place. Only ever asked mid-session
+ *  with no step in progress (right after a booking finished, say), where the choice is between
+ *  starting a booking and politely signing off. Returns null if the model is down or answers
+ *  something else, and the caller decides what that means. */
+async function classifyFollowUp(text: string): Promise<"CLOSING" | "BOOKING" | "OTHER" | null> {
+  try {
+    const completion = await callGpt({
+      input: [{ role: "user", content: text }],
+      tools: [],
+      instructions:
+        "A clinic's WhatsApp assistant has just finished helping a patient. Classify the patient's next message as exactly one of: " +
+        '"CLOSING" (thanks, praise, a blessing, goodbye, or any polite sign-off that asks for nothing), ' +
+        '"BOOKING" (wants to book, change or ask about an appointment), or "OTHER". Egyptian Arabic is common. ' +
+        "Reply with that one word and nothing else.",
+    });
+    const word = completion.outputText?.trim().toUpperCase();
+    return word === "CLOSING" || word === "BOOKING" || word === "OTHER" ? word : null;
+  } catch (error) {
+    console.error("WhatsApp flow: follow-up classification call failed", error);
+    return null;
+  }
+}
+
+/** Should this message end the conversation politely instead of starting a booking?
+ *
+ *  A brand-new session is always a booking start: the patient has just arrived. Mid-session with
+ *  nothing in progress, the word lists decide the clear cases and the model the rest. If the model
+ *  is down, a short message with no booking word in it is treated as a sign-off: wrongly saying
+ *  "at your service" costs the patient one more message, while wrongly restarting a booking in
+ *  reply to "thanks" is the very thing this check exists to prevent. */
+async function isClosing(ctx: FlowContext, text: string): Promise<boolean> {
+  if (isClosingRemark(text)) return true;
+  if (ctx.isNewSession || mentionsBooking(text)) return false;
+
+  const verdict = await classifyFollowUp(text);
+  if (verdict === "CLOSING") return true;
+  if (verdict !== null) return false;
+  return paddedWords(text).trim().split(" ").length <= MAX_CLOSING_WORDS;
+}
+
+
 
 /** One tappable option, reduced to what `matchByKeyword` and `classifyOrReply` need: its id, and
  *  every piece of visible text a patient might type instead of tapping it (a button/row's title,
@@ -384,13 +464,16 @@ export async function runFlow(ctx: FlowContext): Promise<FlowResult> {
       return stepBookingSlot(ctx, ctx.state);
     case "BOOKING_CONFIRM":
       return stepBookingConfirm(ctx, ctx.state);
-  }
 
-  // Only reachable with a state written by an older build (INTENT, COMPLAINT_TEXT, COMPLAINT_CONFIRM
-  // -- the complaint route is gone from the bot). Such a half-finished flow is dropped and the
-  // patient is started on a fresh booking rather than left stuck on a step nothing handles.
-  const legacyLang = (ctx.state as { lang?: Lang }).lang ?? "ar";
-  return beginTurn({ ...ctx, state: null }, legacyLang, textOf(ctx.input));
+    // Only reachable with a state written by an older build (INTENT, COMPLAINT_TEXT,
+    // COMPLAINT_CONFIRM -- the complaint route is gone from the bot). Such a half-finished flow is
+    // dropped and the patient is started on a fresh booking rather than left stuck on a step
+    // nothing handles.
+    default: {
+      const legacyLang = (ctx.state as { lang?: Lang }).lang ?? "ar";
+      return beginTurn({ ...ctx, state: null }, legacyLang, null);
+    }
+  }
 }
 
 /** New session or freshly finished flow, either way starting from nothing. The bot only books, so
@@ -400,7 +483,7 @@ async function beginTurn(ctx: FlowContext, lang: Lang, openingText: string | nul
   // A closing remark ("شكرا", "تمام", "thanks") is very often the very next message after this file
   // itself just said "تم الحجز ... لو محتاج حاجة تانية أنا موجود" (bookingSuccess), and starting a
   // brand-new booking in reply to "thanks" reads as not having listened.
-  if (openingText !== null && isClosingRemark(openingText)) {
+  if (openingText !== null && (await isClosing(ctx, openingText))) {
     return { handled: true, nextState: null, outgoing: { kind: "text", text: T.closingAcknowledge(lang) } };
   }
 

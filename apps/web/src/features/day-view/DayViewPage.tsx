@@ -84,7 +84,7 @@ const TIMELINE_TONES: Record<AppointmentStatus, string> = {
   // nearly invisible, and grey on pale blue has no hue difference to fall back on either. The
   // muted ink token is 5.17:1 against free and stays 1.84:1 apart from the break grey, so the two
   // greys on this bar remain distinguishable. Reported rather than absorbed.
-  IN_CONSULTATION: "bg-active-grey border-ink-muted",
+  IN_CONSULTATION: "bg-success border-ink-muted",
   // Q34: still occupying the slot, so it is still drawn as a busy block — in blue, which is the one
   // family neither the green ramp nor the consultation grey uses, and which reads at bar size.
   PAUSED: "bg-info border-info",
@@ -123,7 +123,10 @@ export function DayViewPage() {
   const [openId, setOpenId] = useState<string | null>(null);
 
   const selected = (doctors ?? []).find((d) => d.id === doctorId) ?? null;
-  const ownDoctorLabel = selected === null ? null : `${selected.title} ${selected.fullName} — ${selected.specialty}`;
+  const ownDoctorLabel =
+    selected === null
+      ? null
+      : `${selected.title} ${selected.fullName} — ${selected.specialty}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -135,7 +138,9 @@ export function DayViewPage() {
         // A doctor is pinned to themselves; only reception/admin/owner default to "the first
         // doctor in the list". Falling back to list[0] for a doctor is exactly the bug this fixes.
         const pinned = isDoctorRole(me) ? ownDoctorId(me, list) : null;
-        setDoctorId((current) => (isDoctorRole(me) ? pinned : (current ?? list[0]?.id ?? null)));
+        setDoctorId((current) =>
+          isDoctorRole(me) ? pinned : (current ?? list[0]?.id ?? null),
+        );
       } catch {
         if (!cancelled) setFailed(true);
       } finally {
@@ -181,7 +186,10 @@ export function DayViewPage() {
   });
 
   /** The clinic's calendar date for an instant — used to tell a cross-midnight session apart. */
-  const calendarDay = new Intl.DateTimeFormat("en-CA", { timeZone, dateStyle: "short" });
+  const calendarDay = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    dateStyle: "short",
+  });
 
   if (loading && doctors === null) {
     return (
@@ -192,7 +200,9 @@ export function DayViewPage() {
   }
 
   if (doctors !== null && doctors.length === 0) {
-    return <EmptyState title={t("day.noDoctors")} message={t("day.noDoctors")} />;
+    return (
+      <EmptyState title={t("day.noDoctors")} message={t("day.noDoctors")} />
+    );
   }
 
   return (
@@ -207,7 +217,9 @@ export function DayViewPage() {
         <div className="w-72">
           {isDoctorRole(me) ? (
             <div>
-              <span className="block text-sm font-medium text-ink-muted">{t("day.doctor")}</span>
+              <span className="block text-sm font-medium text-ink-muted">
+                {t("day.doctor")}
+              </span>
               <p className="mt-1 text-sm">{ownDoctorLabel ?? "—"}</p>
             </div>
           ) : (
@@ -233,13 +245,21 @@ export function DayViewPage() {
         </div>
 
         <div className="flex items-center gap-2 pb-2">
-          <Button variant="ghost" size="sm" onClick={() => setDate((d) => addDays(d, -1))}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setDate((d) => addDays(d, -1))}
+          >
             {t("day.prev")}
           </Button>
           <Button variant="ghost" size="sm" onClick={() => setDate(today())}>
             {t("day.today")}
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setDate((d) => addDays(d, 1))}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setDate((d) => addDays(d, 1))}
+          >
             {t("day.next")}
           </Button>
         </div>
@@ -251,7 +271,9 @@ export function DayViewPage() {
         </div>
       )}
 
-      {!loading && failed && <EmptyState title={t("day.loadFailed")} message={t("day.loadFailed")} />}
+      {!loading && failed && (
+        <EmptyState title={t("day.loadFailed")} message={t("day.loadFailed")} />
+      )}
 
       {!loading && !failed && day !== null && (
         <>
@@ -261,7 +283,12 @@ export function DayViewPage() {
             `summariseDay`, which is what makes `late` testable.
           */}
           <DayKpis summary={summariseDay(day.busy, new Date())} />
-          <DayBody day={day} clock={clock} calendarDay={calendarDay} onOpenAppointment={setOpenId} />
+          <DayBody
+            day={day}
+            clock={clock}
+            calendarDay={calendarDay}
+            onOpenAppointment={setOpenId}
+          />
         </>
       )}
 
@@ -298,7 +325,12 @@ function DayBody({
     that nobody has set the day up yet.
   */
   if (day.working.length === 0) {
-    return <EmptyState title={t("day.notWorking.title")} message={t("day.notWorking.body")} />;
+    return (
+      <EmptyState
+        title={t("day.notWorking.title")}
+        message={t("day.notWorking.body")}
+      />
+    );
   }
 
   const ms = (iso: string): number => Date.parse(iso);
@@ -318,7 +350,11 @@ function DayBody({
    */
   const HOUR_MS = 3_600_000;
   const hourTicks: number[] = [];
-  for (let at = Math.ceil(axisStart / HOUR_MS) * HOUR_MS; at < axisEnd; at += HOUR_MS) {
+  for (
+    let at = Math.ceil(axisStart / HOUR_MS) * HOUR_MS;
+    at < axisEnd;
+    at += HOUR_MS
+  ) {
     hourTicks.push(at);
   }
 
@@ -340,14 +376,18 @@ function DayBody({
    * one session it was written to describe.
    */
   const crossesMidnight = day.working.some(
-    (w) => calendarDay.format(new Date(w.end)) !== calendarDay.format(new Date(w.start)),
+    (w) =>
+      calendarDay.format(new Date(w.end)) !==
+      calendarDay.format(new Date(w.start)),
   );
 
   return (
     <div className="flex flex-col gap-4">
       {day.fullyBooked && (
         <div className="rounded-lg border border-warning bg-warning-soft px-3 py-2">
-          <p className="text-sm font-medium text-warning">{t("day.fullyBooked.title")}</p>
+          <p className="text-sm font-medium text-warning">
+            {t("day.fullyBooked.title")}
+          </p>
           <p className="text-xs text-warning">{t("day.fullyBooked.body")}</p>
         </div>
       )}
@@ -474,12 +514,16 @@ function DayBody({
             day.busy.some((block) => block.status === status),
           ).map((status) => (
             <span key={status} className="flex items-center gap-2">
-              <span className={`size-3 rounded border ${TIMELINE_TONES[status]}`} />
+              <span
+                className={`size-3 rounded border ${TIMELINE_TONES[status]}`}
+              />
               {t(`appointment.status.${status}`)}
             </span>
           ))}
           <span className="flex items-center gap-2">
-            <span className={`size-3 rounded ${FREE_TONE} border border-border-strong`} />
+            <span
+              className={`size-3 rounded ${FREE_TONE} border border-border-strong`}
+            />
             {t("day.summary.free").replace("{n}", String(day.free.length))}
           </span>
           {day.unavailable.length > 0 && (
@@ -505,8 +549,12 @@ function DayBody({
                 key={block.appointmentId}
                 className="flex items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm"
               >
-                <span className="font-medium">{clock.format(new Date(block.start))}</span>
-                <span className="text-ink-muted">– {clock.format(new Date(block.end))}</span>
+                <span className="font-medium">
+                  {clock.format(new Date(block.start))}
+                </span>
+                <span className="text-ink-muted">
+                  – {clock.format(new Date(block.end))}
+                </span>
                 {/*
                   The same ruling as the timeline, in its badge form. The bar above answers "how
                   full is the day"; this answers "where is each patient in the visit", which is a
