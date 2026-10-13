@@ -173,7 +173,7 @@ export class BotController {
       slotToken: body.slotToken,
       patientId: body.patientId,
       source: "WHATSAPP",
-      complaintSummary: null,
+      complaintSummary: body.complaintSummary ?? null,
       bookingNotes: null,
       now: new Date(),
     });

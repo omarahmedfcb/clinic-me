@@ -8,7 +8,8 @@ import {
   type CalendarDay,
   type PolicyStanding,
 } from "../insurance/domain/policy-window.ts";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
+import { driverCause } from "../../prisma/driver-error.ts";
 import { refusal, type FieldName } from "../../common/refusals.ts";
 import { normalisePhone } from "../auth/phone.ts";
 import { latinSearchKey } from "./domain/transliterate.ts";
@@ -481,6 +482,40 @@ export async function getPatient(ctx: CallerContext, patientId: string): Promise
 }
 
 /**
+ * Did this error come from `patients_national_id_unique_per_tenant` refusing a second patient on one
+ * national ID? The index is the real guarantee (two receptionists saving at once cannot both win);
+ * the explicit look-ups below only make the common case answer without a rolled-back transaction.
+ *
+ * Read defensively, because Prisma's driver-adapter error shape has moved between versions: either
+ * the Postgres SQLSTATE 23505 with the constraint named in its message, or a P2002 whose `meta`
+ * mentions the column. Anything else is rethrown untouched by the caller.
+ */
+function isNationalIdViolation(error: unknown): boolean {
+  const cause = driverCause(error);
+  if (cause.code === "23505") return (cause.message ?? "").includes("national_id");
+  if ((error as { code?: unknown } | null)?.code !== "P2002") return false;
+  try {
+    return JSON.stringify((error as { meta?: unknown }).meta ?? {}).includes("national_id");
+  } catch {
+    return false;
+  }
+}
+
+function duplicateNationalId(): ConflictException {
+  return new ConflictException(refusal("DUPLICATE_NATIONAL_ID", {}));
+}
+
+/** Runs a patient write and turns the unique index's refusal into the 409 the screens expect. */
+async function refusingDuplicateNationalId<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (isNationalIdViolation(error)) throw duplicateNationalId();
+    throw error;
+  }
+}
+
+/**
  * Creates a patient.
  *
  * `nameSearchLatin` is computed here rather than by the database, because it is the volatile half
@@ -491,9 +526,14 @@ export async function getPatient(ctx: CallerContext, patientId: string): Promise
 export async function createPatient(ctx: CallerContext, input: CreatePatientInput): Promise<PatientProfile> {
   const id = uuidv7();
 
-  await withTenant(ctx.tenantId, ctx.actor, async (tx) => {
+  await refusingDuplicateNationalId(() => withTenant(ctx.tenantId, ctx.actor, async (tx) => {
     const country = await tenantCountry(tx, ctx.tenantId);
     const phoneE164 = requireE164(input.phoneE164, country, "phoneE164");
+
+    if (input.nationalId !== undefined && input.nationalId !== null) {
+      const taken = await tx.patient.findFirst({ where: { nationalId: input.nationalId }, select: { id: true } });
+      if (taken !== null) throw duplicateNationalId();
+    }
     const secondaryPhone =
       input.secondaryPhone === undefined || input.secondaryPhone === null
         ? null
@@ -539,7 +579,7 @@ export async function createPatient(ctx: CallerContext, input: CreatePatientInpu
         status: "ACTIVE",
       }),
     });
-  });
+  }));
 
   const created = await getPatient(ctx, id);
   // Unreachable: the row was just written in a committed transaction under this same tenant.
@@ -597,7 +637,7 @@ export async function updatePatient(
   patientId: string,
   input: UpdatePatientInput,
 ): Promise<PatientProfile | null> {
-  return withTenant(ctx.tenantId, ctx.actor, async (tx) => {
+  return refusingDuplicateNationalId(() => withTenant(ctx.tenantId, ctx.actor, async (tx) => {
     // Read first, under the tenant filter: a patient in another tenant is invisible here, so this
     // returns null and the controller answers 404 -- never 403, which would confirm the row exists.
     const existing = await tx.patient.findUnique({ where: { id: patientId } });
@@ -609,6 +649,14 @@ export async function updatePatient(
       input.secondaryPhone === undefined || input.secondaryPhone === null
         ? input.secondaryPhone
         : requireE164(input.secondaryPhone, country, "secondaryPhone");
+
+    if (input.nationalId !== undefined && input.nationalId !== null && input.nationalId !== existing.nationalId) {
+      const taken = await tx.patient.findFirst({
+        where: { nationalId: input.nationalId, id: { not: patientId } },
+        select: { id: true },
+      });
+      if (taken !== null) throw duplicateNationalId();
+    }
 
     const fullNameAr = input.fullNameAr ?? existing.fullNameAr;
     const fullNameEn = input.fullNameEn === undefined ? existing.fullNameEn : input.fullNameEn;
@@ -638,7 +686,7 @@ export async function updatePatient(
 
     const updated = await tx.patient.findUniqueOrThrow({ where: { id: patientId } });
     return toProfile(updated);
-  });
+  }));
 }
 
 /**

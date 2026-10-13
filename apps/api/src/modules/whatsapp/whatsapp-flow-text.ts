@@ -21,19 +21,16 @@ function pick(lang: Lang, ar: string, en: string): string {
 }
 
 export const T = {
-  welcome: (lang: Lang, clinicName: string) =>
+  /** `period` is the clinic-local half of the day (see `dayPeriodInClinic`): "morning" before 12:00,
+   *  "evening" from 12:00 on. The line ends by naming what happens next rather than asking an open
+   *  question, because the very next thing the patient receives is the first booking question. */
+  welcome: (lang: Lang, clinicName: string, period: "morning" | "evening") =>
     pick(
       lang,
-      `أهلاً بيك في ${clinicName} 👋`,
-      `Welcome to ${clinicName} 👋`,
+      `${period === "morning" ? "صباح" : "مساء"} الخير 👋 معاك المساعد الآلي من ${clinicName}.\nهساعدك تحجز ميعاد.`,
+      `Good ${period === "morning" ? "morning" : "afternoon"} 👋 This is the virtual assistant of ${clinicName}.\nI'll help you book an appointment.`,
     ),
 
-  intentQuestion: (lang: Lang) =>
-    pick(lang, "تحب تعمل إيه النهاردة؟", "What would you like to do today?"),
-  intentBooking: (lang: Lang) => pick(lang, "حجز ميعاد", "Book an appointment"),
-  intentComplaint: (lang: Lang) => pick(lang, "الإبلاغ عن مشكلة", "Report an issue"),
-  intentUnclear: (lang: Lang) =>
-    pick(lang, "معلش، مفهمتش قصدك. اختار من دول:", "Sorry, I didn't quite catch that. Please choose:"),
   closingAcknowledge: (lang: Lang) =>
     pick(lang, "تحت أمرك في أي وقت 🙏", "Happy to help anytime 🙏"),
   // -- human handoff -------------------------------------------------------------------------
@@ -46,8 +43,8 @@ export const T = {
   handoffUnavailable: (lang: Lang) =>
     pick(
       lang,
-      "معلش، التواصل مع موظف مش متاح على الرقم ده حالياً. أقدر أساعدك في حجز ميعاد أو تسجيل شكوى.",
-      "Sorry, talking to a staff member isn't available on this number right now. I can help you book an appointment or file a complaint.",
+      "معلش، التواصل مع موظف مش متاح على الرقم ده حالياً. أقدر أساعدك في حجز ميعاد.",
+      "Sorry, talking to a staff member isn't available on this number right now. I can help you book an appointment.",
     ),
   // -- identity ------------------------------------------------------------------------------
   identityConfirmSingle: (lang: Lang, name: string, phone: string) =>
@@ -59,10 +56,14 @@ export const T = {
   yes: (lang: Lang) => pick(lang, "أيوه", "Yes"),
   no: (lang: Lang) => pick(lang, "لأ", "No"),
 
-  phoneChoiceQuestion: (lang: Lang) =>
-    pick(lang, "هنستخدم رقم الواتساب ده ولا رقم تاني؟", "Should we use this WhatsApp number, or a different one?"),
-  phoneChoiceThisNumber: (lang: Lang) => pick(lang, "هذا الرقم", "This number"),
-  phoneChoiceOtherNumber: (lang: Lang) => pick(lang, "رقم تاني", "A different number"),
+  phoneChoiceQuestion: (lang: Lang, phone: string) =>
+    pick(
+      lang,
+      `الرقم اللي بتكلمنا منه (${phone}) هو نفس الرقم اللي هتحجز بيه؟`,
+      `Is the number you're messaging from (${phone}) the one you'll book with?`,
+    ),
+  phoneChoiceThisNumber: (lang: Lang) => pick(lang, "أيوه، نفس الرقم", "Yes, this one"),
+  phoneChoiceOtherNumber: (lang: Lang) => pick(lang, "لأ، رقم تاني", "A different number"),
   phoneAskQuestion: (lang: Lang) =>
     pick(lang, "تمام، ابعتلي الرقم (مثال: 01012345678).", "Sure — send me the number (e.g. +20 10 1234 5678)."),
   phoneInvalid: (lang: Lang) =>
@@ -82,7 +83,7 @@ export const T = {
   bookingDateFreeAsk: (lang: Lang) =>
     pick(lang, "اكتب التاريخ اللي يناسبك (مثال: 12-10-2026).", "Type the date that works for you (e.g. 2026-10-12)."),
   bookingDateInvalid: (lang: Lang) =>
-    pick(lang, "معلش، مش قادر أقرأ التاريخ ده. جرب مثلاً 12-10-2026.", "Sorry, I couldn't read that date. Try e.g. 2026-10-12."),
+    pick(lang, "معلش، مش قادر أفهم التاريخ ده. جرب مثلاً: بكرة، أو الخميس الجاي، أو 12-10-2026.", "Sorry, I couldn't understand that date. Try e.g. tomorrow, next Thursday, or 2026-10-12."),
   bookingDatePast: (lang: Lang) => pick(lang, "التاريخ ده فات. اختار تاريخ جاي.", "That date has already passed. Please pick an upcoming one."),
   bookingNoDatesAhead: (lang: Lang) =>
     pick(
@@ -95,12 +96,14 @@ export const T = {
   bookingNoSlotsOnDate: (lang: Lang) =>
     pick(lang, "معلش، مفيش مواعيد فاضية في اليوم ده. تحب تختار يوم تاني؟", "Sorry, there are no open times that day. Would you like to try another day?"),
 
-  bookingConfirmQuestion: (lang: Lang, doctorName: string, serviceName: string, dateLabel: string, timeLabel: string, patientName: string) =>
-    pick(
+  bookingConfirmQuestion: (lang: Lang, doctorName: string, serviceName: string, dateLabel: string, timeLabel: string, patientName: string, complaint: string | undefined) => {
+    const complaintLine = complaint === undefined ? "" : pick(lang, `\n📝 الشكوى: ${complaint}`, `\n📝 Complaint: ${complaint}`);
+    return pick(
       lang,
-      `تأكيد الحجز:\n👤 ${patientName}\n👨‍⚕️ د. ${doctorName}\n🩺 ${serviceName}\n📅 ${dateLabel}\n🕐 ${timeLabel}\n\nأأكد الحجز؟`,
-      `Confirm booking:\n👤 ${patientName}\n👨‍⚕️ Dr. ${doctorName}\n🩺 ${serviceName}\n📅 ${dateLabel}\n🕐 ${timeLabel}\n\nShall I confirm this?`,
-    ),
+      `تأكيد الحجز:\n👤 ${patientName}\n👨‍⚕️ د. ${doctorName}\n🩺 ${serviceName}\n📅 ${dateLabel}\n🕐 ${timeLabel}${complaintLine}\n\nأأكد الحجز؟`,
+      `Confirm booking:\n👤 ${patientName}\n👨‍⚕️ Dr. ${doctorName}\n🩺 ${serviceName}\n📅 ${dateLabel}\n🕐 ${timeLabel}${complaintLine}\n\nShall I confirm this?`,
+    );
+  },
   bookingConfirmButton: (lang: Lang) => pick(lang, "تأكيد", "Confirm"),
   bookingChangeButton: (lang: Lang) => pick(lang, "تغيير", "Change"),
   bookingRestart: (lang: Lang) => pick(lang, "تمام، خلينا نبدأ الحجز من جديد.", "Okay, let's start the booking again."),
@@ -113,22 +116,15 @@ export const T = {
   bookingSlotTaken: (lang: Lang) =>
     pick(lang, "معلش، حد تاني حجز الميعاد ده لسه. جرب ميعاد تاني.", "Sorry, someone else just took that slot. Please pick another."),
 
-  // -- complaint ---------------------------------------------------------------------------------
-  complaintAskQuestion: (lang: Lang) =>
-    pick(lang, "معلش على أي حاجة تضايقتلها. احكيلي حصل إيه بالظبط؟", "Sorry to hear that. Please tell me what happened."),
-  complaintTooShort: (lang: Lang) =>
-    pick(lang, "ممكن توضح أكتر؟", "Could you tell me a bit more?"),
-  complaintConfirmQuestion: (lang: Lang, text: string) =>
-    pick(lang, `تمام، هبلغ عن:\n"${text}"\n\nأأكد؟`, `Got it, I'll report:\n"${text}"\n\nShall I send this?`),
-  complaintConfirmButton: (lang: Lang) => pick(lang, "تأكيد", "Send it"),
-  complaintEditButton: (lang: Lang) => pick(lang, "تعديل", "Edit"),
-  complaintEditAsk: (lang: Lang) => pick(lang, "تمام، اكتبها تاني.", "Sure, go ahead and rewrite it."),
-  complaintSuccess: (lang: Lang, referenceNumber: string) =>
+  // -- medical complaint, asked once per booking ---------------------------------------------------
+  bookingComplaintAsk: (lang: Lang) =>
     pick(
       lang,
-      `تم تسجيل الشكوى، رقمها ${referenceNumber}. هيتم التواصل معاك في أقرب وقت.\nلو محتاج حاجة تانية أنا موجود.`,
-      `Your complaint has been logged, reference ${referenceNumber}. We'll follow up soon.\nLet me know if there's anything else.`,
+      "قولي بإختصار إيه الشكوى أو المشكلة اللي حابب تكشف عشانها؟",
+      "Briefly, what is the medical complaint you'd like to see the doctor about?",
     ),
+  bookingComplaintTooShort: (lang: Lang) =>
+    pick(lang, "ممكن توضح الشكوى أكتر شوية عشان الدكتور يكون عارف؟", "Could you describe the complaint in a bit more detail so the doctor knows?"),
 
   // -- generic ---------------------------------------------------------------------------------
   pleaseUseButtons: (lang: Lang) =>

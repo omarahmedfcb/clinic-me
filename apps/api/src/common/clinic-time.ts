@@ -31,6 +31,19 @@ export function todayInClinic(timeZone: string): string {
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
+/** Which half of the day it is in the clinic's own timezone: "morning" before 12:00, "evening" from
+ *  12:00 on. Read from the clinic's clock, never the server's -- the server may sit in any zone. */
+export function dayPeriodInClinic(timeZone: string, at: Date = new Date()): "morning" | "evening" {
+  const hourText = new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", hour12: false }).format(at);
+  const hour = Number(hourText) % 24; // some runtimes render midnight as "24"
+  return hour < 12 ? "morning" : "evening";
+}
+
+/** The weekday's English name for a clinic-local ISO date, for prompts that need to say "today is Monday". */
+export function weekdayName(isoDate: string): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "long" }).format(new Date(`${isoDate}T00:00:00Z`));
+}
+
 /**
  * Accepts the date formats a patient (or the model, converting free text) is likely to produce:
  * ISO (2026-09-23), and Egypt's everyday day-first convention with either separator

@@ -1,6 +1,17 @@
 // Parses an Egyptian national ID into the facts it encodes. Pure: no I/O, no clock. D27.
 // Evidence, never authority — the caller may overwrite anything this returns.
 
+/** Arabic-Indic (U+0660-0669) and Persian-style (U+06F0-06F9) digits as 0-9, and spaces dropped. A
+ *  receptionist on an Arabic keyboard types the former, and a national ID in them is still a
+ *  national ID -- the form and the server both read it as one rather than refusing it. Written with
+ *  escapes: the app's own source carries no literal Arabic-Indic digit (web-locale.spec.ts). */
+export function toAsciiDigits(input: string): string {
+  return input
+    .replace(/[\u0660-\u0669]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
+    .replace(/[\u06F0-\u06F9]/g, (digit) => String(digit.charCodeAt(0) - 0x06f0))
+    .replace(/\s/g, "");
+}
+
 /** `SCHEMA-DECISIONS.md` D27. Governorate codes are the official list; 88 is "born abroad". */
 const GOVERNORATES: Readonly<Record<string, string>> = {
   "01": "القاهرة",

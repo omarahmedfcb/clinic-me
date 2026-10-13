@@ -20,6 +20,7 @@ import { BirthDateField } from "./BirthDateField.tsx";
 import {
   nationalIdDisagreements,
   parseEgyptianNationalId,
+  toAsciiDigits,
 } from "../../domain/egyptian-national-id.ts";
 import { refusalText } from "../platform/refusal-text.ts";
 import {
@@ -313,9 +314,9 @@ export function NewPatientDialog({
             label={t("intake.field.nationalId")}
             numeric
             value={nationalId}
-            error={nidProblem ? t("intake.nid.invalid") : undefined}
+            error={nidProblem ? t("intake.nid.invalid") : fieldError("nationalId")}
             hint={nidFilled && !nidProblem ? t("intake.nid.filled") : undefined}
-            onChange={(e) => setNationalId(e.target.value)}
+            onChange={(e) => setNationalId(toAsciiDigits(e.target.value))}
           />
         ) : (
           <TextInput
@@ -358,6 +359,7 @@ export function NewPatientDialog({
             <TextInput
               label={t("intake.field.email")}
               value={email}
+              error={fieldError("email")}
               onChange={(e) => setEmail(e.target.value)}
             />
             <TextInput
@@ -381,9 +383,9 @@ export function NewPatientDialog({
           </div>
         </details>
 
-        {error !== null && (
+        {(error !== null || refusal !== null) && (
           <p role="alert" className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
-            {t(error)}
+            {error !== null ? t(error) : refusal !== null ? refusalText(t, refusal.code, { field: refusal.field }) : null}
           </p>
         )}
 

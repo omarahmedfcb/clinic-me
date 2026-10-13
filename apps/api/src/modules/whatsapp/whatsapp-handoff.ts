@@ -75,15 +75,15 @@ const REQUEST_WORDS = [
   "talk", "speak", "chat", "call", "connect", "transfer", "contact", "need", "want", "reach", "get me", "put me",
 ];
 
-/** A message that is really a complaint (the flow has its own path for those). */
+/** A message that is really a complaint ("the employee was rude") is not a request to reach staff. */
 const COMPLAINT_STEMS = ["شكو", "اشتكي", "مشكله", "بلاغ", "complain", "complaint"];
 
 function containsPhrase(padded: string, phrase: string): boolean {
   return padded.includes(` ${normalise(phrase)} `);
 }
 
-/** Free-text answers (a complaint's body, a name, a phone) must never be read as a command. */
-const FREE_TEXT_STEPS = new Set<string>(["COMPLAINT_TEXT", "NAME_ASK", "PHONE_ASK"]);
+/** Free-text answers (the medical complaint, a name, a phone) must never be read as a command. */
+const FREE_TEXT_STEPS = new Set<string>(["BOOKING_COMPLAINT", "NAME_ASK", "PHONE_ASK"]);
 
 export function wantsHuman(text: string, state: FlowState | null): boolean {
   if (state !== null && FREE_TEXT_STEPS.has(state.step)) return false;

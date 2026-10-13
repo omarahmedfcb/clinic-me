@@ -1,7 +1,7 @@
 // A DTO rejection that names the field, added 2026-09-15 after a mistyped short name reached the
 // operator as "a system error occurred". Additive: `message` stays, so no existing screen changes.
 
-import { BadRequestException, ValidationPipe } from "@nestjs/common";
+import { BadRequestException, Logger, ValidationPipe } from "@nestjs/common";
 import type { ValidationError } from "class-validator";
 import { FIELD_NAMES, type FieldName } from "./refusals.ts";
 
@@ -13,6 +13,23 @@ export function firstInvalidField(errors: readonly ValidationError[]): FieldName
     if (nested !== null) return nested;
   }
   return null;
+}
+
+const logger = new Logger("ValidationPipe");
+
+/**
+ * "property: rule, rule" for every rejected property, nested ones dotted. **Never the value**: what
+ * a request carried can be a patient's name, phone or national ID, and a log line is the wrong place
+ * for it. The rule names (`isEmail`, `matches`, `whitelistValidation`) are enough to tell which
+ * field failed and why.
+ */
+export function describeValidationErrors(errors: readonly ValidationError[], parent = ""): string[] {
+  return errors.flatMap((error) => {
+    const path = parent === "" ? error.property : `${parent}.${error.property}`;
+    const own = Object.keys(error.constraints ?? {});
+    const here = own.length === 0 ? [] : [`${path}: ${own.join(", ")}`];
+    return [...here, ...describeValidationErrors(error.children ?? [], path)];
+  });
 }
 
 /**
@@ -43,6 +60,9 @@ export const refusingValidationPipe = (): ValidationPipe =>
     // needs its own @Type decorator, and the one that is forgotten fails at the database instead.
     transformOptions: { enableImplicitConversion: true },
     exceptionFactory: (errors: ValidationError[]) => {
+      // Until now a rejected request left nothing behind on the server, so "the form says check the
+      // fields" could not be traced to a field.
+      logger.warn(`Request rejected by validation -- ${describeValidationErrors(errors).join("; ")}`);
       const field = firstInvalidField(errors);
       return new BadRequestException({
         code: "INVALID_FIELD",

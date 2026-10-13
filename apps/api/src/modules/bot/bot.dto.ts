@@ -55,6 +55,16 @@ export class BotBookDto {
 
   @IsUUID()
   patientId!: string;
+
+  /**
+   * Why the patient is coming, in their own words. Optional on the wire so a bot built before this
+   * field existed keeps working; the clinic's WhatsApp flow always sends it. It is stored on the
+   * appointment and copied into the consultation's complaint field when the doctor opens the visit.
+   */
+  @IsOptional()
+  @IsString()
+  @Length(1, 2000)
+  complaintSummary?: string;
 }
 
 export class BotComplaintDto {

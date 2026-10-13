@@ -28,7 +28,6 @@ import { SchedulesPage } from "../schedules/SchedulesPage.tsx";
 import { DoctorsPage } from "../doctors/DoctorsPage.tsx";
 import { ServicesPage } from "../services/ServicesPage.tsx";
 import { AuditLogPage } from "../audit/AuditLogPage.tsx";
-import { ComplaintsPage } from "../complaints/ComplaintsPage.tsx";
 import { ClinicSettingsPage } from "../settings/ClinicSettingsPage.tsx";
 import { MyDetailsPage } from "../settings/MyDetailsPage.tsx";
 import { useSession } from "../auth/session.tsx";
@@ -313,8 +312,6 @@ export function AppShell() {
             />
           ) : path === "/audit-log" ? (
             <AuditLogPage authFetch={authFetch} />
-          ) : path === "/complaints" ? (
-            <ComplaintsPage authFetch={authFetch} />
           ) : path === "/reports" ? (
             <ReportsPage authFetch={authFetch} currency={me.currency} />
           ) : path === "/settings" ? (

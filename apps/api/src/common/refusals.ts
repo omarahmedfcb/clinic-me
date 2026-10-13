@@ -104,6 +104,19 @@ export const FIELD_NAMES = [
   // parse is now refused rather than stored as typed.
   "phoneE164",
   "secondaryPhone",
+  // Patient intake, 2026-10-12: a DTO rejection on any other intake field used to name nothing, so
+  // reception saw only a generic "check the required fields" with no hint which one.
+  "fullNameAr",
+  "fullNameEn",
+  "gender",
+  "dateOfBirth",
+  "nationality",
+  "nationalId",
+  "passportNumber",
+  "governorate",
+  "referralSource",
+  "email",
+  "relationshipToContact",
   // A10, 2026-09-19: a webhook URL that is not HTTPS, or that resolves into our own network.
   "webhookUrl",
 ] as const;
@@ -220,6 +233,9 @@ export const REFUSAL_CODES = [
   "SELF_SUSPEND",
   // That number is already somebody's login. Different action from INVALID_PHONE: it parses fine.
   "DUPLICATE_PHONE",
+  // Another patient at this clinic already has that national ID. Different action from
+  // DUPLICATE_PHONE: open the existing patient instead of registering a second one.
+  "DUPLICATE_NATIONAL_ID",
   // A doctor's record belongs to the Doctors tab. The action is to go there, not to correct input.
   "NOT_EDITABLE_HERE",
   // The slot has already happened. Different action from EXPIRED_TOKEN: no fresh offer would help.

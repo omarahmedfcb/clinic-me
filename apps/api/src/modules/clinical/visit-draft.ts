@@ -129,6 +129,13 @@ export async function openDraft(
       };
     }
 
+    // What reception (or the patient, over WhatsApp) said the visit is for becomes the draft's
+    // complaint, so the doctor starts from it and edits it rather than retyping it.
+    const booked = await tx.appointment.findFirst({
+      where: { id: appointmentId },
+      select: { serviceId: true, quotedPriceMinor: true, complaintSummary: true },
+    });
+
     const created = await tx.visit.create({
       data: injected({
         id: uuidv7(),
@@ -137,16 +144,13 @@ export async function openDraft(
         appointmentId,
         status: "DRAFT",
         createdBy: caller.actor.userId,
+        complaint: booked?.complaintSummary ?? null,
       }),
       select: DRAFT_COLUMNS,
     });
 
     // The consultation reception already booked becomes this visit's first procedure line (Q25),
     // priced from what reception quoted rather than from what the service costs today.
-    const booked = await tx.appointment.findFirst({
-      where: { id: appointmentId },
-      select: { serviceId: true, quotedPriceMinor: true },
-    });
     if (booked !== null) {
       await seedReceptionLine(tx, caller.actor.userId, created.id, booked);
     }

@@ -1,4 +1,4 @@
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import { IsEmail, IsIn, IsInt, IsISO8601, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from "class-validator";
 
 /**
@@ -13,6 +13,20 @@ import { IsEmail, IsIn, IsInt, IsISO8601, IsOptional, IsString, Matches, Max, Ma
  */
 
 const NAME_MAX = 200;
+
+/**
+ * A national ID as reception types it, reduced to the digits it means: Arabic-Indic digits
+ * (U+0660-0669) and Persian-style ones from an Arabic keyboard become 0-9, and spaces or dashes dropped.
+ * Without this a perfectly valid ID typed on an Arabic keyboard failed the 14-digit check, and the
+ * form could only say "check the required fields". Non-strings pass through for the validator.
+ */
+function cleanNationalId({ value }: { value: unknown }): unknown {
+  if (typeof value !== "string") return value;
+  return value
+    .replace(/[\u0660-\u0669]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
+    .replace(/[\u06F0-\u06F9]/g, (digit) => String(digit.charCodeAt(0) - 0x06f0))
+    .replace(/[\s-]/g, "");
+}
 
 export class SearchPatientsDto {
   /**
@@ -135,6 +149,7 @@ export class CreatePatientDto {
    * warns instead of refusing.
    */
   @IsOptional()
+  @Transform(cleanNationalId)
   @Matches(/^\d{14}$/)
   nationalId?: string;
 
@@ -220,6 +235,7 @@ export class UpdatePatientDto {
   dateOfBirth?: string | null;
 
   @IsOptional()
+  @Transform(cleanNationalId)
   @IsString()
   @MaxLength(30)
   nationalId?: string | null;

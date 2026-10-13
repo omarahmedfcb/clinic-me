@@ -1,10 +1,10 @@
 // The WhatsApp bot's step machine -- code decides which fixed-template question comes next, buttons
-// and lists carry the answer back, and the model is used only for two narrow jobs: guessing intent
-// from a vague opening message, and answering an off-script question without derailing the step the
-// patient is mid-way through. Booking and filing a complaint never touch the model at all -- every
-// fact in a booking or a complaint comes from a tool result or the patient's own tap, exactly the
-// property SYSTEM_PROMPT (whatsapp-orchestrator.ts) already asked of the old all-GPT flow, now held
-// by construction instead of by instruction.
+// and lists carry the answer back, and the model is used only for two narrow jobs: reading a typed
+// date, and answering an off-script question without derailing the step the patient is mid-way
+// through. The bot books appointments and nothing else (the patient's medical complaint is one
+// question inside the booking). Every fact in a booking comes from a tool result or the patient's
+// own tap or words, exactly the property SYSTEM_PROMPT (whatsapp-orchestrator.ts) already asked of
+// the old all-GPT flow, now held by construction instead of by instruction.
 //
 // State lives in `Conversation.flowState` (schema.prisma), written and read only here. A tapped
 // button's `id` is meaningful only against the specific step that offered it -- this file is the
@@ -12,7 +12,7 @@
 
 import { normalisePhone } from "../auth/phone.ts";
 import { callGpt } from "../webchat/gpt-client.ts";
-import { formatInClinicTime, parseFlexibleDate, todayInClinic } from "../../common/clinic-time.ts";
+import { dayPeriodInClinic, formatInClinicTime, parseFlexibleDate, todayInClinic, weekdayName } from "../../common/clinic-time.ts";
 import type { BotApiClient } from "./bot-api-client.ts";
 import { detectLang, T, type Lang } from "./whatsapp-flow-text.ts";
 import type { WhatsAppButton, WhatsAppListSection } from "./whatsapp-graph-client.ts";
@@ -33,12 +33,20 @@ const SLOTS_PER_PAGE = 9;
 const DATE_SEARCH_HORIZON_DAYS = 21;
 const DATES_WANTED = 7;
 
-type Intent = "booking" | "complaint";
-
 interface Person {
   patientId: string;
   patientName: string;
+  /** The medical complaint, asked right after identity and sent with the booking so it lands in the
+   *  consultation's complaint field. Optional in the type only so a booking that was mid-way when
+   *  this field was introduced can still finish; every new booking has it before the doctor step. */
+  complaint?: string;
 }
+
+/** A complaint shorter than this is not an answer ("." or "ok") -- asked again, never skipped. */
+const MIN_COMPLAINT_CHARS = 3;
+/** The booking API accepts 2000; a patient's own words are kept to half that, plenty for a reason
+ *  for the visit and short enough to read on the doctor's screen at a glance. */
+const MAX_COMPLAINT_CHARS = 1000;
 
 /** How many consecutive turns at the same step can go by with free text that neither a button tap,
  *  the keyword matcher, nor the model could resolve to a real option, before giving up and telling
@@ -47,19 +55,19 @@ interface Person {
 const MAX_UNMATCHED_ATTEMPTS = 3;
 
 /** Every shape `Conversation.flowState` can hold. Every step past IDENTITY carries `lang` and,
- *  once resolved, the patient -- both are settled once per flow and never re-asked mid-way.
- *  `missCount` rides along on every variant via this intersection (TS distributes it across the
- *  union) rather than being repeated in each one -- `offScriptThenRepeat` is the only place that
- *  reads or writes it. */
+ *  once resolved, the patient and the medical complaint -- both are settled once per booking and
+ *  never re-asked mid-way. `missCount` rides along on every variant via this intersection (TS
+ *  distributes it across the union) rather than being repeated in each one -- `offScriptThenRepeat`
+ *  is the only place that reads or writes it. */
 type FlowStateBase = { missCount?: number };
 export type FlowState = FlowStateBase &
   (
-  | { step: "INTENT"; lang: Lang }
-  | { step: "IDENTITY_PICK"; lang: Lang; intent: Intent; phoneE164: string; options: { patientId: string; name: string }[] }
-  | { step: "IDENTITY_YESNO"; lang: Lang; intent: Intent; phoneE164: string; patientId: string; patientName: string }
-  | { step: "PHONE_CHOICE"; lang: Lang; intent: Intent }
-  | { step: "PHONE_ASK"; lang: Lang; intent: Intent }
-  | { step: "NAME_ASK"; lang: Lang; intent: Intent; phoneE164: string }
+  | { step: "PHONE_CHOICE"; lang: Lang }
+  | { step: "PHONE_ASK"; lang: Lang }
+  | { step: "IDENTITY_PICK"; lang: Lang; phoneE164: string; options: { patientId: string; name: string }[] }
+  | { step: "IDENTITY_YESNO"; lang: Lang; phoneE164: string; patientId: string; patientName: string }
+  | { step: "NAME_ASK"; lang: Lang; phoneE164: string }
+  | ({ step: "BOOKING_COMPLAINT"; lang: Lang } & Person)
   | ({ step: "BOOKING_DOCTOR"; lang: Lang } & Person)
   | ({ step: "BOOKING_SERVICE"; lang: Lang; doctorId: string; doctorName: string } & Person)
   | ({ step: "BOOKING_DATE"; lang: Lang; doctorId: string; doctorName: string; serviceId: string; serviceName: string } & Person)
@@ -87,8 +95,6 @@ export type FlowState = FlowStateBase &
       slotLabel: string;
       token: string;
     } & Person)
-  | ({ step: "COMPLAINT_TEXT"; lang: Lang } & Person)
-  | ({ step: "COMPLAINT_CONFIRM"; lang: Lang; text: string } & Person)
   );
 
 export interface FlowContext {
@@ -112,7 +118,7 @@ export interface FlowResult {
   /** `false` means this turn is not the step machine's to handle -- an interactive tap arriving
    *  with no flow state to interpret it against (a stale button from an expired session), so the
    *  caller should fall back to whatever it does for a message with nothing else to go on. Free
-   *  text with no state is never `false`: `runFlow` starts a fresh INTENT turn for it itself. */
+   *  text with no state is never `false`: `runFlow` starts a fresh booking for it itself. */
   handled: boolean;
   /** State to persist -- `null` clears it (the flow finished, or is handing off). Absent only when
    *  `handled` is `false`, since nothing here changed. */
@@ -223,11 +229,8 @@ function slotRowId(indexOnPage: number): string {
 }
 
 // -------------------------------------------------------------------------------------------
-// Intent classification and off-script fallback -- the model's only two jobs in this file
+// Off-script fallback (and, further down, typed-date parsing) -- the model's only two jobs in this file
 // -------------------------------------------------------------------------------------------
-
-const BOOKING_WORDS = ["حجز", "احجز", "أحجز", "ميعاد", "موعد", "مواعيد", "book", "appointment", "schedule"];
-const COMPLAINT_WORDS = ["شكو", "اشتكي", "مشكلة", "بلاغ", "complain", "complaint", "issue", "problem"];
 
 /** Exact-match only (via `normaliseForMatch`), deliberately not a substring check like
  *  `matchByKeyword` uses elsewhere: "شكرا" must be the *whole* message, not a word inside a longer
@@ -241,34 +244,6 @@ const CLOSING_WORDS = [
 function isClosingRemark(text: string): boolean {
   const norm = normaliseForMatch(text);
   return CLOSING_WORDS.some((w) => norm === normaliseForMatch(w));
-}
-
-/** Keyword-first on purpose: instant, free, and right often enough that a GPT round trip would only
- *  add latency to the common case. Only a message that matches neither list pays for one -- and even
- *  then, a failed or ambiguous call just falls through to the menu, never silently misroutes. */
-async function classifyIntent(text: string): Promise<Intent | null> {
-  const lower = text.toLowerCase();
-  if (COMPLAINT_WORDS.some((w) => lower.includes(w))) return "complaint";
-  if (BOOKING_WORDS.some((w) => lower.includes(w))) return "booking";
-  if (text.length < 6) return null; // "hi", "ازيك" and the like are not worth a GPT call either.
-
-  try {
-    const completion = await callGpt({
-      input: [{ role: "user", content: text }],
-      tools: [],
-      instructions:
-        'Classify the patient\'s message as one of exactly: "BOOKING" (wants to book, reschedule, or ask about an ' +
-        'appointment), "COMPLAINT" (wants to report a problem or complain), or "UNCLEAR". Reply with that one word ' +
-        "and nothing else.",
-    });
-    const word = completion.outputText?.trim().toUpperCase();
-    if (word === "BOOKING") return "booking";
-    if (word === "COMPLAINT") return "complaint";
-    return null;
-  } catch (error) {
-    console.error("WhatsApp flow: intent classification call failed", error);
-    return null;
-  }
 }
 
 /** One tappable option, reduced to what `matchByKeyword` and `classifyOrReply` need: its id, and
@@ -369,8 +344,6 @@ async function classifyOrReply(text: string, lang: Lang, options: MatchableOptio
 // -------------------------------------------------------------------------------------------
 
 export async function runFlow(ctx: FlowContext): Promise<FlowResult> {
-  const { client } = ctx;
-
   if (ctx.state === null) {
     if (ctx.input.kind === "interactive") {
       // A tap with no state to interpret it against -- almost always a button on a session that
@@ -378,7 +351,7 @@ export async function runFlow(ctx: FlowContext): Promise<FlowResult> {
       // message with nothing else to go on gets.
       if (!ctx.isNewSession) return { handled: false };
       // A brand-new session that somehow opens on a tap (a forwarded message, a client replay) --
-      // treat it exactly like free text would be treated: show the menu.
+      // treat it exactly like free text would be treated: start the booking.
       return beginTurn(ctx, "ar", null);
     }
     const text = textOf(ctx.input) ?? "";
@@ -387,8 +360,6 @@ export async function runFlow(ctx: FlowContext): Promise<FlowResult> {
   }
 
   switch (ctx.state.step) {
-    case "INTENT":
-      return stepIntent(ctx, ctx.state);
     case "IDENTITY_PICK":
       return stepIdentityPick(ctx, ctx.state);
     case "IDENTITY_YESNO":
@@ -399,6 +370,8 @@ export async function runFlow(ctx: FlowContext): Promise<FlowResult> {
       return stepPhoneAsk(ctx, ctx.state);
     case "NAME_ASK":
       return stepNameAsk(ctx, ctx.state);
+    case "BOOKING_COMPLAINT":
+      return stepBookingComplaint(ctx, ctx.state);
     case "BOOKING_DOCTOR":
       return stepBookingDoctor(ctx, ctx.state);
     case "BOOKING_SERVICE":
@@ -411,203 +384,69 @@ export async function runFlow(ctx: FlowContext): Promise<FlowResult> {
       return stepBookingSlot(ctx, ctx.state);
     case "BOOKING_CONFIRM":
       return stepBookingConfirm(ctx, ctx.state);
-    case "COMPLAINT_TEXT":
-      return stepComplaintText(ctx, ctx.state);
-    case "COMPLAINT_CONFIRM":
-      return stepComplaintConfirm(ctx, ctx.state);
   }
-  // Exhaustive switch above -- every FlowState step is handled. Satisfies noImplicitReturns without
-  // a `never` cast that would hide a future unhandled step as a silent fall-through instead of a
-  // compile error.
-  return { handled: false };
+
+  // Only reachable with a state written by an older build (INTENT, COMPLAINT_TEXT, COMPLAINT_CONFIRM
+  // -- the complaint route is gone from the bot). Such a half-finished flow is dropped and the
+  // patient is started on a fresh booking rather than left stuck on a step nothing handles.
+  const legacyLang = (ctx.state as { lang?: Lang }).lang ?? "ar";
+  return beginTurn({ ...ctx, state: null }, legacyLang, textOf(ctx.input));
 }
 
-/** New session or freshly finished flow, either way starting from nothing. `openingText` is the
- *  patient's own words if this turn is free text -- classified for intent so a clear opener skips
- *  straight past the menu -- or `null` for an interactive tap with no state (shows the menu). */
+/** New session or freshly finished flow, either way starting from nothing. The bot only books, so
+ *  there is no menu to show: the welcome line (new sessions only) and the first booking question go
+ *  out together. `openingText` is the patient's own words if this turn is free text. */
 async function beginTurn(ctx: FlowContext, lang: Lang, openingText: string | null): Promise<FlowResult> {
-  // A closing remark ("شكرا", "تمام", "thanks") is not an ambiguous *opener* -- it is very often the
-  // very next message after this file itself just said "تم الحجز ... لو محتاج حاجة تانية أنا موجود"
-  // (bookingSuccess/complaintSuccess), and showing the full intent menu in reply to "thanks" reads as
-  // not having listened. Recognised the same way a tapped button would be, before intent
-  // classification gets a chance to call it ambiguous.
+  // A closing remark ("شكرا", "تمام", "thanks") is very often the very next message after this file
+  // itself just said "تم الحجز ... لو محتاج حاجة تانية أنا موجود" (bookingSuccess), and starting a
+  // brand-new booking in reply to "thanks" reads as not having listened.
   if (openingText !== null && isClosingRemark(openingText)) {
     return { handled: true, nextState: null, outgoing: { kind: "text", text: T.closingAcknowledge(lang) } };
   }
 
-  const welcomeLine = ctx.isNewSession ? `${T.welcome(lang, ctx.tenant.clinicName)}\n\n` : "";
-
-  const intent = openingText === null ? null : await classifyIntent(openingText);
-  if (intent === null) {
-    return {
-      handled: true,
-      nextState: { step: "INTENT", lang },
-      outgoing: {
-        kind: "buttons",
-        body: `${welcomeLine}${T.intentQuestion(lang)}`,
-        buttons: [
-          { id: "intent_booking", title: T.intentBooking(lang) },
-          { id: "intent_complaint", title: T.intentComplaint(lang) },
-        ],
-      },
-    };
-  }
-
-  return beginIdentity(ctx, lang, intent, welcomeLine);
-}
-
-async function stepIntent(ctx: FlowContext, state: Extract<FlowState, { step: "INTENT" }>): Promise<FlowResult> {
-  const id = idOf(ctx.input);
-  if (id === "intent_booking") return beginIdentity(ctx, state.lang, "booking", "");
-  if (id === "intent_complaint") return beginIdentity(ctx, state.lang, "complaint", "");
-
-  const text = textOf(ctx.input);
-  if (text !== null) {
-    const intent = await classifyIntent(text);
-    if (intent !== null) return beginIdentity(ctx, state.lang, intent, "");
-  }
-
-  return {
-    handled: true,
-    nextState: state,
-    outgoing: {
-      kind: "buttons",
-      body: T.intentUnclear(state.lang),
-      buttons: [
-        { id: "intent_booking", title: T.intentBooking(state.lang) },
-        { id: "intent_complaint", title: T.intentComplaint(state.lang) },
-      ],
-    },
-  };
+  const welcomeLine = ctx.isNewSession ? `${T.welcome(lang, ctx.tenant.clinicName, dayPeriodInClinic(ctx.tenant.timezone))}\n\n` : "";
+  return beginIdentity(ctx, lang, welcomeLine);
 }
 
 // -------------------------------------------------------------------------------------------
-// Identity: the same sub-flow whether the intent is booking or a complaint
+// Identity: which number is booking, then who on that number
 // -------------------------------------------------------------------------------------------
 
-async function beginIdentity(ctx: FlowContext, lang: Lang, intent: Intent, prefix: string): Promise<FlowResult> {
-  const phoneE164 = ctx.phoneE164;
-  const found = await ctx.client.findPatientsByPhone(phoneE164);
-
-  if (!found.ok) return errorResult(lang, prefix);
-
-  if (found.value.patients.length === 0) {
-    return {
-      handled: true,
-      nextState: { step: "PHONE_CHOICE", lang, intent },
-      outgoing: {
-        kind: "buttons",
-        body: `${prefix}${T.phoneChoiceQuestion(lang)}`,
-        buttons: [
-          { id: "phone_same", title: T.phoneChoiceThisNumber(lang) },
-          { id: "phone_other", title: T.phoneChoiceOtherNumber(lang) },
-        ],
-      },
-    };
-  }
-
-  if (found.value.patients.length === 1) {
-    const only = found.value.patients[0]!;
-    return {
-      handled: true,
-      nextState: { step: "IDENTITY_YESNO", lang, intent, phoneE164, patientId: only.patientId, patientName: only.displayName },
-      outgoing: {
-        kind: "buttons",
-        body: `${prefix}${T.identityConfirmSingle(lang, only.displayName, phoneE164)}`,
-        buttons: [
-          { id: "yn_yes", title: T.yes(lang) },
-          { id: "yn_no", title: T.no(lang) },
-        ],
-      },
-    };
-  }
-
-  const options = found.value.patients.map((p) => ({ patientId: p.patientId, name: p.displayName }));
-  const rows = options.map((option) => ({ id: `pat_${option.patientId}`, title: option.name.slice(0, 24) }));
-  rows.push({ id: "pat_other", title: T.identityOptionSomeoneElse(lang).slice(0, 24) });
-
+function phoneChoiceOutgoing(lang: Lang, phoneE164: string, prefix: string): FlowOutgoing {
   return {
-    handled: true,
-    nextState: { step: "IDENTITY_PICK", lang, intent, phoneE164, options },
-    outgoing: {
-      kind: "list",
-      body: `${prefix}${T.identityConfirmMultiple(lang)}`,
-      buttonLabel: T.bookingListOpen(lang),
-      sections: [{ title: T.identityConfirmMultiple(lang).slice(0, 24), rows }],
-    },
-  };
-}
-
-async function stepIdentityYesNo(ctx: FlowContext, state: Extract<FlowState, { step: "IDENTITY_YESNO" }>): Promise<FlowResult> {
-  const id = idOf(ctx.input);
-  if (id === "yn_yes") {
-    return afterIdentity(ctx, state.lang, state.intent, { patientId: state.patientId, patientName: state.patientName });
-  }
-  if (id === "yn_no") {
-    return {
-      handled: true,
-      nextState: { step: "NAME_ASK", lang: state.lang, intent: state.intent, phoneE164: state.phoneE164 },
-      outgoing: { kind: "text", text: T.nameAskQuestion(state.lang) },
-    };
-  }
-  return offScriptThenRepeat(ctx, state.lang, {
     kind: "buttons",
-    body: T.identityConfirmSingle(state.lang, state.patientName, state.phoneE164),
+    body: `${prefix}${T.phoneChoiceQuestion(lang, phoneE164)}`,
     buttons: [
-      { id: "yn_yes", title: T.yes(state.lang) },
-      { id: "yn_no", title: T.no(state.lang) },
+      { id: "yn_yes", title: T.phoneChoiceThisNumber(lang) },
+      { id: "yn_no", title: T.phoneChoiceOtherNumber(lang) },
     ],
-  });
+  };
 }
 
-async function stepIdentityPick(ctx: FlowContext, state: Extract<FlowState, { step: "IDENTITY_PICK" }>): Promise<FlowResult> {
-  const id = idOf(ctx.input);
-  if (id === "pat_other") {
-    return {
-      handled: true,
-      nextState: { step: "NAME_ASK", lang: state.lang, intent: state.intent, phoneE164: state.phoneE164 },
-      outgoing: { kind: "text", text: T.nameAskQuestion(state.lang) },
-    };
-  }
-  const picked = id?.startsWith("pat_") ? state.options.find((o) => `pat_${o.patientId}` === id) : undefined;
-  if (picked !== undefined) {
-    return afterIdentity(ctx, state.lang, state.intent, { patientId: picked.patientId, patientName: picked.name });
-  }
-
-  const rows = state.options.map((option) => ({ id: `pat_${option.patientId}`, title: option.name.slice(0, 24) }));
-  rows.push({ id: "pat_other", title: T.identityOptionSomeoneElse(state.lang).slice(0, 24) });
-  return offScriptThenRepeat(ctx, state.lang, {
-    kind: "list",
-    body: T.identityConfirmMultiple(state.lang),
-    buttonLabel: T.bookingListOpen(state.lang),
-    sections: [{ title: T.identityConfirmMultiple(state.lang).slice(0, 24), rows }],
-  });
+/** Always the first question: the WhatsApp number the patient is writing from is only a guess at
+ *  the number they want to book under (a relative's phone, a work phone), so it is confirmed before
+ *  anything is looked up against it. */
+async function beginIdentity(ctx: FlowContext, lang: Lang, prefix: string): Promise<FlowResult> {
+  return {
+    handled: true,
+    nextState: { step: "PHONE_CHOICE", lang },
+    outgoing: phoneChoiceOutgoing(lang, ctx.phoneE164, prefix),
+  };
 }
 
 async function stepPhoneChoice(ctx: FlowContext, state: Extract<FlowState, { step: "PHONE_CHOICE" }>): Promise<FlowResult> {
   const id = idOf(ctx.input);
-  if (id === "phone_same") {
+  // `phone_same` / `phone_other` are the ids an older build offered -- still honoured for a patient
+  // tapping a button from a conversation that was mid-way through when this shipped.
+  if (id === "yn_yes" || id === "phone_same") return lookupIdentity(ctx, state.lang, ctx.phoneE164);
+  if (id === "yn_no" || id === "phone_other") {
     return {
       handled: true,
-      nextState: { step: "NAME_ASK", lang: state.lang, intent: state.intent, phoneE164: ctx.phoneE164 },
-      outgoing: { kind: "text", text: T.nameAskQuestion(state.lang) },
-    };
-  }
-  if (id === "phone_other") {
-    return {
-      handled: true,
-      nextState: { step: "PHONE_ASK", lang: state.lang, intent: state.intent },
+      nextState: { step: "PHONE_ASK", lang: state.lang },
       outgoing: { kind: "text", text: T.phoneAskQuestion(state.lang) },
     };
   }
-  return offScriptThenRepeat(ctx, state.lang, {
-    kind: "buttons",
-    body: T.phoneChoiceQuestion(state.lang),
-    buttons: [
-      { id: "phone_same", title: T.phoneChoiceThisNumber(state.lang) },
-      { id: "phone_other", title: T.phoneChoiceOtherNumber(state.lang) },
-    ],
-  });
+  return offScriptThenRepeat(ctx, state.lang, phoneChoiceOutgoing(state.lang, ctx.phoneE164, ""));
 }
 
 async function stepPhoneAsk(ctx: FlowContext, state: Extract<FlowState, { step: "PHONE_ASK" }>): Promise<FlowResult> {
@@ -618,21 +457,20 @@ async function stepPhoneAsk(ctx: FlowContext, state: Extract<FlowState, { step: 
   }
   // A different number the patient names is their contact phone only -- the WhatsApp sender stays
   // the conversation's own contact (whatsapp-conversation.ts's Contact row is never touched here).
-  // Re-running identity against it, without offering the phone choice a second time, covers the
-  // case where that other number *also* already has patients on file.
-  return beginIdentityForKnownPhone(ctx, state.lang, state.intent, normalised);
+  return lookupIdentity(ctx, state.lang, normalised);
 }
 
-/** Identical to `beginIdentity` except the phone to check is not `ctx.phoneE164` -- used only from
- *  `stepPhoneAsk`, once the patient has named a different number to book under. */
-async function beginIdentityForKnownPhone(ctx: FlowContext, lang: Lang, intent: Intent, phoneE164: string): Promise<FlowResult> {
+/** The number to book under is settled; find who is registered on it and ask whether that is the
+ *  patient. Nobody on file means a new patient (name next); one person is confirmed with yes/no;
+ *  several are offered as a list with "someone else". */
+async function lookupIdentity(ctx: FlowContext, lang: Lang, phoneE164: string): Promise<FlowResult> {
   const found = await ctx.client.findPatientsByPhone(phoneE164);
   if (!found.ok) return errorResult(lang, "");
 
   if (found.value.patients.length === 0) {
     return {
       handled: true,
-      nextState: { step: "NAME_ASK", lang, intent, phoneE164 },
+      nextState: { step: "NAME_ASK", lang, phoneE164 },
       outgoing: { kind: "text", text: T.nameAskQuestion(lang) },
     };
   }
@@ -640,30 +478,71 @@ async function beginIdentityForKnownPhone(ctx: FlowContext, lang: Lang, intent: 
     const only = found.value.patients[0]!;
     return {
       handled: true,
-      nextState: { step: "IDENTITY_YESNO", lang, intent, phoneE164, patientId: only.patientId, patientName: only.displayName },
-      outgoing: {
-        kind: "buttons",
-        body: T.identityConfirmSingle(lang, only.displayName, phoneE164),
-        buttons: [
-          { id: "yn_yes", title: T.yes(lang) },
-          { id: "yn_no", title: T.no(lang) },
-        ],
-      },
+      nextState: { step: "IDENTITY_YESNO", lang, phoneE164, patientId: only.patientId, patientName: only.displayName },
+      outgoing: identityYesNoOutgoing(lang, only.displayName, phoneE164),
     };
   }
   const options = found.value.patients.map((p) => ({ patientId: p.patientId, name: p.displayName }));
+  return {
+    handled: true,
+    nextState: { step: "IDENTITY_PICK", lang, phoneE164, options },
+    outgoing: identityPickOutgoing(lang, options),
+  };
+}
+
+function identityYesNoOutgoing(lang: Lang, patientName: string, phoneE164: string): FlowOutgoing {
+  return {
+    kind: "buttons",
+    body: T.identityConfirmSingle(lang, patientName, phoneE164),
+    buttons: [
+      { id: "yn_yes", title: T.yes(lang) },
+      { id: "yn_no", title: T.no(lang) },
+    ],
+  };
+}
+
+function identityPickOutgoing(lang: Lang, options: { patientId: string; name: string }[]): FlowOutgoing {
   const rows = options.map((option) => ({ id: `pat_${option.patientId}`, title: option.name.slice(0, 24) }));
   rows.push({ id: "pat_other", title: T.identityOptionSomeoneElse(lang).slice(0, 24) });
   return {
-    handled: true,
-    nextState: { step: "IDENTITY_PICK", lang, intent, phoneE164, options },
-    outgoing: {
-      kind: "list",
-      body: T.identityConfirmMultiple(lang),
-      buttonLabel: T.bookingListOpen(lang),
-      sections: [{ title: T.identityConfirmMultiple(lang).slice(0, 24), rows }],
-    },
+    kind: "list",
+    body: T.identityConfirmMultiple(lang),
+    buttonLabel: T.bookingListOpen(lang),
+    sections: [{ title: T.identityConfirmMultiple(lang).slice(0, 24), rows }],
   };
+}
+
+async function stepIdentityYesNo(ctx: FlowContext, state: Extract<FlowState, { step: "IDENTITY_YESNO" }>): Promise<FlowResult> {
+  const id = idOf(ctx.input);
+  if (id === "yn_yes") {
+    return afterIdentity(state.lang, { patientId: state.patientId, patientName: state.patientName });
+  }
+  if (id === "yn_no") {
+    // Not this person: never rename the record on file -- it belongs to whoever it describes, with
+    // their own history -- so the name asked for next becomes a new patient on the same number.
+    return {
+      handled: true,
+      nextState: { step: "NAME_ASK", lang: state.lang, phoneE164: state.phoneE164 },
+      outgoing: { kind: "text", text: T.nameAskQuestion(state.lang) },
+    };
+  }
+  return offScriptThenRepeat(ctx, state.lang, identityYesNoOutgoing(state.lang, state.patientName, state.phoneE164));
+}
+
+async function stepIdentityPick(ctx: FlowContext, state: Extract<FlowState, { step: "IDENTITY_PICK" }>): Promise<FlowResult> {
+  const id = idOf(ctx.input);
+  if (id === "pat_other") {
+    return {
+      handled: true,
+      nextState: { step: "NAME_ASK", lang: state.lang, phoneE164: state.phoneE164 },
+      outgoing: { kind: "text", text: T.nameAskQuestion(state.lang) },
+    };
+  }
+  const picked = id?.startsWith("pat_") ? state.options.find((o) => `pat_${o.patientId}` === id) : undefined;
+  if (picked !== undefined) {
+    return afterIdentity(state.lang, { patientId: picked.patientId, patientName: picked.name });
+  }
+  return offScriptThenRepeat(ctx, state.lang, identityPickOutgoing(state.lang, state.options));
 }
 
 async function stepNameAsk(ctx: FlowContext, state: Extract<FlowState, { step: "NAME_ASK" }>): Promise<FlowResult> {
@@ -671,26 +550,81 @@ async function stepNameAsk(ctx: FlowContext, state: Extract<FlowState, { step: "
   if (!text || text.length < 2) {
     return { handled: true, nextState: state, outgoing: { kind: "text", text: T.nameInvalid(state.lang) } };
   }
+
+  // The same person typing their name twice (a retry after a dropped reply, a second chat on the
+  // same number) must not become two patients: reuse the record already on this number whose name
+  // reads the same. Anything else -- including a different name -- is a new patient.
+  const existing = await ctx.client.findPatientsByPhone(state.phoneE164);
+  if (existing.ok) {
+    const wanted = normaliseForMatch(text);
+    const same = existing.value.patients.find((p) => normaliseForMatch(p.displayName) === wanted);
+    if (same !== undefined) return afterIdentity(state.lang, { patientId: same.patientId, patientName: same.displayName });
+  }
+
   const created = await ctx.client.createProvisionalPatient({ fullNameAr: text, phoneE164: state.phoneE164 });
   if (!created.ok) return errorResult(state.lang, "");
-  return afterIdentity(ctx, state.lang, state.intent, { patientId: created.value.patientId, patientName: created.value.displayName });
+  return afterIdentity(state.lang, { patientId: created.value.patientId, patientName: created.value.displayName });
 }
 
-/** Identity resolved -- branch into whichever intent this turn started with. */
-async function afterIdentity(ctx: FlowContext, lang: Lang, intent: Intent, person: Person): Promise<FlowResult> {
-  if (intent === "complaint") {
-    return {
-      handled: true,
-      nextState: { step: "COMPLAINT_TEXT", lang, ...person },
-      outgoing: { kind: "text", text: T.complaintAskQuestion(lang) },
-    };
+/** Identity resolved -- the medical complaint is the next thing a booking needs, before the doctor. */
+function afterIdentity(lang: Lang, person: Person): FlowResult {
+  return {
+    handled: true,
+    nextState: { step: "BOOKING_COMPLAINT", lang, ...person },
+    outgoing: { kind: "text", text: T.bookingComplaintAsk(lang) },
+  };
+}
+
+/** The complaint is required -- it is the reason for the visit, and it lands in the consultation's
+ *  complaint field for the doctor to see (and edit). Free text, so no keyword or model matching:
+ *  whatever the patient writes here, if it has substance, is the answer. */
+async function stepBookingComplaint(ctx: FlowContext, state: Extract<FlowState, { step: "BOOKING_COMPLAINT" }>): Promise<FlowResult> {
+  const text = textOf(ctx.input)?.trim();
+  if (text === undefined) {
+    // A stale button tap -- nothing to read, so the question is simply asked again.
+    return { handled: true, nextState: state, outgoing: { kind: "text", text: T.bookingComplaintAsk(state.lang) } };
   }
-  return beginBookingDoctor(ctx, lang, person);
+  if (text.length < MIN_COMPLAINT_CHARS) {
+    return { handled: true, nextState: state, outgoing: { kind: "text", text: T.bookingComplaintTooShort(state.lang) } };
+  }
+  return beginBookingDoctor(ctx, state.lang, {
+    patientId: state.patientId,
+    patientName: state.patientName,
+    complaint: text.slice(0, MAX_COMPLAINT_CHARS),
+  });
 }
 
 // -------------------------------------------------------------------------------------------
 // Booking
 // -------------------------------------------------------------------------------------------
+
+/** What every booking step after the complaint carries, so each one can build the next step's state
+ *  without re-listing the patient's fields (a field forgotten in one of them is a silent drop). */
+type BookingBase = { lang: Lang; doctorId: string; doctorName: string; serviceId: string; serviceName: string } & Person;
+
+function personOf(state: Person): Person {
+  return {
+    patientId: state.patientId,
+    patientName: state.patientName,
+    ...(state.complaint === undefined ? {} : { complaint: state.complaint }),
+  };
+}
+
+function bookingBaseOf(state: BookingBase): BookingBase {
+  return {
+    lang: state.lang,
+    doctorId: state.doctorId,
+    doctorName: state.doctorName,
+    serviceId: state.serviceId,
+    serviceName: state.serviceName,
+    ...personOf(state),
+  };
+}
+
+function doctorListOutgoing(lang: Lang, doctors: { id: string; fullName: string; specialty: string }[]): FlowOutgoing {
+  const rows = doctors.map((d) => ({ id: `doc_${d.id}`, title: d.fullName.slice(0, 24), description: d.specialty.slice(0, 72) }));
+  return { kind: "list", body: T.bookingDoctorQuestion(lang), buttonLabel: T.bookingListOpen(lang), sections: [{ title: T.bookingDoctorQuestion(lang).slice(0, 24), rows }] };
+}
 
 async function beginBookingDoctor(ctx: FlowContext, lang: Lang, person: Person): Promise<FlowResult> {
   const doctors = await ctx.client.listDoctors();
@@ -702,27 +636,29 @@ async function beginBookingDoctor(ctx: FlowContext, lang: Lang, person: Person):
     return beginBookingService(ctx, lang, person, { id: only.id, name: only.fullName });
   }
 
-  const rows = doctors.value.doctors.map((d) => ({ id: `doc_${d.id}`, title: d.fullName.slice(0, 24), description: d.specialty.slice(0, 72) }));
   return {
     handled: true,
     nextState: { step: "BOOKING_DOCTOR", lang, ...person },
-    outgoing: { kind: "list", body: T.bookingDoctorQuestion(lang), buttonLabel: T.bookingListOpen(lang), sections: [{ title: T.bookingDoctorQuestion(lang).slice(0, 24), rows }] },
+    outgoing: doctorListOutgoing(lang, doctors.value.doctors),
   };
 }
 
 async function stepBookingDoctor(ctx: FlowContext, state: Extract<FlowState, { step: "BOOKING_DOCTOR" }>): Promise<FlowResult> {
   const id = idOf(ctx.input);
+  const doctors = await ctx.client.listDoctors();
   if (id?.startsWith("doc_")) {
-    const doctors = await ctx.client.listDoctors();
     if (!doctors.ok) return errorResult(state.lang, "");
     const picked = doctors.value.doctors.find((d) => d.id === id.slice(4));
     if (picked !== undefined) {
-      return beginBookingService(ctx, state.lang, { patientId: state.patientId, patientName: state.patientName }, { id: picked.id, name: picked.fullName });
+      return beginBookingService(ctx, state.lang, personOf(state), { id: picked.id, name: picked.fullName });
     }
   }
-  const doctors = await ctx.client.listDoctors();
-  const rows = doctors.ok ? doctors.value.doctors.map((d) => ({ id: `doc_${d.id}`, title: d.fullName.slice(0, 24), description: d.specialty.slice(0, 72) })) : [];
-  return offScriptThenRepeat(ctx, state.lang, { kind: "list", body: T.bookingDoctorQuestion(state.lang), buttonLabel: T.bookingListOpen(state.lang), sections: [{ title: T.bookingDoctorQuestion(state.lang).slice(0, 24), rows }] });
+  return offScriptThenRepeat(ctx, state.lang, doctorListOutgoing(state.lang, doctors.ok ? doctors.value.doctors : []));
+}
+
+function serviceListOutgoing(lang: Lang, services: { id: string; nameAr: string; nameEn: string }[]): FlowOutgoing {
+  const rows = services.map((s) => ({ id: `svc_${s.id}`, title: (lang === "ar" ? s.nameAr : s.nameEn).slice(0, 24) }));
+  return { kind: "list", body: T.bookingServiceQuestion(lang), buttonLabel: T.bookingListOpen(lang), sections: [{ title: T.bookingServiceQuestion(lang).slice(0, 24), rows }] };
 }
 
 async function beginBookingService(ctx: FlowContext, lang: Lang, person: Person, doctor: { id: string; name: string }): Promise<FlowResult> {
@@ -735,29 +671,25 @@ async function beginBookingService(ctx: FlowContext, lang: Lang, person: Person,
     return beginBookingDate(ctx, lang, person, doctor, { id: only.id, name: lang === "ar" ? only.nameAr : only.nameEn });
   }
 
-  const rows = services.value.services.map((s) => ({ id: `svc_${s.id}`, title: (lang === "ar" ? s.nameAr : s.nameEn).slice(0, 24) }));
   return {
     handled: true,
     nextState: { step: "BOOKING_SERVICE", lang, doctorId: doctor.id, doctorName: doctor.name, ...person },
-    outgoing: { kind: "list", body: T.bookingServiceQuestion(lang), buttonLabel: T.bookingListOpen(lang), sections: [{ title: T.bookingServiceQuestion(lang).slice(0, 24), rows }] },
+    outgoing: serviceListOutgoing(lang, services.value.services),
   };
 }
 
 async function stepBookingService(ctx: FlowContext, state: Extract<FlowState, { step: "BOOKING_SERVICE" }>): Promise<FlowResult> {
   const id = idOf(ctx.input);
-  const person: Person = { patientId: state.patientId, patientName: state.patientName };
   const doctor = { id: state.doctorId, name: state.doctorName };
+  const services = await ctx.client.listServices();
   if (id?.startsWith("svc_")) {
-    const services = await ctx.client.listServices();
     if (!services.ok) return errorResult(state.lang, "");
     const picked = services.value.services.find((s) => s.id === id.slice(4));
     if (picked !== undefined) {
-      return beginBookingDate(ctx, state.lang, person, doctor, { id: picked.id, name: state.lang === "ar" ? picked.nameAr : picked.nameEn });
+      return beginBookingDate(ctx, state.lang, personOf(state), doctor, { id: picked.id, name: state.lang === "ar" ? picked.nameAr : picked.nameEn });
     }
   }
-  const services = await ctx.client.listServices();
-  const rows = services.ok ? services.value.services.map((s) => ({ id: `svc_${s.id}`, title: (state.lang === "ar" ? s.nameAr : s.nameEn).slice(0, 24) })) : [];
-  return offScriptThenRepeat(ctx, state.lang, { kind: "list", body: T.bookingServiceQuestion(state.lang), buttonLabel: T.bookingListOpen(state.lang), sections: [{ title: T.bookingServiceQuestion(state.lang).slice(0, 24), rows }] });
+  return offScriptThenRepeat(ctx, state.lang, serviceListOutgoing(state.lang, services.ok ? services.value.services : []));
 }
 
 async function beginBookingDate(
@@ -772,29 +704,81 @@ async function beginBookingDate(
     return { handled: true, nextState: null, outgoing: { kind: "text", text: T.bookingNoDatesAhead(lang) } };
   }
 
-  const rows = dates.map((iso) => ({ id: `date_${iso}`, title: dateRowLabel(iso, lang) }));
-  rows.push({ id: "date_other", title: T.bookingDateOther(lang) });
-
   return {
     handled: true,
     nextState: { step: "BOOKING_DATE", lang, doctorId: doctor.id, doctorName: doctor.name, serviceId: service.id, serviceName: service.name, ...person },
-    outgoing: { kind: "list", body: T.bookingDateQuestion(lang), buttonLabel: T.bookingListOpen(lang), sections: [{ title: T.bookingDateQuestion(lang).slice(0, 24), rows }] },
+    outgoing: dateListOutgoing(lang, dates),
   };
+}
+
+function dateListOutgoing(lang: Lang, dates: string[]): FlowOutgoing {
+  const rows = dates.map((iso) => ({ id: `date_${iso}`, title: dateRowLabel(iso, lang) }));
+  rows.push({ id: "date_other", title: T.bookingDateOther(lang) });
+  return { kind: "list", body: T.bookingDateQuestion(lang), buttonLabel: T.bookingListOpen(lang), sections: [{ title: T.bookingDateQuestion(lang).slice(0, 24), rows }] };
+}
+
+/** A slot the patient can still take: it starts after `now`. The API's own list is not trusted to
+ *  have dropped slots earlier today (it answers for a whole calendar day), so every list built here
+ *  -- the day's slots, and the check that a day is worth offering at all -- applies this one rule. */
+function isFutureSlot(slot: { start: string }, now: Date): boolean {
+  return new Date(slot.start) > now;
 }
 
 /** Probes forward day by day (sequential, not parallel -- a chat reply has no reason to fire twenty
  *  concurrent requests at the slot engine) until `DATES_WANTED` open days are found or the horizon
- *  runs out. Answers "be aware of the doctor's free days" (the founder's Q7) without a dedicated
- *  bot-side endpoint: a day with nothing bookable simply never makes the list. */
+ *  runs out. A day with nothing bookable *from this moment on* never makes the list -- today
+ *  included: once the last slot of the day has started, today is not offered. */
 async function findUpcomingDates(client: BotApiClient, doctorId: string, serviceId: string, timezone: string): Promise<string[]> {
   const dates: string[] = [];
   const today = todayInClinic(timezone);
+  const now = new Date();
   for (let offset = 0; offset < DATE_SEARCH_HORIZON_DAYS && dates.length < DATES_WANTED; offset++) {
     const date = offset === 0 ? today : addDaysIso(today, offset);
     const result = await client.listSlots({ doctorId, serviceId, date });
-    if (result.ok && result.value.slots.length > 0) dates.push(date);
+    if (result.ok && result.value.slots.some((slot) => isFutureSlot(slot, now))) dates.push(date);
   }
   return dates;
+}
+
+/** Reads a typed date with the model, which understands what a keyword list cannot ("الخميس الجاي",
+ *  "بعد بكرة", "next Sunday", "12 أكتوبر"), and is told today's date so relative words resolve
+ *  against the clinic's calendar. The answer is never trusted as given: it must be a real calendar
+ *  date in `YYYY-MM-DD` shape or it is treated as no answer at all. */
+async function parseDateWithModel(text: string, timezone: string): Promise<string | null> {
+  const today = todayInClinic(timezone);
+  try {
+    const completion = await callGpt({
+      input: [{ role: "user", content: text }],
+      tools: [],
+      instructions:
+        `A clinic's WhatsApp bot asked a patient which day they want an appointment. Today is ${today} (${weekdayName(today)}) in Egypt. ` +
+        "Convert the patient's message to exactly one calendar date. Rules: dates are day-first (Egyptian convention), so 5-10 means 5 October; " +
+        '"بكرة"/"tomorrow" is tomorrow and "بعد بكرة" is the day after tomorrow; a weekday name ("الخميس", "next Sunday", "الأحد الجاي") ' +
+        "means the next such weekday after today; a date with no year means its next upcoming occurrence; Arabic-Indic digits are digits. " +
+        "Reply with ONLY the date as YYYY-MM-DD. If the message is not a date, or cannot be pinned to a single day, reply with exactly NONE.",
+    });
+    const raw = completion.outputText?.trim() ?? "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+    const asDate = new Date(`${raw}T00:00:00Z`);
+    if (Number.isNaN(asDate.getTime()) || asDate.toISOString().slice(0, 10) !== raw) return null;
+    return raw;
+  } catch (error) {
+    console.error("WhatsApp flow: date parsing call failed", error);
+    return null;
+  }
+}
+
+/** Typed free text -> a date. The model first; the local parser (`parseFlowDate`) only as the net
+ *  under it, for the moment the model call fails or declines, so a plain "12-10-2026" still works
+ *  with the model down. */
+async function resolveTypedDate(text: string, timezone: string): Promise<string | null> {
+  return (await parseDateWithModel(text, timezone)) ?? parseFlowDate(text, timezone);
+}
+
+/** A bare one- or two-digit number typed under a numbered list means "that row", not "the 5th of the
+ *  month" -- `offScriptThenRepeat`'s keyword matcher resolves it, so it is never sent to the model. */
+function isListIndexReply(text: string): boolean {
+  return /^[0-9٠-٩]{1,2}$/.test(text.trim());
 }
 
 async function stepBookingDate(ctx: FlowContext, state: Extract<FlowState, { step: "BOOKING_DATE" }>): Promise<FlowResult> {
@@ -802,7 +786,7 @@ async function stepBookingDate(ctx: FlowContext, state: Extract<FlowState, { ste
   if (id === "date_other") {
     return {
       handled: true,
-      nextState: { step: "BOOKING_DATE_FREE", lang: state.lang, doctorId: state.doctorId, doctorName: state.doctorName, serviceId: state.serviceId, serviceName: state.serviceName, patientId: state.patientId, patientName: state.patientName },
+      nextState: { step: "BOOKING_DATE_FREE", ...bookingBaseOf(state) },
       outgoing: { kind: "text", text: T.bookingDateFreeAsk(state.lang) },
     };
   }
@@ -810,9 +794,10 @@ async function stepBookingDate(ctx: FlowContext, state: Extract<FlowState, { ste
     return listSlotsForDate(ctx, state, id.slice(5));
   }
 
+  // Anything typed instead of picking a row goes to the model to be read as a date.
   const text = textOf(ctx.input);
-  if (text !== null) {
-    const parsed = parseFlowDate(text, ctx.tenant.timezone);
+  if (text !== null && !isListIndexReply(text)) {
+    const parsed = await resolveTypedDate(text, ctx.tenant.timezone);
     if (parsed !== null) {
       if (parsed < todayInClinic(ctx.tenant.timezone)) {
         return { handled: true, nextState: state, outgoing: { kind: "text", text: T.bookingDatePast(state.lang) } };
@@ -826,7 +811,7 @@ async function stepBookingDate(ctx: FlowContext, state: Extract<FlowState, { ste
 
 async function stepBookingDateFree(ctx: FlowContext, state: Extract<FlowState, { step: "BOOKING_DATE_FREE" }>): Promise<FlowResult> {
   const text = textOf(ctx.input);
-  const parsed = text === null ? null : parseFlowDate(text, ctx.tenant.timezone);
+  const parsed = text === null ? null : await resolveTypedDate(text, ctx.tenant.timezone);
   if (parsed === null) {
     return { handled: true, nextState: state, outgoing: { kind: "text", text: T.bookingDateInvalid(state.lang) } };
   }
@@ -839,129 +824,100 @@ async function stepBookingDateFree(ctx: FlowContext, state: Extract<FlowState, {
 /** Rebuilds the date list for re-prompting `BOOKING_DATE` after an off-script detour -- the list
  *  itself is cheap to recompute and storing it a second time in state would only risk it going
  *  stale between the original send and the repeat. */
-async function bookingDateOutgoing(ctx: FlowContext, state: Extract<FlowState, { step: "BOOKING_DATE" }>): Promise<FlowOutgoing> {
+async function bookingDateOutgoing(ctx: FlowContext, state: BookingBase): Promise<FlowOutgoing> {
   const dates = await findUpcomingDates(ctx.client, state.doctorId, state.serviceId, ctx.tenant.timezone);
-  const rows = dates.map((iso) => ({ id: `date_${iso}`, title: dateRowLabel(iso, state.lang) }));
-  rows.push({ id: "date_other", title: T.bookingDateOther(state.lang) });
-  return { kind: "list", body: T.bookingDateQuestion(state.lang), buttonLabel: T.bookingListOpen(state.lang), sections: [{ title: T.bookingDateQuestion(state.lang).slice(0, 24), rows }] };
+  return dateListOutgoing(state.lang, dates);
 }
 
-async function listSlotsForDate(
-  ctx: FlowContext,
-  state: { lang: Lang; doctorId: string; doctorName: string; serviceId: string; serviceName: string; patientId: string; patientName: string },
-  date: string,
-): Promise<FlowResult> {
+async function listSlotsForDate(ctx: FlowContext, state: BookingBase, date: string): Promise<FlowResult> {
   const result = await ctx.client.listSlots({ doctorId: state.doctorId, serviceId: state.serviceId, date });
   if (!result.ok) return errorResult(state.lang, "");
 
   const now = new Date();
   const slots = result.value.slots
-    .filter((slot) => new Date(slot.start) > now)
+    .filter((slot) => isFutureSlot(slot, now))
     .map((slot) => ({ iso: slot.start, token: slot.token, label: timeOnly(formatInClinicTime(new Date(slot.start), ctx.tenant.timezone)) }));
 
   if (slots.length === 0) {
+    // Nothing left that day: say so and put the date list back in front of the patient, rather than
+    // leaving them to guess what to type.
+    const dateState: Extract<FlowState, { step: "BOOKING_DATE" }> = { step: "BOOKING_DATE", ...bookingBaseOf(state) };
+    const outgoing = await bookingDateOutgoing(ctx, dateState);
     return {
       handled: true,
-      nextState: { step: "BOOKING_DATE", lang: state.lang, doctorId: state.doctorId, doctorName: state.doctorName, serviceId: state.serviceId, serviceName: state.serviceName, patientId: state.patientId, patientName: state.patientName },
-      outgoing: { kind: "text", text: T.bookingNoSlotsOnDate(state.lang) },
+      nextState: dateState,
+      outgoing: prependText(outgoing, T.bookingNoSlotsOnDate(state.lang)) ?? outgoing,
     };
   }
 
   return sendSlotPage(state, date, slots, 0);
 }
 
-function sendSlotPage(
-  state: { lang: Lang; doctorId: string; doctorName: string; serviceId: string; serviceName: string; patientId: string; patientName: string },
-  date: string,
-  slots: { iso: string; token: string; label: string }[],
-  page: number,
-): FlowResult {
+function slotListOutgoing(state: BookingBase, date: string, slots: { iso: string; token: string; label: string }[], page: number): FlowOutgoing {
   const { pageItems, hasMore } = pageSlots(slots, page);
   const rows = pageItems.map((slot, index) => ({ id: slotRowId(index), title: slot.label }));
   if (hasMore) rows.push({ id: "more", title: T.bookingSlotMore(state.lang) });
+  return { kind: "list", body: T.bookingSlotQuestion(state.lang), buttonLabel: T.bookingListOpen(state.lang), sections: [{ title: dateRowLabel(date, state.lang), rows }] };
+}
 
+function sendSlotPage(state: BookingBase, date: string, slots: { iso: string; token: string; label: string }[], page: number): FlowResult {
   return {
     handled: true,
-    nextState: {
-      step: "BOOKING_SLOT",
-      lang: state.lang,
-      doctorId: state.doctorId,
-      doctorName: state.doctorName,
-      serviceId: state.serviceId,
-      serviceName: state.serviceName,
-      patientId: state.patientId,
-      patientName: state.patientName,
-      date,
-      slots,
-      page,
-    },
-    outgoing: { kind: "list", body: T.bookingSlotQuestion(state.lang), buttonLabel: T.bookingListOpen(state.lang), sections: [{ title: dateRowLabel(date, state.lang), rows }] },
+    nextState: { step: "BOOKING_SLOT", ...bookingBaseOf(state), date, slots, page },
+    outgoing: slotListOutgoing(state, date, slots, page),
+  };
+}
+
+function confirmOutgoing(state: Extract<FlowState, { step: "BOOKING_CONFIRM" }>, slotLabel: string): FlowOutgoing {
+  return {
+    kind: "buttons",
+    body: T.bookingConfirmQuestion(state.lang, state.doctorName, state.serviceName, dateRowLabel(state.date, state.lang), slotLabel, state.patientName, state.complaint),
+    buttons: [
+      { id: "yn_yes", title: T.bookingConfirmButton(state.lang) },
+      { id: "yn_no", title: T.bookingChangeButton(state.lang) },
+    ],
   };
 }
 
 async function stepBookingSlot(ctx: FlowContext, state: Extract<FlowState, { step: "BOOKING_SLOT" }>): Promise<FlowResult> {
   const id = idOf(ctx.input);
   if (id === "more") {
-    return Promise.resolve(sendSlotPage(state, state.date, state.slots, state.page + 1));
+    return sendSlotPage(state, state.date, state.slots, state.page + 1);
   }
   if (id !== null && /^s[1-9]$/.test(id)) {
     const indexOnPage = Number(id.slice(1)) - 1;
     const { pageItems } = pageSlots(state.slots, state.page);
     const picked = pageItems[indexOnPage];
     if (picked !== undefined) {
-      return {
-        handled: true,
-        nextState: {
-          step: "BOOKING_CONFIRM",
-          lang: state.lang,
-          doctorId: state.doctorId,
-          doctorName: state.doctorName,
-          serviceId: state.serviceId,
-          serviceName: state.serviceName,
-          patientId: state.patientId,
-          patientName: state.patientName,
-          date: state.date,
-          slotIso: picked.iso,
-          slotLabel: picked.label,
-          token: picked.token,
-        },
-        outgoing: {
-          kind: "buttons",
-          body: T.bookingConfirmQuestion(state.lang, state.doctorName, state.serviceName, dateRowLabel(state.date, state.lang), picked.label, state.patientName),
-          buttons: [
-            { id: "yn_yes", title: T.bookingConfirmButton(state.lang) },
-            { id: "yn_no", title: T.bookingChangeButton(state.lang) },
-          ],
-        },
+      const nextState: Extract<FlowState, { step: "BOOKING_CONFIRM" }> = {
+        step: "BOOKING_CONFIRM",
+        ...bookingBaseOf(state),
+        date: state.date,
+        slotIso: picked.iso,
+        slotLabel: picked.label,
+        token: picked.token,
       };
+      return { handled: true, nextState, outgoing: confirmOutgoing(nextState, picked.label) };
     }
   }
-  const { pageItems, hasMore } = pageSlots(state.slots, state.page);
-  const rows = pageItems.map((slot, index) => ({ id: slotRowId(index), title: slot.label }));
-  if (hasMore) rows.push({ id: "more", title: T.bookingSlotMore(state.lang) });
-  return offScriptThenRepeat(ctx, state.lang, { kind: "list", body: T.bookingSlotQuestion(state.lang), buttonLabel: T.bookingListOpen(state.lang), sections: [{ title: dateRowLabel(state.date, state.lang), rows }] });
+  return offScriptThenRepeat(ctx, state.lang, slotListOutgoing(state, state.date, state.slots, state.page));
 }
 
 async function stepBookingConfirm(ctx: FlowContext, state: Extract<FlowState, { step: "BOOKING_CONFIRM" }>): Promise<FlowResult> {
   const id = idOf(ctx.input);
   if (id === "yn_no") {
-    return beginBookingDoctor(ctx, state.lang, { patientId: state.patientId, patientName: state.patientName });
+    // "Change" starts the choices over but keeps who is booking and why -- neither is re-asked.
+    return beginBookingDoctor(ctx, state.lang, personOf(state));
   }
   if (id === "yn_yes") {
     return confirmBooking(ctx, state);
   }
-  return offScriptThenRepeat(ctx, state.lang, {
-    kind: "buttons",
-    body: T.bookingConfirmQuestion(state.lang, state.doctorName, state.serviceName, dateRowLabel(state.date, state.lang), state.slotLabel, state.patientName),
-    buttons: [
-      { id: "yn_yes", title: T.bookingConfirmButton(state.lang) },
-      { id: "yn_no", title: T.bookingChangeButton(state.lang) },
-    ],
-  });
+  return offScriptThenRepeat(ctx, state.lang, confirmOutgoing(state, state.slotLabel));
 }
 
 async function confirmBooking(ctx: FlowContext, state: Extract<FlowState, { step: "BOOKING_CONFIRM" }>): Promise<FlowResult> {
-  let result = await ctx.client.bookAppointment({ patientId: state.patientId, slotToken: state.token, consentMessageId: ctx.inboundExternalMessageId });
+  const complaintSummary = state.complaint === undefined ? {} : { complaintSummary: state.complaint };
+  let result = await ctx.client.bookAppointment({ patientId: state.patientId, slotToken: state.token, consentMessageId: ctx.inboundExternalMessageId, ...complaintSummary });
 
   // The token was minted when the list was shown; if the patient took a while, retry once against
   // a freshly re-listed offer for the same date and time -- never against a token the model or the
@@ -970,7 +926,7 @@ async function confirmBooking(ctx: FlowContext, state: Extract<FlowState, { step
     const refreshed = await ctx.client.listSlots({ doctorId: state.doctorId, serviceId: state.serviceId, date: state.date });
     const match = refreshed.ok ? refreshed.value.slots.find((slot) => slot.start === state.slotIso) : undefined;
     if (match !== undefined) {
-      result = await ctx.client.bookAppointment({ patientId: state.patientId, slotToken: match.token, consentMessageId: ctx.inboundExternalMessageId });
+      result = await ctx.client.bookAppointment({ patientId: state.patientId, slotToken: match.token, consentMessageId: ctx.inboundExternalMessageId, ...complaintSummary });
     }
   }
 
@@ -995,53 +951,6 @@ function prependText(outgoing: FlowOutgoing | undefined, line: string): FlowOutg
   if (outgoing === undefined) return outgoing;
   if (outgoing.kind === "text") return { kind: "text", text: `${line}\n\n${outgoing.text}` };
   return { ...outgoing, body: `${line}\n\n${outgoing.body}` };
-}
-
-// -------------------------------------------------------------------------------------------
-// Complaint
-// -------------------------------------------------------------------------------------------
-
-async function stepComplaintText(ctx: FlowContext, state: Extract<FlowState, { step: "COMPLAINT_TEXT" }>): Promise<FlowResult> {
-  const text = textOf(ctx.input)?.trim();
-  if (!text || text.length < 5) {
-    return { handled: true, nextState: state, outgoing: { kind: "text", text: T.complaintTooShort(state.lang) } };
-  }
-  return {
-    handled: true,
-    nextState: { step: "COMPLAINT_CONFIRM", lang: state.lang, patientId: state.patientId, patientName: state.patientName, text },
-    outgoing: {
-      kind: "buttons",
-      body: T.complaintConfirmQuestion(state.lang, text),
-      buttons: [
-        { id: "yn_yes", title: T.complaintConfirmButton(state.lang) },
-        { id: "yn_no", title: T.complaintEditButton(state.lang) },
-      ],
-    },
-  };
-}
-
-async function stepComplaintConfirm(ctx: FlowContext, state: Extract<FlowState, { step: "COMPLAINT_CONFIRM" }>): Promise<FlowResult> {
-  const id = idOf(ctx.input);
-  if (id === "yn_no") {
-    return {
-      handled: true,
-      nextState: { step: "COMPLAINT_TEXT", lang: state.lang, patientId: state.patientId, patientName: state.patientName },
-      outgoing: { kind: "text", text: T.complaintEditAsk(state.lang) },
-    };
-  }
-  if (id === "yn_yes") {
-    const result = await ctx.client.createComplaint({ patientId: state.patientId, description: state.text, consentMessageId: ctx.inboundExternalMessageId });
-    if (!result.ok) return errorResult(state.lang, "");
-    return { handled: true, nextState: null, outgoing: { kind: "text", text: T.complaintSuccess(state.lang, result.value.referenceNumber) } };
-  }
-  return offScriptThenRepeat(ctx, state.lang, {
-    kind: "buttons",
-    body: T.complaintConfirmQuestion(state.lang, state.text),
-    buttons: [
-      { id: "yn_yes", title: T.complaintConfirmButton(state.lang) },
-      { id: "yn_no", title: T.complaintEditButton(state.lang) },
-    ],
-  });
 }
 
 // -------------------------------------------------------------------------------------------

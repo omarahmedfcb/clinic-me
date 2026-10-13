@@ -183,6 +183,9 @@ export class BotApiClient {
     slotToken: string;
     patientId: string;
     consentMessageId: string;
+    /** The patient's own words for why they are coming -- stored on the appointment and carried
+     *  into the consultation's complaint field. */
+    complaintSummary?: string;
   }): Promise<BotResult<{ appointmentId: string; start: string; end: string }>> {
     return this.request("/bot/appointments", {
       method: "POST",

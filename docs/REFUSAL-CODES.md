@@ -149,6 +149,7 @@ the code.
 | `INVALID_AMOUNT` | `field` | A discount outside 0–100, or an agreed price below zero | 422 |
 | `CLIENT_FILE_EXISTS` | — | A clinic has one client file. It is edited, not created twice | 422 |
 | `DUPLICATE_PHONE` | — | That number is already somebody's login. It parses; it is taken | 409 |
+| `DUPLICATE_NATIONAL_ID` | — | Another patient at this clinic already has that national ID. Open that patient rather than registering a second | 409 |
 | `NOT_EDITABLE_HERE` | `name` | A doctor's record belongs to the Doctors tab, not the users list | 422 |
 | `OWNER_ROLE_FIXED` | — | The owner's role is not changed from the users list; ownership transfer needs its own screen | 422 |
 | `SELF_ROLE_CHANGE` | — | You cannot change your own role — you would lose the screen that undoes it | 422 |
