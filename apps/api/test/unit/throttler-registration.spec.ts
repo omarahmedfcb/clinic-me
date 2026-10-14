@@ -17,6 +17,10 @@ import {
   PASSWORD_THROTTLER,
 } from "../../src/modules/auth/auth-throttle.ts";
 import { WEBCHAT_MESSAGE_THROTTLER } from "../../src/modules/webchat/webchat-throttle.ts";
+import {
+  DOCUMENTS_PDF_THROTTLER,
+  DOCUMENTS_READ_THROTTLER,
+} from "../../src/modules/visit-documents/visit-documents-throttle.ts";
 import { sourceFiles, stripComments } from "../../scripts/route-capabilities.ts";
 
 /**
@@ -73,6 +77,8 @@ const CONSTANTS: Record<string, string> = {
   IDENTIFIER_THROTTLER,
   IP_THROTTLER,
   WEBCHAT_MESSAGE_THROTTLER,
+  DOCUMENTS_READ_THROTTLER,
+  DOCUMENTS_PDF_THROTTLER,
 };
 
 describe("every throttler a route names is actually registered", () => {

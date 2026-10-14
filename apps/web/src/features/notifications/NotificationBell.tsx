@@ -43,7 +43,8 @@ interface NotificationItem {
     | "APPOINTMENT_CANCELLED"
     | "APPOINTMENT_RESCHEDULED"
     | "COMPLAINT_RECEIVED"
-    | "HANDOFF_REQUESTED";
+    | "HANDOFF_REQUESTED"
+    | "WHATSAPP_MESSAGE_FAILED";
   occurredAt: string;
   source: string;
   payload: {

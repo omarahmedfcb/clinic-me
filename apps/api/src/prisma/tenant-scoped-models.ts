@@ -55,6 +55,8 @@ const TENANT_POLICY = {
   BotCredential: "scoped",
   WhatsAppConnection: "scoped",
   WebhookDelivery: "scoped",
+  OutboundMessageIntent: "scoped",
+  VisitDocumentLink: "scoped",
   AccessGrant: "scoped",
   TreatmentPlan: "scoped",
   TreatmentPlanSession: "scoped",

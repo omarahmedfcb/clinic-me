@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "../../design-system/Button.tsx";
 import { Card } from "../../design-system/display.tsx";
 import { InsuranceCompaniesCard } from "./InsuranceCompaniesCard.tsx";
+import { MessagingSettingsCard } from "./MessagingSettingsCard.tsx";
 import { TextInput, Textarea } from "../../design-system/fields.tsx";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import type { TranslationKey } from "../../i18n/strings.ts";
@@ -177,6 +178,7 @@ export function ClinicSettingsPage({ authFetch }: { authFetch: AuthFetch }) {
       {/* Phase 5 PR 1: the registry is clinic configuration, so it lives with the other settings. */}
       <div className="mt-4">
         <InsuranceCompaniesCard authFetch={authFetch} />
+        <MessagingSettingsCard authFetch={authFetch} />
       </div>
     </main>
   );

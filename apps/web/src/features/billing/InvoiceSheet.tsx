@@ -82,85 +82,119 @@ export function InvoiceSheet({
   return createPortal(
     <>
       <style>{PRINT_STYLESHEET}</style>
-      <article className="print-sheet mb-8 bg-white p-6 text-black" dir="ltr" lang="en">
-        <Letterhead clinic={clinic} logo={logo} />
-        <h2 className="mt-4 text-center text-base font-bold tracking-wide">INVOICE</h2>
-
-        <section className="mt-4 grid grid-cols-3 gap-x-6 gap-y-2 border border-neutral-400 p-3">
-          <Field label="Invoice No." value={charge.chargeId} />
-          <Field label={EN.date} value={printedDate(charge.issuedOn)} />
-          <Field label="File No." value={String(charge.patientFileNumber)} />
-        </section>
-
-        <section className="mt-2 border border-neutral-400 p-3">
-          <span className="block text-[10px] uppercase tracking-wide text-neutral-600">Patient</span>
-          <span className="text-sm">{charge.patientName}</span>
-        </section>
-
-        <table className="mt-4 w-full border-collapse text-sm">
-          <thead>
-            <tr className="border-b border-black text-start">
-              <th className="py-1 text-start font-semibold">#</th>
-              <th className="py-1 text-start font-semibold">Item</th>
-              <th className="py-1 text-end font-semibold">Qty</th>
-              <th className="py-1 text-end font-semibold">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {charge.lines.map((line, index) => (
-              <tr key={line.id} className="border-b border-neutral-300">
-                <td className="py-1">{index + 1}</td>
-                <td className="py-1">{line.nameSnapshot}</td>
-                <td className="py-1 text-end">{line.quantity}</td>
-                <td className="py-1 text-end">
-                  {printedAmount(line.unitPriceMinor * line.quantity, currency)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <table className="mt-4 w-full border-collapse text-sm">
-          <tbody>
-            <tr className="border-b border-neutral-300">
-              <td className="py-1">Subtotal</td>
-              <td className="py-1 text-end">{printedAmount(charge.subtotalMinor, currency)}</td>
-            </tr>
-            {charge.discountMinor > 0 && (
-              <tr className="border-b border-neutral-300">
-                <td className="py-1">Discount</td>
-                <td className="py-1 text-end">{printedAmount(-charge.discountMinor, currency)}</td>
-              </tr>
-            )}
-            {charge.payerShareMinor > 0 && (
-              <tr className="border-b border-neutral-300">
-                <td className="py-1">Insurer share</td>
-                <td className="py-1 text-end">{printedAmount(-charge.payerShareMinor, currency)}</td>
-              </tr>
-            )}
-            <tr className="border-b border-neutral-300">
-              <td className="py-1">Patient owes</td>
-              <td className="py-1 text-end">{printedAmount(charge.patientShareMinor, currency)}</td>
-            </tr>
-            <tr className="border-b border-neutral-300">
-              <td className="py-1">Paid</td>
-              <td className="py-1 text-end">{printedAmount(charge.paidMinor, currency)}</td>
-            </tr>
-            <tr className="border-b border-black font-semibold">
-              <td className="py-1">Remaining</td>
-              <td className="py-1 text-end">{printedAmount(charge.balanceMinor, currency)}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        {clinic?.taxRegistrationNumber != null && clinic.taxRegistrationNumber !== "" && (
-          <p className="mt-4 border-t border-neutral-400 pt-2 text-center text-[10px] text-neutral-600">
-            {`Tax Reg. ${clinic.taxRegistrationNumber}`}
-          </p>
-        )}
-      </article>
+      <InvoiceArticle clinic={clinic} logo={logo} charge={charge} currency={currency} />
     </>,
     host,
+  );
+}
+
+/**
+ * The invoice itself, with nothing around it: no portal, no print dialog, no fetching. `InvoiceSheet` is
+ * this plus the doctor-or-receptionist's session and the browser's print dialog; the patient's documents
+ * page is this plus a link. One layout, so the paper and the PDF cannot disagree.
+ */
+export function InvoiceArticle({
+  clinic,
+  logo,
+  charge,
+  currency,
+}: {
+  clinic: ClinicIdentity | null;
+  logo: string | null;
+  charge: Pick<
+    DeskCharge,
+    | "chargeId"
+    | "issuedOn"
+    | "patientFileNumber"
+    | "patientName"
+    | "lines"
+    | "subtotalMinor"
+    | "discountMinor"
+    | "payerShareMinor"
+    | "patientShareMinor"
+    | "paidMinor"
+    | "balanceMinor"
+  >;
+  currency: string;
+}) {
+  return (
+    <article className="print-sheet mb-8 bg-white p-6 text-black" dir="ltr" lang="en">
+      <Letterhead clinic={clinic} logo={logo} />
+      <h2 className="mt-4 text-center text-base font-bold tracking-wide">INVOICE</h2>
+
+      <section className="mt-4 grid grid-cols-3 gap-x-6 gap-y-2 border border-neutral-400 p-3">
+        <Field label="Invoice No." value={charge.chargeId} />
+        <Field label={EN.date} value={printedDate(charge.issuedOn)} />
+        <Field label="File No." value={String(charge.patientFileNumber)} />
+      </section>
+
+      <section className="mt-2 border border-neutral-400 p-3">
+        <span className="block text-[10px] uppercase tracking-wide text-neutral-600">Patient</span>
+        <span className="text-sm">{charge.patientName}</span>
+      </section>
+
+      <table className="mt-4 w-full border-collapse text-sm">
+        <thead>
+          <tr className="border-b border-black text-start">
+            <th className="py-1 text-start font-semibold">#</th>
+            <th className="py-1 text-start font-semibold">Item</th>
+            <th className="py-1 text-end font-semibold">Qty</th>
+            <th className="py-1 text-end font-semibold">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {charge.lines.map((line, index) => (
+            <tr key={line.id} className="border-b border-neutral-300">
+              <td className="py-1">{index + 1}</td>
+              <td className="py-1">{line.nameSnapshot}</td>
+              <td className="py-1 text-end">{line.quantity}</td>
+              <td className="py-1 text-end">
+                {printedAmount(line.unitPriceMinor * line.quantity, currency)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <table className="mt-4 w-full border-collapse text-sm">
+        <tbody>
+          <tr className="border-b border-neutral-300">
+            <td className="py-1">Subtotal</td>
+            <td className="py-1 text-end">{printedAmount(charge.subtotalMinor, currency)}</td>
+          </tr>
+          {charge.discountMinor > 0 && (
+            <tr className="border-b border-neutral-300">
+              <td className="py-1">Discount</td>
+              <td className="py-1 text-end">{printedAmount(-charge.discountMinor, currency)}</td>
+            </tr>
+          )}
+          {charge.payerShareMinor > 0 && (
+            <tr className="border-b border-neutral-300">
+              <td className="py-1">Insurer share</td>
+              <td className="py-1 text-end">{printedAmount(-charge.payerShareMinor, currency)}</td>
+            </tr>
+          )}
+          <tr className="border-b border-neutral-300">
+            <td className="py-1">Patient owes</td>
+            <td className="py-1 text-end">{printedAmount(charge.patientShareMinor, currency)}</td>
+          </tr>
+          <tr className="border-b border-neutral-300">
+            <td className="py-1">Paid</td>
+            <td className="py-1 text-end">{printedAmount(charge.paidMinor, currency)}</td>
+          </tr>
+          <tr className="border-b border-black font-semibold">
+            <td className="py-1">Remaining</td>
+            <td className="py-1 text-end">{printedAmount(charge.balanceMinor, currency)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      {clinic?.taxRegistrationNumber != null && clinic.taxRegistrationNumber !== "" && (
+        <p className="mt-4 border-t border-neutral-400 pt-2 text-center text-[10px] text-neutral-600">
+          {`Tax Reg. ${clinic.taxRegistrationNumber}`}
+        </p>
+      )}
+    </article>
   );
 }
 

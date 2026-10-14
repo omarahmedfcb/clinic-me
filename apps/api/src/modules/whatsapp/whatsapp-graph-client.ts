@@ -229,3 +229,117 @@ export async function sendWhatsAppList(
   if (!externalMessageId) throw new Error("WhatsApp interactive-list send succeeded but returned no message id.");
   return { externalMessageId };
 }
+
+/**
+ * What a template send carries. Templates are the only way to message a patient who has not written
+ * to the clinic in the last 24 hours (Meta's customer-service window), which is exactly who a reminder,
+ * a cancellation notice and a documents link are for.
+ *
+ * Everything variable is positional -- `{{1}}`, `{{2}}` in the approved template text -- so the
+ * *wording* lives in whatsapp-templates.ts, next to the text submitted to Meta, and cannot drift from it.
+ */
+export interface WhatsAppTemplateSend {
+  name: string;
+  /** Meta's language code for the approved translation, e.g. "ar". */
+  language: string;
+  bodyParams: string[];
+  /** One payload per QUICK_REPLY button, in button order. Echoed back to us when the patient taps. */
+  quickReplyPayloads?: string[];
+  /** The text appended to a URL button's base address (`https://…/d/{{1}}`). */
+  urlButtonSuffix?: string;
+  /** Which button slot the URL button occupies. 0 unless quick-reply buttons come first. */
+  urlButtonIndex?: number;
+}
+
+export async function sendWhatsAppTemplate(
+  phoneNumberId: string,
+  toWaId: string,
+  template: WhatsAppTemplateSend,
+  token?: string,
+): Promise<{ externalMessageId: string }> {
+  const components: Array<Record<string, unknown>> = [];
+
+  if (template.bodyParams.length > 0) {
+    components.push({
+      type: "body",
+      parameters: template.bodyParams.map((text) => ({ type: "text", text })),
+    });
+  }
+  (template.quickReplyPayloads ?? []).forEach((payload, index) => {
+    components.push({
+      type: "button",
+      sub_type: "quick_reply",
+      index: String(index),
+      parameters: [{ type: "payload", payload }],
+    });
+  });
+  if (template.urlButtonSuffix !== undefined) {
+    components.push({
+      type: "button",
+      sub_type: "url",
+      index: String(template.urlButtonIndex ?? 0),
+      parameters: [{ type: "text", text: template.urlButtonSuffix }],
+    });
+  }
+
+  const response = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${accessToken(token)}` },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to: toWaId,
+      type: "template",
+      template: { name: template.name, language: { code: template.language }, components },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw sendError("WhatsApp template send failed", response.status, errorBody);
+  }
+
+  const data = (await response.json()) as { messages?: Array<{ id: string }> };
+  const externalMessageId = data.messages?.[0]?.id;
+  if (!externalMessageId) throw new Error("WhatsApp template send succeeded but returned no message id.");
+  return { externalMessageId };
+}
+
+/** A template as Meta stores it, for the status check -- `APPROVED`, `PENDING`, `REJECTED`, ... */
+export interface WhatsAppTemplateStatus {
+  name: string;
+  language: string;
+  status: string;
+}
+
+/**
+ * Submits one template to a clinic's WhatsApp Business Account for review. Templates belong to the
+ * WABA, not to the platform, so this runs once per clinic -- `scripts/whatsapp-templates.mjs`.
+ * `components` is Meta's own shape (HEADER / BODY / BUTTONS), built in whatsapp-templates.ts.
+ */
+export async function submitWhatsAppTemplate(
+  wabaId: string,
+  definition: { name: string; language: string; category: "UTILITY"; components: unknown[] },
+  token?: string,
+): Promise<{ id: string; status: string }> {
+  const response = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${wabaId}/message_templates`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${accessToken(token)}` },
+    body: JSON.stringify(definition),
+  });
+  if (!response.ok) {
+    throw sendError("WhatsApp template submission failed", response.status, await response.text());
+  }
+  const data = (await response.json()) as { id?: string; status?: string };
+  return { id: data.id ?? "", status: data.status ?? "PENDING" };
+}
+
+/** The templates a clinic's WABA already has, so submitting is idempotent and approval is visible. */
+export async function listWhatsAppTemplates(wabaId: string, token?: string): Promise<WhatsAppTemplateStatus[]> {
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${wabaId}/message_templates?fields=name,language,status&limit=100`;
+  const response = await fetch(url, { headers: { authorization: `Bearer ${accessToken(token)}` } });
+  if (!response.ok) {
+    throw sendError("WhatsApp template listing failed", response.status, await response.text());
+  }
+  const data = (await response.json()) as { data?: WhatsAppTemplateStatus[] };
+  return data.data ?? [];
+}

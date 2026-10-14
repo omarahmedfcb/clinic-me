@@ -23,6 +23,8 @@
     "backfill:patient-phones": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON prisma/backfill/patient-phones-e164.ts",
     "routes": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/print-routes.ts",
     "platform:admin": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/create-platform-admin.ts",
+    "outbound:messages": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/outbound-messages.ts",
+    "whatsapp:templates": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/whatsapp-templates.ts",
     "webhook:dispatch": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/webhook-dispatch.ts",
     "webhook:echo": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/webhook-echo.ts",
     "sandbox:bot": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/sandbox-bot.ts",
@@ -43,6 +45,7 @@
     "jose": "6.2.12",
     "libphonenumber-js": "1.13.13",
     "pg": "8.23.0",
+    "playwright-core": "1.63.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
     "uuidv7": "1.2.1"

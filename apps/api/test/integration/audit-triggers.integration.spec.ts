@@ -313,7 +313,7 @@ describe("audit triggers", () => {
     // `last_used_at`, or every call the bot makes would write an audit row.
     // 50 as of 2026-09-18: `webhook_deliveries`. Its trigger fires only when a delivery is given up
     // on — an audit row per retry would bury the clinic history under our retry schedule.
-    expect(Number(counted[0]?.n)).toBe(50);
+    expect(Number(counted[0]?.n)).toBe(54);
   });
 
   /**

@@ -3,6 +3,7 @@ import { WhatsAppWebhookController } from "./whatsapp.controller.ts";
 import { WhatsAppSignupController } from "./whatsapp-signup.controller.ts";
 import { WhatsAppConnectionController } from "./whatsapp-connection.controller.ts";
 import { WhatsAppHandoffController } from "./whatsapp-handoff.controller.ts";
+import { MessagingSettingsController } from "./messaging-settings.controller.ts";
 
 /**
  * No throttler here, unlike bot.module.ts / webchat.module.ts. Meta's webhook has to accept every
@@ -12,6 +13,6 @@ import { WhatsAppHandoffController } from "./whatsapp-handoff.controller.ts";
  * signature verification and before a message reaches GPT, not a 429 on the route itself.
  */
 @Module({
-    controllers: [WhatsAppWebhookController, WhatsAppSignupController, WhatsAppConnectionController, WhatsAppHandoffController],
+    controllers: [WhatsAppWebhookController, WhatsAppSignupController, WhatsAppConnectionController, WhatsAppHandoffController, MessagingSettingsController],
 })
 export class WhatsAppModule { }

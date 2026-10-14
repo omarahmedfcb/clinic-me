@@ -18,6 +18,8 @@ import { sendWhatsAppText } from "./whatsapp-graph-client.ts";
 import { ResolvedWhatsAppTenant, resolveTenantByPhoneNumberId, type WhatsAppTenant } from "./whatsapp-tenants.ts";
 import { handleInboundWhatsAppMessage } from "./whatsapp-orchestrator.ts";
 import { handleStaffEchoes } from "./whatsapp-handoff.ts";
+import { handleReminderTap } from "./reminder-reply.ts";
+import { REMINDER_PAYLOAD_PREFIX } from "./whatsapp-templates.ts";
 import { setConnectionStatus, tenantsByWaba } from "./whatsapp-connections.ts";
 
 @Controller("webhooks/whatsapp")
@@ -153,6 +155,25 @@ export class WhatsAppWebhookController {
           console.error("WhatsApp: failed to send the slow-down reply", error);
         });
       }
+      return;
+    }
+
+    if (message.type === "button") {
+      // A tap on a template's quick-reply button. Today only reminders carry one; anything else is ignored.
+      const payload = message.button?.payload;
+      if (payload === undefined || !payload.startsWith(REMINDER_PAYLOAD_PREFIX)) return;
+
+      handleReminderTap({
+        tenant,
+        waId,
+        phoneE164,
+        externalMessageId,
+        payload,
+        title: message.button?.text ?? "",
+        occurredAt,
+      }).catch((error: unknown) => {
+        console.error("WhatsApp: failed to handle a reminder reply", error);
+      });
       return;
     }
 

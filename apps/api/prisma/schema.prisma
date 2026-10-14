@@ -328,6 +328,8 @@ enum NotificationKind {
   /// A patient filed a complaint over WhatsApp. Owner and admin only.
   COMPLAINT_RECEIVED
   HANDOFF_REQUESTED
+  /// A message the platform owed a patient (reminder, documents link, ...) was given up on.
+  WHATSAPP_MESSAGE_FAILED
 }
 
 enum AttachmentCategory {
@@ -416,6 +418,18 @@ model Tenant {
   // invented in Phase 3 when the nightly job needs it.
   noShowGraceMinutes        Int @default(30) @map("no_show_grace_minutes")
 
+  // WhatsApp automation (reminders, "go to the room", documents link). Every one is OFF by default:
+  // each message is billed by Meta to the clinic's own WABA, and the reminder can cancel an
+  // appointment, so a clinic turns it on knowingly rather than finding it already running.
+  appointmentRemindersEnabled Boolean @default(false) @map("appointment_reminders_enabled")
+  /// How long before the appointment the reminder goes out (before quiet hours are applied).
+  reminderLeadHours           Int     @default(5) @map("reminder_lead_hours")
+  /// How long the patient has to confirm before the appointment is cancelled.
+  reminderConfirmWindowHours  Int     @default(2) @map("reminder_confirm_window_hours")
+  /// Costs a full message per visit (it cannot be bundled with another), so it is opt-in.
+  callInMessageEnabled        Boolean @default(false) @map("call_in_message_enabled")
+  visitDocumentsLinkEnabled   Boolean @default(false) @map("visit_documents_link_enabled")
+
   memberships              Membership[]
   doctors                  Doctor[]
   services                 Service[]
@@ -469,6 +483,8 @@ model Tenant {
   botCredentials           BotCredential[]
   webhookDeliveries        WebhookDelivery[]
   whatsappConnection       WhatsAppConnection?
+  outboundMessageIntents   OutboundMessageIntent[]
+  visitDocumentLinks       VisitDocumentLink[]
 
   @@map("tenants")
 }
@@ -1095,6 +1111,8 @@ model Appointment {
 
   @@index([tenantId, doctorId, scheduledStart])
   @@index([tenantId, scheduledStart, status])
+  outboundMessageIntents OutboundMessageIntent[]
+
   @@map("appointments")
 }
 
@@ -1181,6 +1199,7 @@ model Visit {
   procedures            VisitProcedure[]
   investigationLines    VisitInvestigation[]
   visitCharge           VisitCharge?
+  documentLinks         VisitDocumentLink[]
 
   // A PARTIAL UNIQUE INDEX on (appointment_id) WHERE status = 'COMPLETED' exists on this table and
   // is not expressible here -- `@@unique` has no WHERE clause. It lives in
@@ -2297,4 +2316,70 @@ enum ChargeLineSource {
   MATERIAL
   /// R1: a signed line moving the total, written instead of editing a snapshotted one.
   ADJUSTMENT
+}
+
+/// One WhatsApp message the platform owes a patient, written where the reason for it happened and sent
+/// later by the drainer (PHASE-4.md Q20: an outbox, so nothing at the desk waits on Meta).
+///
+/// The reminder is both a message and a cycle: `respondBy` is the moment the patient must have answered
+/// by, and the sweeper cancels the appointment when it passes with no answer.
+model OutboundMessageIntent {
+  id                String    @id @db.Uuid
+  tenantId          String    @map("tenant_id") @db.Uuid
+  appointmentId     String    @map("appointment_id") @db.Uuid
+  /// APPOINTMENT_REMINDER | REMINDER_AUTO_CANCELLED | CALL_IN | VISIT_DOCUMENTS (CHECK in SQL).
+  kind              String
+  /// One intent per reason: a second sweep, or a replayed trigger, is the same intent and must not send twice.
+  dedupeKey         String    @map("dedupe_key")
+  /// PENDING | SENT | FAILED | SKIPPED (CHECK in SQL).
+  status            String    @default("PENDING")
+  attempts          Int       @default(0)
+  nextAttemptAt     DateTime  @map("next_attempt_at") @db.Timestamptz(6)
+  /// After this a send is pointless (a reminder for a consultation that has started), and is skipped.
+  expiresAt         DateTime? @map("expires_at") @db.Timestamptz(6)
+  /// The appointment's start when a reminder was scheduled, so a reschedule is noticed.
+  appointmentStart  DateTime? @map("appointment_start") @db.Timestamptz(6)
+  respondBy         DateTime? @map("respond_by") @db.Timestamptz(6)
+  respondedAt       DateTime? @map("responded_at") @db.Timestamptz(6)
+  /// CONFIRMED | CANCELLED | EXPIRED (CHECK in SQL).
+  response          String?
+  externalMessageId String?   @map("external_message_id")
+  sentAt            DateTime? @map("sent_at") @db.Timestamptz(6)
+  failedAt          DateTime? @map("failed_at") @db.Timestamptz(6)
+  skippedReason     String?   @map("skipped_reason")
+  lastError         String?   @map("last_error")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant        Tenant              @relation(fields: [tenantId], references: [id])
+  appointment   Appointment         @relation(fields: [appointmentId], references: [id])
+  documentLinks VisitDocumentLink[]
+
+  @@unique([tenantId, dedupeKey])
+  @@index([tenantId])
+  @@map("outbound_message_intents")
+}
+
+/// The secure link a patient is sent after a visit. Only the SHA-256 of the token is stored; the token
+/// itself exists in the message and nowhere else. Revocable, and it expires.
+model VisitDocumentLink {
+  id            String    @id @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  visitId       String    @map("visit_id") @db.Uuid
+  intentId      String?   @map("intent_id") @db.Uuid
+  tokenHash     String    @unique @map("token_hash")
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
+  viewCount     Int       @default(0) @map("view_count")
+  firstViewedAt DateTime? @map("first_viewed_at") @db.Timestamptz(6)
+  lastViewedAt  DateTime? @map("last_viewed_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant Tenant                 @relation(fields: [tenantId], references: [id])
+  visit  Visit                  @relation(fields: [visitId], references: [id])
+  intent OutboundMessageIntent? @relation(fields: [intentId], references: [id])
+
+  @@index([tenantId, visitId])
+  @@map("visit_document_links")
 }

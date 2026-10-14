@@ -39,7 +39,7 @@ interface Props {
   visit: PrintableVisit;
 }
 
-interface Branding {
+export interface Branding {
   clinic: ClinicIdentity | null;
   doctor: DoctorPrintIdentity | null;
   logo: string | null;
@@ -138,10 +138,18 @@ function PrescriptionTable({ items }: { items: PrescriptionLine[] }) {
  * is missing at the counter. The sick-leave certificate is the exception, and deliberately: an
  * unissued certificate is not an empty document, it is not a document.
  */
-export function PrintDocuments({ authFetch, visit }: Props) {
-  const branding = useBranding(authFetch, visit.doctorId);
-
-  const sheet = (kind: SheetKind, title: string, body: React.ReactNode) => (
+export function PrintSheets({
+  visit,
+  branding,
+  only,
+}: {
+  visit: PrintableVisit;
+  branding: Branding;
+  /** Render just this sheet. The patient's page shows and downloads them one at a time. */
+  only?: SheetKind;
+}) {
+  const sheet = (kind: SheetKind, title: string, body: React.ReactNode) =>
+    only !== undefined && only !== kind ? null : (
     <article className="print-sheet mb-8 bg-white p-6 text-black" dir="ltr" lang="en" data-sheet={kind}>
       <Letterhead clinic={branding.clinic} logo={branding.logo} />
       <h2 className="mt-4 text-center text-base font-bold tracking-wide">{title}</h2>
@@ -153,31 +161,10 @@ export function PrintDocuments({ authFetch, visit }: Props) {
     </article>
   );
 
-  /**
-   * **A portal to `document.body`, and this is the whole of the blank-print bug.**
-   *
-   * The stylesheet hides the application with `body > *:not(#print-root)`. `index.html` mounts React
-   * into `<div id="root">`, so this subtree was a *descendant* of `#root` rather than a child of
-   * `body` — the rule therefore hid `#root`, and `#print-root` inside it. `display: none` on an
-   * ancestor removes the whole subtree, and no `!important` on a descendant can bring it back, which
-   * is why the sheet came out blank while every element it names was present in the DOM.
-   *
-   * The alternative was a selector matching `#root` too. Rejected: it makes the stylesheet depend on
-   * the shape of the host page, and the next person to wrap the app in a provider div breaks printing
-   * again with nothing failing. A portal makes the markup match the selector instead.
-   */
-  const host = usePrintHost();
-  if (host === null) return null;
-
   const leave = visit.sickLeave;
 
-  // Rendered *into* the host, which is itself `#print-root`. A wrapper div here would make the
-  // sheet a grandchild of body, and `body > *:not(#print-root)` would hide the wrapper and the
-  // sheet with it — the same bug one level down. Caught by the structural guard, not by review.
-  return createPortal(
+  return (
     <>
-      <style>{PRINT_STYLESHEET}</style>
-
       {sheet(
         "prescription",
         EN.prescription,
@@ -281,6 +268,41 @@ export function PrintDocuments({ authFetch, visit }: Props) {
             )}
           </>,
         )}
+    </>
+  );
+}
+
+/**
+ * The same sheets, printed from the doctor's screen: fetched with the doctor's session, mounted into the
+ * print root, and handed to the browser's print dialog. The sheets themselves are `PrintSheets`, which the
+ * patient's documents page renders too -- one set of documents, two ways to reach it.
+ */
+export function PrintDocuments({ authFetch, visit }: Props) {
+  const branding = useBranding(authFetch, visit.doctorId);
+
+  /**
+   * **A portal to `document.body`, and this is the whole of the blank-print bug.**
+   *
+   * The stylesheet hides the application with `body > *:not(#print-root)`. `index.html` mounts React
+   * into `<div id="root">`, so this subtree was a *descendant* of `#root` rather than a child of
+   * `body` — the rule therefore hid `#root`, and `#print-root` inside it. `display: none` on an
+   * ancestor removes the whole subtree, and no `!important` on a descendant can bring it back, which
+   * is why the sheet came out blank while every element it names was present in the DOM.
+   *
+   * The alternative was a selector matching `#root` too. Rejected: it makes the stylesheet depend on
+   * the shape of the host page, and the next person to wrap the app in a provider div breaks printing
+   * again with nothing failing. A portal makes the markup match the selector instead.
+   */
+  const host = usePrintHost();
+  if (host === null) return null;
+
+  // Rendered *into* the host, which is itself `#print-root`. A wrapper div here would make the
+  // sheet a grandchild of body, and `body > *:not(#print-root)` would hide the wrapper and the
+  // sheet with it — the same bug one level down. Caught by the structural guard, not by review.
+  return createPortal(
+    <>
+      <style>{PRINT_STYLESHEET}</style>
+      <PrintSheets visit={visit} branding={branding} />
     </>,
     host,
   );
@@ -293,7 +315,7 @@ export function PrintDocuments({ authFetch, visit }: Props) {
  * may not exist yet, and removed on unmount so a screen opened twice does not leave two print roots
  * behind — two would both match the allow-list and print everything twice.
  */
-function usePrintHost(): HTMLElement | null {
+export function usePrintHost(): HTMLElement | null {
   const [host, setHost] = useState<HTMLElement | null>(null);
   const created = useRef<HTMLElement | null>(null);
 

@@ -23,6 +23,10 @@ export interface MetaInboundMessage {
    *  step-scoped value (whatsapp-flow.ts mints it), and the title is only what was shown on the
    *  button, which is locale text and never what a step handler should branch on. */
   interactive?: MetaInteractiveReply;
+  /** Present when `type === "button"` -- a tapped quick-reply button on a TEMPLATE message. `payload` is
+   *  what we attached when we sent it (a reminder's `rem:c:<id>`), `text` is the label the patient saw.
+   *  Not the same as `interactive`, which is a reply to a free-form button message. */
+  button?: { payload?: string; text?: string };
 }
 
 /** A message a person sent from the WhatsApp Business app on a coexistence number (`smb_message_echoes`). */

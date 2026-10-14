@@ -11,6 +11,7 @@ import { GalleryPage } from "./features/gallery/GalleryPage.tsx";
 import { PlatformConsole } from "./features/platform/PlatformConsole.tsx";
 import { AppShell } from "./features/shell/AppShell.tsx";
 import { WebchatPage } from "./features/webchat/WebchatPage.tsx";
+import { isDocumentsPath, VisitDocumentsPage } from "./features/documents/VisitDocumentsPage.tsx";
 import { refreshAccessToken } from "./features/auth/refresh-session.ts";
 
 /**
@@ -72,6 +73,9 @@ export function App() {
     // The web chat has no session at all -- a patient here has never logged in and never will.
     if (isWebchatPath()) return;
 
+    // Nor does the documents link a patient opens from WhatsApp: the address is the credential.
+    if (isDocumentsPath()) return;
+
     void (async () => {
       try {
         const accessToken = await refreshAccessToken();
@@ -104,6 +108,9 @@ export function App() {
    * chosen. See docs/ARCHITECTURE.md §12 and apps/api/src/modules/webchat.
    */
   if (isWebchatPath()) return <WebchatPage />;
+
+  /** `/d/<token>`: a patient's documents, from the WhatsApp link. No membership, no session, no shell. */
+  if (isDocumentsPath()) return <VisitDocumentsPage />;
 
   /**
    * **The operator's console, outside the clinic application entirely** — pilot-readiness 0b–0f.
