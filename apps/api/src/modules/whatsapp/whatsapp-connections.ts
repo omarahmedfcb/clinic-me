@@ -7,7 +7,7 @@
 // working unchanged next to clinics that arrived through Embedded Signup.
 
 import { prisma } from "../../prisma/client.ts";
-import { ActorContext, withTenant } from "../../prisma/with-tenant.ts";
+import { withTenant, type ActorContext } from "../../prisma/with-tenant.ts";
 import { systemActor } from "../audit/system-actor.ts";
 import { BotApiClient, defaultApiBaseUrl, getDefaultBotApiClient } from "./bot-api-client.ts";
 import { decryptSecret, loadEncryptionKey } from "./connection-crypto.ts";

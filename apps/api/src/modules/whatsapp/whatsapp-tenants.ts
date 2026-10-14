@@ -5,8 +5,7 @@
 import { prisma } from "../../prisma/client.ts";
 import { resolveBotActor, type BotActor } from "../webchat/webchat-clinics.ts";
 import type { BotApiClient } from "./bot-api-client.ts";
-import { NumberMode, resolveWhatsAppAccess } from "./whatsapp-connections.ts";
-
+import { resolveWhatsAppAccess, type NumberMode } from "./whatsapp-connections.ts";
 export interface WhatsAppTenant {
   id: string;
   timezone: string;
