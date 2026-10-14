@@ -46,16 +46,19 @@ async function main(): Promise<void> {
   const access = await resolveWhatsAppAccess(tenantId, tenant.whatsappPhoneNumberId);
   if (access === null) throw new Error(`${tenant.name} has no active WhatsApp connection.`);
 
-  const connection = await withTenant(tenantId, await systemActor(), (tx) =>
+  const stored = await withTenant(tenantId, await systemActor(), (tx) =>
     tx.whatsAppConnection.findFirst({ select: { wabaId: true } }),
   );
-  if (connection === null) {
+  // A clinic that signed up has its WABA id stored. A clinic on the .env test number has none, so for that
+  // one case the id can be given as WHATSAPP_WABA_ID. A stored id always wins.
+  const wabaId = stored?.wabaId ?? process.env["WHATSAPP_WABA_ID"];
+  if (wabaId === undefined || wabaId === "") {
     throw new Error(
-      `${tenant.name} runs on the .env test number, which has no stored WABA id. Submit the templates in Meta's WhatsApp Manager instead.`,
+      `${tenant.name} runs on the .env test number, which has no stored WABA id. Set WHATSAPP_WABA_ID to its WhatsApp Business Account id, or submit the templates in Meta's WhatsApp Manager instead.`,
     );
   }
 
-  const existing = await listWhatsAppTemplates(connection.wabaId, access.accessToken);
+  const existing = await listWhatsAppTemplates(wabaId, access.accessToken);
   const has = (name: string): boolean =>
     existing.some((template) => template.name === name && template.language === TEMPLATE_LANGUAGE);
 
@@ -66,13 +69,13 @@ async function main(): Promise<void> {
         console.log(`  exists     ${name}`);
         continue;
       }
-      const result = await submitWhatsAppTemplate(connection.wabaId, templateSubmission(key, appUrl as string), access.accessToken);
+      const result = await submitWhatsAppTemplate(wabaId, templateSubmission(key, appUrl as string), access.accessToken);
       console.log(`  submitted  ${name} -> ${result.status}`);
     }
   }
 
-  console.log(`\nStatus for ${tenant.name} (WABA ${connection.wabaId}):`);
-  const after = statusOnly ? existing : await listWhatsAppTemplates(connection.wabaId, access.accessToken);
+  console.log(`\nStatus for ${tenant.name} (WABA ${wabaId}):`);
+  const after = statusOnly ? existing : await listWhatsAppTemplates(wabaId, access.accessToken);
   for (const key of ALL_TEMPLATE_KEYS) {
     const { name } = TEMPLATES[key];
     const found = after.find((template) => template.name === name && template.language === TEMPLATE_LANGUAGE);
