@@ -81,8 +81,11 @@ export function isDeadlock(error: unknown): boolean {
  * than guessing at what the contention meant.
  */
 export class DeadlockExhaustedError extends Error {
-  constructor(readonly attempts: number) {
+  readonly attempts: number;
+
+  constructor(attempts: number) {
     super(`Deadlocked on all ${String(attempts)} attempts.`);
+    this.attempts = attempts;
     this.name = "DeadlockExhaustedError";
   }
 }

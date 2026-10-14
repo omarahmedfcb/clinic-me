@@ -91,8 +91,11 @@ interface CachedToken {
 
 export class BotApiClient {
   private cached: CachedToken | undefined;
+  private readonly config: BotCredentialConfig;
 
-  constructor(private readonly config: BotCredentialConfig) { }
+  constructor(config: BotCredentialConfig) {
+    this.config = config;
+  }
 
   private async token(forceRefresh: boolean): Promise<string> {
     if (!forceRefresh && this.cached && this.cached.expiresAt > Date.now()) {

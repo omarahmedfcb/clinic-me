@@ -29,12 +29,13 @@ function accessToken(clinicToken?: string): string {
  * The message text is unchanged, so anything matching on it keeps working.
  */
 export class WhatsAppSendError extends Error {
-  constructor(
-    readonly httpStatus: number,
-    readonly metaCode: number | null,
-    message: string,
-  ) {
+  readonly httpStatus: number;
+  readonly metaCode: number | null;
+
+  constructor(httpStatus: number, metaCode: number | null, message: string) {
     super(message);
+    this.httpStatus = httpStatus;
+    this.metaCode = metaCode;
   }
 
   get tokenInvalid(): boolean {
