@@ -65,9 +65,11 @@ export const TEMPLATES: Record<TemplateKey, TemplateDefinition> = {
     examples: ["أحمد", "عيادة النور", "د. محمد علي", "الأحد 18 أكتوبر الساعة 10:30 ص"],
   },
   // {{1}} first name, {{2}} where to go: the room, or the doctor when the room is not recorded.
+  // Meta rejects a body that starts or ends with a variable, and reclassifies friendly filler as
+  // MARKETING, so the closing words state what happens next instead of wishing the patient well.
   callIn: {
-    name: "patient_call_in",
-    body: "مرحباً {{1}}، حان دورك الآن. تفضّل بالدخول إلى {{2}}.",
+    name: "patient_call_in_v2",
+    body: "مرحباً {{1}}، حان دورك الآن. تفضّل بالدخول إلى {{2}} لبدء الكشف.",
     examples: ["أحمد", "غرفة 2 - د. محمد علي"],
   },
   // {{1}} first name, {{2}} clinic, {{3}} how many days the link stays valid.
