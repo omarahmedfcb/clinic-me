@@ -1,7 +1,7 @@
 // What the visit orders: investigations and the prescription — Q24, with Q8's autocomplete.
 // Both are saved explicitly: a list being edited row by row must not autosave a half-typed line.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../../design-system/Button.tsx";
 import { DrugNameField } from "./DrugNameField.tsx";
 import { PrintSheetButton } from "./PrintSheetButton.tsx";
@@ -15,6 +15,7 @@ import {
   type InvestigationLine,
   type PrescriptionLine,
 } from "./draft-api.ts";
+import { usePendingSave } from "./pending-saves.ts";
 
 type AuthFetch = (path: string, init?: RequestInit) => Promise<Response>;
 
@@ -36,25 +37,43 @@ const EMPTY_MEDICATION: PrescriptionLine = {
   instructions: null,
 };
 
-export function InvestigationsSection({ authFetch, appointmentId, visitId }: Props) {
+export function InvestigationsSection({
+  authFetch,
+  appointmentId,
+  visitId,
+}: Props) {
   const { t } = useLocale();
-  const [freeText, setFreeText] = useState("");
-  const [items, setItems] = useState<InvestigationLine[]>([]);
+  const [freeText, setFreeTextRaw] = useState("");
+  const [items, setItemsRaw] = useState<InvestigationLine[]>([]);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  // True once the doctor has changed something that is not saved yet.
+  const changed = useRef(false);
+
+  const setFreeText = (next: string): void => {
+    changed.current = true;
+    setSaved(false);
+    setFreeTextRaw(next);
+  };
+  const setItems = (next: InvestigationLine[]): void => {
+    changed.current = true;
+    setSaved(false);
+    setItemsRaw(next);
+  };
 
   useEffect(() => {
     let cancelled = false;
     void loadInvestigations(authFetch, appointmentId, visitId).then((value) => {
       if (cancelled || value === null) return;
-      setFreeText(value.freeText ?? "");
-      setItems(value.items);
+      setFreeTextRaw(value.freeText ?? "");
+      setItemsRaw(value.items);
     });
     return () => {
       cancelled = true;
     };
   }, [authFetch, appointmentId, visitId]);
 
-  async function save(): Promise<void> {
+  async function save(): Promise<boolean> {
     setSaving(true);
     // A blank name is a row the doctor started and abandoned, not a request.
     const kept = items.filter((item) => item.name.trim() !== "");
@@ -63,28 +82,47 @@ export function InvestigationsSection({ authFetch, appointmentId, visitId }: Pro
       items: kept,
     });
     setSaving(false);
-    if (value !== null) setItems(value.items);
+    if (value === null) return false;
+    changed.current = false;
+    setItemsRaw(value.items);
+    setSaved(true);
+    return true;
   }
 
-  // What is on the screen is what prints: unsaved rows are saved first.
+  // Ending the visit saves what is still unsaved: a finished visit refuses these writes.
+  usePendingSave(visitId, async () => (changed.current ? save() : true));
+
+  // What is on the screen is what prints: unsaved rows are saved first. A refused save (the visit is
+  // already finished) still prints what was saved.
   async function saveFirst(): Promise<boolean> {
-    await save();
+    if (changed.current) await save();
     return true;
   }
 
   return (
     <section className="grid gap-3 rounded-lg border border-border p-3">
-      <h2 className="text-sm font-semibold text-ink">{t("investigations.title")}</h2>
+      <h2 className="text-sm font-semibold text-ink">
+        {t("investigations.title")}
+      </h2>
 
-      {items.length === 0 && <p className="text-xs text-ink-subtle">{t("investigations.empty")}</p>}
+      {items.length === 0 && (
+        <p className="text-xs text-ink-subtle">{t("investigations.empty")}</p>
+      )}
 
       {items.map((item, index) => (
-        <div key={index} className="grid gap-2 sm:grid-cols-[2fr_2fr_auto] sm:items-end">
+        <div
+          key={index}
+          className="grid gap-2 sm:grid-cols-[2fr_2fr_auto] sm:items-end"
+        >
           <TextInput
             label={t("investigations.name")}
             value={item.name}
             onChange={(event) =>
-              setItems(items.map((row, at) => (at === index ? { ...row, name: event.target.value } : row)))
+              setItems(
+                items.map((row, at) =>
+                  at === index ? { ...row, name: event.target.value } : row,
+                ),
+              )
             }
           />
           <TextInput
@@ -93,7 +131,13 @@ export function InvestigationsSection({ authFetch, appointmentId, visitId }: Pro
             onChange={(event) =>
               setItems(
                 items.map((row, at) =>
-                  at === index ? { ...row, notes: event.target.value === "" ? null : event.target.value } : row,
+                  at === index
+                    ? {
+                        ...row,
+                        notes:
+                          event.target.value === "" ? null : event.target.value,
+                      }
+                    : row,
                 ),
               )
             }
@@ -116,37 +160,64 @@ export function InvestigationsSection({ authFetch, appointmentId, visitId }: Pro
       />
 
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="secondary" onClick={() => setItems([...items, { ...EMPTY_INVESTIGATION }])}>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => setItems([...items, { ...EMPTY_INVESTIGATION }])}
+        >
           {t("investigations.add")}
         </Button>
         <Button size="sm" loading={saving} onClick={() => void save()}>
-          {t("profile.add")}
+          {t("investigations.save")}
         </Button>
+        {saved && (
+          <span role="status" className="self-center text-xs text-ink-muted">
+            {t("investigations.saved")}
+          </span>
+        )}
         <PrintSheetButton kind="investigations" onBeforePrint={saveFirst} />
       </div>
     </section>
   );
 }
 
-export function PrescriptionSection({ authFetch, appointmentId, visitId }: Props) {
+export function PrescriptionSection({
+  authFetch,
+  appointmentId,
+  visitId,
+}: Props) {
   const { t } = useLocale();
-  const [notes, setNotes] = useState("");
-  const [items, setItems] = useState<PrescriptionLine[]>([]);
+  const [notes, setNotesRaw] = useState("");
+  const [items, setItemsRaw] = useState<PrescriptionLine[]>([]);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  // True once the doctor has changed something that is not saved yet.
+  const changed = useRef(false);
+
+  const setNotes = (next: string): void => {
+    changed.current = true;
+    setSaved(false);
+    setNotesRaw(next);
+  };
+  const setItems = (next: PrescriptionLine[]): void => {
+    changed.current = true;
+    setSaved(false);
+    setItemsRaw(next);
+  };
 
   useEffect(() => {
     let cancelled = false;
     void loadPrescription(authFetch, appointmentId, visitId).then((value) => {
       if (cancelled || value === null) return;
-      setNotes(value.notes ?? "");
-      setItems(value.items);
+      setNotesRaw(value.notes ?? "");
+      setItemsRaw(value.items);
     });
     return () => {
       cancelled = true;
     };
   }, [authFetch, appointmentId, visitId]);
 
-  async function save(): Promise<void> {
+  async function save(): Promise<boolean> {
     setSaving(true);
     const kept = items.filter((item) => item.medicationName.trim() !== "");
     const value = await savePrescription(authFetch, appointmentId, visitId, {
@@ -154,26 +225,43 @@ export function PrescriptionSection({ authFetch, appointmentId, visitId }: Props
       items: kept,
     });
     setSaving(false);
-    if (value !== null) setItems(value.items);
+    if (value === null) return false;
+    changed.current = false;
+    setItemsRaw(value.items);
+    setSaved(true);
+    return true;
   }
 
-  // What is on the screen is what prints: unsaved rows are saved first.
+  // Ending the visit saves what is still unsaved: a finished visit refuses these writes.
+  usePendingSave(visitId, async () => (changed.current ? save() : true));
+
+  // What is on the screen is what prints: unsaved rows are saved first. A refused save (the visit is
+  // already finished) still prints what was saved.
   async function saveFirst(): Promise<boolean> {
-    await save();
+    if (changed.current) await save();
     return true;
   }
 
   const setLine = (index: number, patch: Partial<PrescriptionLine>): void =>
-    setItems(items.map((row, at) => (at === index ? { ...row, ...patch } : row)));
+    setItems(
+      items.map((row, at) => (at === index ? { ...row, ...patch } : row)),
+    );
 
   return (
     <section className="grid gap-3 rounded-lg border border-border p-3">
-      <h2 className="text-sm font-semibold text-ink">{t("prescription.title")}</h2>
+      <h2 className="text-sm font-semibold text-ink">
+        {t("prescription.title")}
+      </h2>
 
-      {items.length === 0 && <p className="text-xs text-ink-subtle">{t("prescription.empty")}</p>}
+      {items.length === 0 && (
+        <p className="text-xs text-ink-subtle">{t("prescription.empty")}</p>
+      )}
 
       {items.map((item, index) => (
-        <div key={index} className="grid gap-2 sm:grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_auto] sm:items-end">
+        <div
+          key={index}
+          className="grid gap-2 sm:grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_auto] sm:items-end"
+        >
           <DrugNameField
             label={t("prescription.medication")}
             value={item.medicationName}
@@ -186,12 +274,20 @@ export function PrescriptionSection({ authFetch, appointmentId, visitId }: Props
           <TextInput
             label={t("prescription.strength")}
             value={item.strength ?? ""}
-            onChange={(event) => setLine(index, { strength: event.target.value === "" ? null : event.target.value })}
+            onChange={(event) =>
+              setLine(index, {
+                strength: event.target.value === "" ? null : event.target.value,
+              })
+            }
           />
           <TextInput
             label={t("prescription.form")}
             value={item.form ?? ""}
-            onChange={(event) => setLine(index, { form: event.target.value === "" ? null : event.target.value })}
+            onChange={(event) =>
+              setLine(index, {
+                form: event.target.value === "" ? null : event.target.value,
+              })
+            }
           />
           <TextInput
             label={t("prescription.dose")}
@@ -201,19 +297,31 @@ export function PrescriptionSection({ authFetch, appointmentId, visitId }: Props
           <TextInput
             label={t("prescription.frequency")}
             value={item.frequency}
-            onChange={(event) => setLine(index, { frequency: event.target.value })}
+            onChange={(event) =>
+              setLine(index, { frequency: event.target.value })
+            }
           />
           <TextInput
             label={t("prescription.duration")}
             value={item.duration}
-            onChange={(event) => setLine(index, { duration: event.target.value })}
+            onChange={(event) =>
+              setLine(index, { duration: event.target.value })
+            }
           />
           <TextInput
             label={t("prescription.quantity")}
             value={item.quantity ?? ""}
-            onChange={(event) => setLine(index, { quantity: event.target.value === "" ? null : event.target.value })}
+            onChange={(event) =>
+              setLine(index, {
+                quantity: event.target.value === "" ? null : event.target.value,
+              })
+            }
           />
-          <Button size="sm" variant="ghost" onClick={() => setItems(items.filter((_, at) => at !== index))}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setItems(items.filter((_, at) => at !== index))}
+          >
             {t("prescription.remove")}
           </Button>
         </div>
@@ -227,12 +335,21 @@ export function PrescriptionSection({ authFetch, appointmentId, visitId }: Props
       />
 
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="secondary" onClick={() => setItems([...items, { ...EMPTY_MEDICATION }])}>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => setItems([...items, { ...EMPTY_MEDICATION }])}
+        >
           {t("prescription.add")}
         </Button>
         <Button size="sm" loading={saving} onClick={() => void save()}>
-          {t("profile.add")}
+          {t("prescription.save")}
         </Button>
+        {saved && (
+          <span role="status" className="self-center text-xs text-ink-muted">
+            {t("prescription.saved")}
+          </span>
+        )}
         <PrintSheetButton kind="prescription" onBeforePrint={saveFirst} />
       </div>
     </section>

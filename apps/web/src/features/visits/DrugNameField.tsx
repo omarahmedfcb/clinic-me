@@ -60,7 +60,10 @@ export function DrugNameField({
         for (const drug of drugs) {
           if (seen.has(drug.name.toLowerCase())) continue;
           seen.add(drug.name.toLowerCase());
-          merged.push({ name: drug.name, detail: [drug.arabic, drug.scientific].filter(Boolean).join(" · ") });
+          merged.push({
+            name: drug.name,
+            detail: [drug.arabic, drug.scientific].filter(Boolean).join(" · "),
+          });
         }
         setOptions(merged);
         setActive(-1);
@@ -112,7 +115,7 @@ export function DrugNameField({
         <ul
           role="listbox"
           data-testid="drug-options"
-          className="absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-auto rounded-lg border border-border bg-surface shadow-lg"
+          className="app-scroll absolute inset-s-0 top-full z-30 mt-1.5 max-h-[min(26rem,60vh)] w-full overflow-y-auto overflow-x-hidden overscroll-contain rounded-xl border border-border-strong bg-surface py-1.5 shadow-xl ring-1 ring-black/5 sm:w-[max(100%,28rem)] sm:max-w-[min(36rem,calc(100vw-3rem))]"
         >
           {options.map((option, index) => (
             <li
@@ -124,10 +127,16 @@ export function DrugNameField({
                 event.preventDefault();
                 choose(option);
               }}
-              className={`cursor-pointer px-3 py-2 text-sm ${index === active ? "bg-primary-soft/40" : "hover:bg-surface-sunken"}`}
+              className={`mx-1.5 cursor-pointer rounded-lg px-3 py-2.5 text-sm transition-colors ${index === active ? "bg-primary-soft/60" : "hover:bg-surface-sunken"}`}
             >
-              <span className="block text-ink" dir="ltr">{option.name}</span>
-              {option.detail !== "" && <span className="block text-xs text-ink-muted">{option.detail}</span>}
+              <span className="block wrap-break-words text-ink" dir="ltr">
+                {option.name}
+              </span>
+              {option.detail !== "" && (
+                <span className="mt-0.5 block wrap-break-words text-xs text-ink-muted">
+                  {option.detail}
+                </span>
+              )}
             </li>
           ))}
         </ul>

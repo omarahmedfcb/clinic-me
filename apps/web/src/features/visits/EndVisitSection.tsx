@@ -7,6 +7,7 @@ import { Select, TextInput } from "../../design-system/fields.tsx";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import { completeVisit, type CompletedVisit } from "./draft-api.ts";
 import { pauseVisit, resumeVisit } from "./pause-api.ts";
+import { runPendingSaves } from "./pending-saves.ts";
 
 type AuthFetch = (path: string, init?: RequestInit) => Promise<Response>;
 
@@ -47,10 +48,19 @@ export function EndVisitSection({
     // Anything still in the autosave timer goes first: completing with unflushed text would refuse
     // on the revision, or worse, finish a visit without the last sentence.
     await flush();
+    // The prescription and the investigations are saved by their own buttons, not by the autosave.
+    // A finished visit refuses them, so save what is left now, and stop if that fails.
+    if (!(await runPendingSaves(visitId))) {
+      setBusy(false);
+      setMessage(t("visit.endOrdersNotSaved"));
+      return;
+    }
 
     const result = await completeVisit(authFetch, appointmentId, visitId, {
       expectedRevision: revision(),
-      ...(mode === "INTERVAL" ? { followUpIntervalDays: Math.max(1, Number(days) || 1) } : {}),
+      ...(mode === "INTERVAL"
+        ? { followUpIntervalDays: Math.max(1, Number(days) || 1) }
+        : {}),
       ...(mode === "DATE" && date !== "" ? { followUpDate: date } : {}),
     });
     setBusy(false);
@@ -142,7 +152,12 @@ export function EndVisitSection({
       )}
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button data-testid="end-visit" loading={busy} disabled={done} onClick={() => void end()}>
+        <Button
+          data-testid="end-visit"
+          loading={busy}
+          disabled={done}
+          onClick={() => void end()}
+        >
           {t("visit.end")}
         </Button>
 
@@ -168,7 +183,11 @@ export function EndVisitSection({
       </div>
 
       {message !== null && (
-        <p role="status" data-testid="end-visit-message" className="text-sm text-ink-muted">
+        <p
+          role="status"
+          data-testid="end-visit-message"
+          className="text-sm text-ink-muted"
+        >
           {message}
         </p>
       )}

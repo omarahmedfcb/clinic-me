@@ -359,3 +359,24 @@ a {
     content: none !important;
   }
 }
+/* A thin, rounded scrollbar for floating lists such as the drug search results. */
+.app-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+.app-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+.app-scroll::-webkit-scrollbar-track {
+  background: transparent;
+  margin-block: 6px;
+}
+.app-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 9999px;
+}
+.app-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-primary);
+}
