@@ -36,6 +36,18 @@ export type EmbeddedSignupOutcome =
 
 let sdkReady: Promise<FacebookSdk> | undefined;
 
+// If only one of the two halves (code, asset ids) arrives, give the other this long before failing.
+const OTHER_HALF_GRACE_MS = 10_000;
+
+const isFacebookOrigin = (origin: string): boolean => {
+  try {
+    const host = new URL(origin).hostname;
+    return host === "facebook.com" || host.endsWith(".facebook.com");
+  } catch {
+    return false;
+  }
+};
+
 export function loadFacebookSdk(appId: string, version: string): Promise<FacebookSdk> {
   sdkReady ??= new Promise<FacebookSdk>((resolve, reject) => {
     window.fbAsyncInit = () => {
@@ -68,37 +80,46 @@ export function launchEmbeddedSignup(
     let code: string | undefined;
     let assets: Omit<EmbeddedSignupResult, "code"> | undefined;
     let settled = false;
+    let graceTimer: number | undefined;
 
     const finish = (outcome: EmbeddedSignupOutcome): void => {
       if (settled) return;
       settled = true;
+      window.clearTimeout(graceTimer);
       window.removeEventListener("message", onMessage);
       resolve(outcome);
     };
     const tryFinish = (): void => {
-      if (code !== undefined && assets !== undefined) finish({ kind: "done", result: { code, ...assets } });
+      if (code !== undefined && assets !== undefined) return finish({ kind: "done", result: { code, ...assets } });
+      window.clearTimeout(graceTimer);
+      graceTimer = window.setTimeout(() => finish({ kind: "error" }), OTHER_HALF_GRACE_MS);
     };
 
     function onMessage(event: MessageEvent): void {
-      if (!event.origin.endsWith("facebook.com")) return;
+      if (!isFacebookOrigin(event.origin)) return;
       try {
         const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
         if (data?.type !== "WA_EMBEDDED_SIGNUP") return;
 
         if (data.event === "CANCEL") return finish({ kind: "cancelled" });
-        if (data.event === "ERROR") return finish({ kind: "error" });
+        if (data.event === "ERROR") {
+          console.error("[embedded-signup] Meta reported an error", data);
+          return finish({ kind: "error" });
+        }
 
         const wabaId = data.data?.waba_id ?? data.data?.waba_ids?.[0];
+        if (typeof data.event !== "string" || !data.event.startsWith("FINISH") || typeof wabaId !== "string") {
+          console.warn("[embedded-signup] ignored event", data);
+          return;
+        }
+        // Only the plain FINISH names a number; FINISH_ONLY_WABA and the coexistence event name the
+        // WABA alone, and the server then finds the number itself from the clinic's token.
         const phoneNumberId = data.data?.phone_number_id;
-        const coexistence = data.event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING";
-        if (typeof wabaId !== "string") return;
-        // The coexistence completion event carries no phone_number_id; any other flow must have one.
-        if (typeof phoneNumberId !== "string" && !coexistence) return;
         assets = {
           wabaId,
           ...(typeof phoneNumberId === "string" ? { phoneNumberId } : {}),
           businessId: typeof data.data?.business_id === "string" ? data.data.business_id : undefined,
-          skipRegistration: coexistence,
+          skipRegistration: data.event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING",
         };
         tryFinish();
       } catch {
@@ -110,7 +131,7 @@ export function launchEmbeddedSignup(
     fb.login(
       (response) => {
         const received = response.authResponse?.code;
-        if (!received) return finish({ kind: "cancelled" });
+        if (!received) return finish(assets === undefined ? { kind: "cancelled" } : { kind: "error" });
         code = received;
         tryFinish();
       },
