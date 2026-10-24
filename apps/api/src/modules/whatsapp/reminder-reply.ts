@@ -1,4 +1,4 @@
-// A patient tapped "تأكيد الحضور" or "إلغاء الموعد" on a reminder.
+// A patient tapped "تأكيد الحضور", "تعديل الموعد" or "إلغاء الموعد" on a reminder.
 //
 // A template's quick-reply button reaches us as a message of type `button`, carrying the payload we put
 // on it when we sent: `rem:c:<intentId>` or `rem:x:<intentId>`. It is NOT run through the booking flow or
@@ -20,6 +20,8 @@
 import { withTenant } from "../../prisma/with-tenant.ts";
 import { changeAppointmentStatus, type CallerContext } from "../appointments/appointments.service.ts";
 import { botActorContext, ingestInboundMessage, recordOutboundMessage } from "./whatsapp-conversation.ts";
+import { sendFlowOutgoing } from "./whatsapp-orchestrator.ts";
+import { MAX_PATIENT_RESCHEDULES, startReschedule, type FlowResult } from "./whatsapp-flow.ts";
 import { sendWhatsAppText } from "./whatsapp-graph-client.ts";
 import type { ResolvedWhatsAppTenant } from "./whatsapp-tenants.ts";
 import { firstName, parseReminderPayload, printedDateTime } from "./whatsapp-templates.ts";
@@ -34,6 +36,8 @@ const REPLIES = {
   alreadyCancelled: "تم إلغاء هذا الموعد. يمكنك حجز موعد جديد في أي وقت بإرسال رسالة هنا.",
   outdated: "تم تحديث موعدك منذ إرسال هذا التذكير، وسيصلك تذكير جديد بالموعد الحالي.",
   unknown: "لم نتمكن من معالجة هذا الرد. يمكنك إرسال رسالة هنا وسنساعدك.",
+  editLimit:
+    "وصلت للحد الأقصى لتعديل هذا الموعد (مرتين). إذا لم تتمكن من الحضور يمكنك إلغاء الموعد وحجز موعد جديد بإرسال رسالة هنا.",
 } as const;
 
 export interface ReminderTap {
@@ -47,15 +51,30 @@ export interface ReminderTap {
   occurredAt: Date;
 }
 
-export type TapOutcome = "CONFIRMED" | "CANCELLED" | "ALREADY_ANSWERED" | "STALE" | "REJECTED" | "DUPLICATE";
+export type TapOutcome =
+  | "CONFIRMED"
+  | "CANCELLED"
+  | "EDIT_STARTED"
+  | "EDIT_REFUSED"
+  | "ALREADY_ANSWERED"
+  | "STALE"
+  | "REJECTED"
+  | "DUPLICATE";
 
 /** Injected so a spec can read the reply without a network; production passes nothing. */
 type SendText = (phoneNumberId: string, toWaId: string, body: string, token?: string) => Promise<{ externalMessageId: string }>;
+/** Same, for the date list an edit opens with. */
+type SendFlow = (
+  tenant: ResolvedWhatsAppTenant,
+  toWaId: string,
+  outgoing: NonNullable<FlowResult["outgoing"]>,
+) => Promise<{ externalMessageId: string; loggedText: string }>;
 
 export async function handleReminderTap(
   tap: ReminderTap,
   now: Date = new Date(),
   send: SendText = sendWhatsAppText,
+  sendFlow: SendFlow = sendFlowOutgoing,
 ): Promise<TapOutcome> {
   const parsed = parseReminderPayload(tap.payload);
   if (parsed === null) return "REJECTED";
@@ -105,7 +124,10 @@ export async function handleReminderTap(
           select: {
             status: true,
             scheduledStart: true,
-            patient: { select: { fullNameAr: true, phoneE164: true } },
+            rescheduleCount: true,
+            patient: { select: { id: true, fullNameAr: true, phoneE164: true } },
+            doctor: { select: { id: true, membership: { select: { user: { select: { fullName: true } } } } } },
+            service: { select: { id: true, nameAr: true } },
           },
         },
       },
@@ -131,6 +153,45 @@ export async function handleReminderTap(
   if (movedOn || (found.appointment.status !== "BOOKED" && found.appointment.status !== "CONFIRMED")) {
     await reply(REPLIES.outdated);
     return "STALE";
+  }
+
+  // Editing is not an answer to the reminder: it is not claimed, so the confirm deadline keeps running as the
+  // clinic configured it. If the patient finishes the edit in time, the moved appointment gets a fresh
+  // reminder (and the old one is superseded); if not, the sweep cancels it exactly as it would have.
+  if (parsed.action === "edit") {
+    if (found.appointment.rescheduleCount >= MAX_PATIENT_RESCHEDULES) {
+      await reply(REPLIES.editLimit);
+      return "EDIT_REFUSED";
+    }
+    const started = await startReschedule({
+      tenant,
+      client: tenant.client,
+      appointmentId: found.appointmentId,
+      originalStart: found.appointment.scheduledStart,
+      patient: { id: found.appointment.patient.id, name: found.appointment.patient.fullNameAr },
+      doctor: {
+        id: found.appointment.doctor.id,
+        name: found.appointment.doctor.membership?.user?.fullName ?? "",
+      },
+      service: { id: found.appointment.service.id, name: found.appointment.service.nameAr },
+    });
+    if (started.outgoing === undefined) return "STALE";
+    try {
+      const sent = await sendFlow(tenant, tap.waId, started.outgoing);
+      // The conversation now holds the edit's state, so the patient's next tap on the list continues it.
+      await recordOutboundMessage(tenant.id, tenant.bot, {
+        conversationId: ingested.conversationId,
+        contactId: ingested.contactId,
+        externalMessageId: sent.externalMessageId,
+        text: sent.loggedText,
+        flowState: started.nextState ?? null,
+        now: new Date(),
+      });
+    } catch (error) {
+      console.error("WhatsApp: could not start an appointment edit", error);
+      return "STALE";
+    }
+    return "EDIT_STARTED";
   }
 
   // Claim it. One of {this tap, the expiry sweep, a second tap} gets count = 1.

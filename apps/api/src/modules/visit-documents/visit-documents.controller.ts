@@ -75,7 +75,6 @@ export class VisitDocumentsController {
     if (kind === "sickLeave" && (documents.sickLeave.days === null || documents.sickLeave.from === null)) {
       throw new NotFoundException(refusal("NOT_FOUND", { resource: "visit" }));
     }
-    if (kind === "invoice" && documents.invoice === null) throw new NotFoundException(refusal("NOT_FOUND", { resource: "visit" }));
 
     const key = `${kind}:${contentHash(documents, kind)}`;
     const now = Date.now();

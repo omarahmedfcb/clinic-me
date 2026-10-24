@@ -11,6 +11,10 @@
 // All of them are UTILITY: each is about something the patient already booked or attended. Meta's
 // review is stricter about promotional wording, and nothing here is promotional.
 //
+// A template's wording or buttons cannot be changed once it is approved, so a change is a new template under
+// a new name (the "_v2" names below). The previous templates stay approved on Meta, and a message already
+// delivered with them keeps working: its buttons carry the same `rem:` payloads this file still parses.
+//
 // Arabic only, for now. The clinic's patients are Arabic speakers and the platform's own letterhead is
 // the only English text it prints (PHASE-4.md Q45); a second language is a second set of approvals
 // per clinic, which is a cost that should be chosen rather than defaulted into.
@@ -40,21 +44,22 @@ interface TemplateDefinition {
 export const TEMPLATES: Record<TemplateKey, TemplateDefinition> = {
   // {{1}} first name, {{2}} clinic, {{3}} doctor, {{4}} date and time, {{5}} the confirm-by time.
   reminderWithDeadline: {
-    name: "appointment_reminder_confirm",
+    name: "appointment_reminder_confirm_v2",
     body:
       "مرحباً {{1}}، نذكّرك بموعدك في {{2}} مع {{3}} يوم {{4}}.\n" +
-      "يرجى تأكيد حضورك قبل الساعة {{5}}، وإلا سيتم إلغاء الموعد تلقائياً لإتاحته لمريض آخر.",
+      "يرجى تأكيد حضورك قبل الساعة {{5}}، وإلا سيتم إلغاء الموعد تلقائياً لإتاحته لمريض آخر. " +
+      "يمكنك أيضاً تعديل الموعد أو إلغاءه من الأزرار أدناه.",
     examples: ["أحمد", "عيادة النور", "د. محمد علي", "الأحد 18 أكتوبر الساعة 10:30 ص", "8:30 ص"],
-    quickReplies: ["تأكيد الحضور", "إلغاء الموعد"],
+    quickReplies: ["تأكيد الحضور", "تعديل الموعد", "إلغاء الموعد"],
   },
   // The same reminder for an appointment that will not be cancelled if nobody answers.
   reminderPlain: {
-    name: "appointment_reminder",
+    name: "appointment_reminder_v2",
     body:
       "مرحباً {{1}}، نذكّرك بموعدك في {{2}} مع {{3}} يوم {{4}}.\n" +
-      "يرجى تأكيد حضورك أو إلغاء الموعد إن لم تتمكن من الحضور.",
+      "يرجى تأكيد حضورك، أو تعديل الموعد أو إلغاءه إن لم تتمكن من الحضور.",
     examples: ["أحمد", "عيادة النور", "د. محمد علي", "الأحد 18 أكتوبر الساعة 10:30 ص"],
-    quickReplies: ["تأكيد الحضور", "إلغاء الموعد"],
+    quickReplies: ["تأكيد الحضور", "تعديل الموعد", "إلغاء الموعد"],
   },
   // {{1}} first name, {{2}} clinic, {{3}} doctor, {{4}} date and time.
   autoCancelled: {
@@ -74,24 +79,30 @@ export const TEMPLATES: Record<TemplateKey, TemplateDefinition> = {
   },
   // {{1}} first name, {{2}} clinic, {{3}} how many days the link stays valid.
   visitDocuments: {
-    name: "visit_documents",
+    name: "visit_documents_v2",
     body:
       "مرحباً {{1}}، شكراً لزيارتك {{2}}.\n" +
-      "تجد في الرابط أدناه التقارير والفاتورة الخاصة بزيارتك ويمكنك تحميلها. الرابط صالح لمدة {{3}} يوماً.",
+      "تجد في الرابط أدناه الروشتة وطلب الفحوصات والإجازة المرضية (إن وُجدت) الخاصة بزيارتك ويمكنك تحميلها. الرابط صالح لمدة {{3}} يوماً.",
     examples: ["أحمد", "عيادة النور", "30"],
     urlButton: { label: "عرض المستندات" },
   },
 };
 
-/** The payload prefix on a reminder's buttons. `rem:c:<intentId>` confirms, `rem:x:<intentId>` cancels. */
+/** The payload prefix on a reminder's buttons. `rem:c:<intentId>` confirms, `rem:e:<intentId>` edits (moves
+ *  the appointment), `rem:x:<intentId>` cancels. */
 export const REMINDER_PAYLOAD_PREFIX = "rem:";
 
-export function reminderPayloads(intentId: string): [string, string] {
-  return [`${REMINDER_PAYLOAD_PREFIX}c:${intentId}`, `${REMINDER_PAYLOAD_PREFIX}x:${intentId}`];
+/** In the order the buttons appear on the template: confirm, edit, cancel. */
+export function reminderPayloads(intentId: string): [string, string, string] {
+  return [
+    `${REMINDER_PAYLOAD_PREFIX}c:${intentId}`,
+    `${REMINDER_PAYLOAD_PREFIX}e:${intentId}`,
+    `${REMINDER_PAYLOAD_PREFIX}x:${intentId}`,
+  ];
 }
 
 export interface ParsedReminderPayload {
-  action: "confirm" | "cancel";
+  action: "confirm" | "edit" | "cancel";
   intentId: string;
 }
 
@@ -101,8 +112,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function parseReminderPayload(payload: string | undefined): ParsedReminderPayload | null {
   if (payload === undefined || !payload.startsWith(REMINDER_PAYLOAD_PREFIX)) return null;
   const [, action, intentId] = payload.split(":");
-  if ((action !== "c" && action !== "x") || intentId === undefined || !UUID.test(intentId)) return null;
-  return { action: action === "c" ? "confirm" : "cancel", intentId };
+  if ((action !== "c" && action !== "e" && action !== "x") || intentId === undefined || !UUID.test(intentId)) return null;
+  return { action: action === "c" ? "confirm" : action === "e" ? "edit" : "cancel", intentId };
 }
 
 /**

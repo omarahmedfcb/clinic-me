@@ -44,6 +44,7 @@ import {
   createProvisionalPatient,
   findPatientsByPhone,
   readAppointmentStatus,
+  readClinicCurrency,
   ensureWhatsAppConsent,
   recordBotConsent,
 } from "./bot.service.ts";
@@ -110,11 +111,16 @@ export class BotController {
     };
   }
 
-  /** The clinic's active services — id, name (Arabic and English), duration. Same boundary as above. */
+  /**
+   * The clinic's active services — id, name (Arabic and English), duration, and price. The price is the
+   * clinic's own price list (what the desk would quote anyone who asked), so it is the same boundary as
+   * above; it is what the bot tells a patient before they confirm. `currency` is the clinic's, once.
+   */
   @Get("services")
   @RequirePermission("bot.listServices")
   async services(@Req() request: AuthenticatedRequest) {
     const rows = await listServices(this.caller(request), new Date());
+    const currency = await readClinicCurrency(this.caller(request));
     return {
       services: rows
         .filter((service) => service.isActive)
@@ -123,6 +129,8 @@ export class BotController {
           nameAr: service.nameAr,
           nameEn: service.nameEn,
           durationMinutes: service.durationMinutes,
+          priceMinor: service.priceMinor,
+          currency,
         })),
     };
   }

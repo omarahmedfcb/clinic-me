@@ -70,12 +70,16 @@ Exactly these, and each one is an endpoint, not a query:
 | `bot.book` | Books one of those slots for the identified patient | The appointment's id, time, doctor, status |
 | `bot.reschedule` | Moves an appointment the bot's clinic owns | Same |
 | `bot.cancel` | Cancels one, with a reason | Same |
-| `bot.readAppointmentStatus` | Status of one appointment by id | Status, time, doctor. **Not** the visit, and not what happened in it |
+| `bot.readAppointmentStatus` | Status of one appointment by id | Status, time, doctor, and how many times it has been rescheduled. **Not** the visit, and not what happened in it |
 | `bot.recordConsent` | Records a consent the patient gave in chat | Acknowledgement only |
 
 Consent is a first-class record here already (`consents`: purpose, granted, timestamp, who captured
 it, and an `evidence` JSON). A bot recording `WHATSAPP_COMMS` writes the message id and timestamp
 into `evidence`, so the clinic can show what the patient agreed to and when.
+
+The service list (`GET /bot/services`) carries each active service's **price** (`priceMinor`, integer minor units) and the clinic's `currency`, because the bot tells the patient what the visit costs before they confirm. It is the clinic's own price list, nothing about anyone's account.
+
+**What the bot may do with the patient list.** `bot.findPatientByPhone` returns names so the bot can *match* what a patient types against them. The WhatsApp bot never reads a returned name back to the patient: a phone number can be dropped and resold, and its next owner must not learn who was registered on it. The patient types their own full name and the bot decides, quietly, whether it is one of those on the number.
 
 ### One phone, several patients — ruled 2026-09-18
 

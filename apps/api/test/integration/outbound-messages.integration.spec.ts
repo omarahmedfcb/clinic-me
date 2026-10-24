@@ -136,7 +136,7 @@ describe("the WhatsApp outbox", () => {
   };
 
   describe("the reminder", () => {
-    it("is sent once, as a template with Confirm and Cancel, and the deadline is in it", async () => {
+    it("is sent once, as a template with Confirm, Edit and Cancel, and the deadline is in it", async () => {
       await enable({ appointmentRemindersEnabled: true });
       await consent();
       // Noon-to-evening so quiet hours cannot move it: booked a week ago, 3 hours from now is inside the
@@ -154,7 +154,7 @@ describe("the WhatsApp outbox", () => {
 
       const sent = templates.filter((t) => t.template.name.startsWith("appointment_reminder"));
       expect(sent).toHaveLength(1);
-      expect(sent[0]?.template.quickReplyPayloads).toHaveLength(2);
+      expect(sent[0]?.template.quickReplyPayloads).toHaveLength(3);
 
       const [row] = await intents(id);
       expect(row?.status).toBe("SENT");
@@ -377,7 +377,7 @@ describe("the WhatsApp outbox", () => {
       const second = await runOutboundPass(new Date(Date.now() + 2 * 60_000), deps);
       expect(second.sent).toBe(1);
 
-      const sent = templates.find((t) => t.template.name === "visit_documents");
+      const sent = templates.find((t) => t.template.name === "visit_documents_v2");
       const token = sent?.template.urlButtonSuffix as string;
       expect(token).toHaveLength(43);
 
@@ -393,7 +393,6 @@ describe("the WhatsApp outbox", () => {
       // What the link opens: the paper the patient would have been handed, and no clinical extras.
       const documents = await loadVisitDocuments(clinic.tenantId, resolved!.visitId, {} as StorageProvider);
       expect(documents?.patient.fileNumber).toBeGreaterThan(0);
-      expect(documents?.invoice).toBeNull();
       const everything = JSON.stringify(documents);
       for (const privateField of ["doctorNotes", "medicalHistory", "examination", "revision", "vitals"]) {
         expect(everything).not.toContain(privateField);

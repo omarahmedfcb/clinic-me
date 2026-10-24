@@ -20,6 +20,23 @@ function pick(lang: Lang, ar: string, en: string): string {
   return lang === "ar" ? ar : en;
 }
 
+/** "\n💰 السعر: 300 جنيه", or nothing when the clinic has no price on the service. */
+function priceLineFor(lang: Lang, priceLabel: string | undefined): string {
+  return priceLabel === undefined ? "" : pick(lang, `\n💰 السعر: ${priceLabel}`, `\n💰 Price: ${priceLabel}`);
+}
+
+/**
+ * A service price for a chat message. `priceMinor` is minor units (CLAUDE.md), two decimals. Null for a
+ * free or unpriced service, so the line is left out rather than reading "0".
+ */
+export function formatPrice(priceMinor: number, currency: string, lang: Lang): string | null {
+  if (!Number.isFinite(priceMinor) || priceMinor <= 0) return null;
+  const major = priceMinor / 100;
+  const amount = Number.isInteger(major) ? String(major) : major.toFixed(2);
+  const code = currency.trim().toUpperCase();
+  return `${amount} ${code === "EGP" ? pick(lang, "جنيه", "EGP") : code}`;
+}
+
 export const T = {
   /** `period` is the clinic-local half of the day (see `dayPeriodInClinic`): "morning" before 12:00,
    *  "evening" from 12:00 on. The line ends by naming what happens next rather than asking an open
@@ -47,12 +64,8 @@ export const T = {
       "Sorry, talking to a staff member isn't available on this number right now. I can help you book an appointment.",
     ),
   // -- identity ------------------------------------------------------------------------------
-  identityConfirmSingle: (lang: Lang, name: string, phone: string) =>
-    pick(lang, `لقيت الرقم ده مسجل باسم ${name} (${phone}). ده حضرتك؟`, `This number is registered as ${name} (${phone}). Is that you?`),
-  identityConfirmMultiple: (lang: Lang) =>
-    pick(lang, "لقيت أكتر من اسم مسجل على الرقم ده. مين اللي بيتكلم؟", "This number has more than one person registered. Who's this for?"),
-  identityOptionSomeoneElse: (lang: Lang) =>
-    pick(lang, "شخص تاني", "Someone else"),
+  // No stored name is ever read back to the patient (a resold phone number would leak it): they type
+  // their own, and whatsapp-flow.ts matches it quietly against the names on the number.
   yes: (lang: Lang) => pick(lang, "أيوه", "Yes"),
   no: (lang: Lang) => pick(lang, "لأ", "No"),
 
@@ -70,9 +83,17 @@ export const T = {
     pick(lang, "الرقم ده مش واضح، ممكن تبعته تاني؟", "That number doesn't look right — could you send it again?"),
 
   nameAskQuestion: (lang: Lang) =>
-    pick(lang, "تمام، ممكن اسمك بالكامل؟", "Great — what's your full name?"),
+    pick(
+      lang,
+      "تمام، ممكن اسم المريض بالكامل؟ (الاسم الأول واسم الأب على الأقل)",
+      "Great — what is the patient's full name? (first name and father's name at least)",
+    ),
   nameInvalid: (lang: Lang) =>
-    pick(lang, "معلش، محتاج اسم أوضح من كده.", "Sorry, I need a fuller name than that."),
+    pick(
+      lang,
+      "معلش، محتاج الاسم بالكامل (اسمين على الأقل) عشان أحجز بالاسم الصح.",
+      "Sorry, I need the full name (at least two words) to book under the right name.",
+    ),
 
   // -- booking ---------------------------------------------------------------------------------
   bookingDoctorQuestion: (lang: Lang) => pick(lang, "تحب تحجز مع أي دكتور؟", "Which doctor would you like to see?"),
@@ -96,23 +117,26 @@ export const T = {
   bookingNoSlotsOnDate: (lang: Lang) =>
     pick(lang, "معلش، مفيش مواعيد فاضية في اليوم ده. تحب تختار يوم تاني؟", "Sorry, there are no open times that day. Would you like to try another day?"),
 
-  bookingConfirmQuestion: (lang: Lang, doctorName: string, serviceName: string, dateLabel: string, timeLabel: string, patientName: string, complaint: string | undefined) => {
+  bookingConfirmQuestion: (lang: Lang, doctorName: string, serviceName: string, dateLabel: string, timeLabel: string, patientName: string, complaint: string | undefined, priceLabel: string | undefined) => {
     const complaintLine = complaint === undefined ? "" : pick(lang, `\n📝 الشكوى: ${complaint}`, `\n📝 Complaint: ${complaint}`);
+    const priceLine = priceLineFor(lang, priceLabel);
     return pick(
       lang,
-      `تأكيد الحجز:\n👤 ${patientName}\n👨‍⚕️ د. ${doctorName}\n🩺 ${serviceName}\n📅 ${dateLabel}\n🕐 ${timeLabel}${complaintLine}\n\nأأكد الحجز؟`,
-      `Confirm booking:\n👤 ${patientName}\n👨‍⚕️ Dr. ${doctorName}\n🩺 ${serviceName}\n📅 ${dateLabel}\n🕐 ${timeLabel}${complaintLine}\n\nShall I confirm this?`,
+      `تأكيد الحجز:\n👤 ${patientName}\n👨‍⚕️ د. ${doctorName}\n🩺 ${serviceName}\n📅 ${dateLabel}\n🕐 ${timeLabel}${priceLine}${complaintLine}\n\nأأكد الحجز؟`,
+      `Confirm booking:\n👤 ${patientName}\n👨‍⚕️ Dr. ${doctorName}\n🩺 ${serviceName}\n📅 ${dateLabel}\n🕐 ${timeLabel}${priceLine}${complaintLine}\n\nShall I confirm this?`,
     );
   },
   bookingConfirmButton: (lang: Lang) => pick(lang, "تأكيد", "Confirm"),
   bookingChangeButton: (lang: Lang) => pick(lang, "تغيير", "Change"),
   bookingRestart: (lang: Lang) => pick(lang, "تمام، خلينا نبدأ الحجز من جديد.", "Okay, let's start the booking again."),
-  bookingSuccess: (lang: Lang, doctorName: string, dateLabel: string, timeLabel: string) =>
-    pick(
+  bookingSuccess: (lang: Lang, doctorName: string, dateLabel: string, timeLabel: string, priceLabel: string | undefined) => {
+    const priceLine = priceLineFor(lang, priceLabel);
+    return pick(
       lang,
-      `تم الحجز ✅ معاد. د. ${doctorName} — ${dateLabel} الساعة ${timeLabel}.\nلو محتاج حاجة تانية أنا موجود.`,
-      `Booked ✅ with Dr. ${doctorName} on ${dateLabel} at ${timeLabel}.\nLet me know if there's anything else.`,
-    ),
+      `تم الحجز ✅ معاد. د. ${doctorName} — ${dateLabel} الساعة ${timeLabel}.${priceLine}\nلو محتاج حاجة تانية أنا موجود.`,
+      `Booked ✅ with Dr. ${doctorName} on ${dateLabel} at ${timeLabel}.${priceLine}\nLet me know if there's anything else.`,
+    );
+  },
   bookingSlotTaken: (lang: Lang) =>
     pick(lang, "معلش، حد تاني حجز الميعاد ده لسه. جرب ميعاد تاني.", "Sorry, someone else just took that slot. Please pick another."),
 
@@ -125,6 +149,45 @@ export const T = {
     ),
   bookingComplaintTooShort: (lang: Lang) =>
     pick(lang, "ممكن توضح الشكوى أكتر شوية عشان الدكتور يكون عارف؟", "Could you describe the complaint in a bit more detail so the doctor knows?"),
+
+  // -- editing an existing appointment (from the reminder's "تعديل الموعد" button) -----------------
+  rescheduleIntro: (lang: Lang) =>
+    pick(lang, "تمام، هنعدّل ميعادك مع نفس الدكتور.", "Sure, let's move your appointment with the same doctor."),
+  rescheduleNoDates: (lang: Lang) =>
+    pick(
+      lang,
+      "معلش، مفيش مواعيد متاحة للدكتور ده في الأيام الجاية، وميعادك الحالي زي ما هو.",
+      "Sorry, there are no open slots with this doctor in the coming days. Your current appointment stays as it is.",
+    ),
+  rescheduleConfirmQuestion: (lang: Lang, doctorName: string, serviceName: string, fromLabel: string, dateLabel: string, timeLabel: string, priceLabel: string | undefined) => {
+    const priceLine = priceLineFor(lang, priceLabel);
+    return pick(
+      lang,
+      `تأكيد تعديل الميعاد:\n👨‍⚕️ د. ${doctorName}\n🩺 ${serviceName}\n⏮️ من: ${fromLabel}\n📅 إلى: ${dateLabel} الساعة ${timeLabel}${priceLine}\n\nأأكد التعديل؟`,
+      `Confirm the change:\n👨‍⚕️ Dr. ${doctorName}\n🩺 ${serviceName}\n⏮️ From: ${fromLabel}\n📅 To: ${dateLabel} at ${timeLabel}${priceLine}\n\nShall I confirm this?`,
+    );
+  },
+  rescheduleConfirmButton: (lang: Lang) => pick(lang, "تأكيد التعديل", "Confirm change"),
+  rescheduleSuccess: (lang: Lang, doctorName: string, dateLabel: string, timeLabel: string, priceLabel: string | undefined) => {
+    const priceLine = priceLineFor(lang, priceLabel);
+    return pick(
+      lang,
+      `تم تعديل الميعاد ✅ د. ${doctorName} — ${dateLabel} الساعة ${timeLabel}.${priceLine}\nلو محتاج حاجة تانية أنا موجود.`,
+      `Appointment changed ✅ Dr. ${doctorName} on ${dateLabel} at ${timeLabel}.${priceLine}\nLet me know if there's anything else.`,
+    );
+  },
+  rescheduleUnavailable: (lang: Lang) =>
+    pick(
+      lang,
+      "معلش، الميعاد ده مبقاش متاح للتعديل (ممكن يكون اتلغى أو اتغير). ابعتلنا رسالة هنا لو حابب تحجز ميعاد جديد.",
+      "Sorry, this appointment can no longer be changed (it may have been cancelled or moved). Message us here if you'd like to book a new one.",
+    ),
+  rescheduleLimit: (lang: Lang) =>
+    pick(
+      lang,
+      "وصلت للحد الأقصى لتعديل الميعاد ده (مرتين). لو مش هتقدر تحضر ممكن تلغيه وتحجز ميعاد جديد.",
+      "This appointment has reached the limit of two changes. If you can't make it, you can cancel it and book a new one.",
+    ),
 
   // -- generic ---------------------------------------------------------------------------------
   pleaseUseButtons: (lang: Lang) =>

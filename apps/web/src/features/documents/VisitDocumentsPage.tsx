@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Spinner } from "../../design-system/Spinner.tsx";
-import { InvoiceArticle } from "../billing/InvoiceSheet.tsx";
 import { PrintSheets, usePrintHost, type Branding } from "../visits/PrintDocuments.tsx";
 import { PRINT_STYLESHEET } from "../visits/print-styles.ts";
 import type { SheetKind } from "../visits/print-sheet-event.ts";
@@ -20,14 +19,12 @@ declare global {
   }
 }
 
-const KINDS: DocumentKind[] = ["prescription", "report", "investigations", "sickLeave", "invoice"];
+const KINDS: DocumentKind[] = ["prescription", "investigations", "sickLeave"];
 
 const TITLES: Record<DocumentKind, string> = {
   prescription: "الروشتة",
-  report: "التقرير الطبي",
   investigations: "طلب الفحوصات",
   sickLeave: "الإجازة المرضية",
-  invoice: "الفاتورة",
 };
 
 const COPY = {
@@ -39,7 +36,6 @@ const COPY = {
   download: "تحميل PDF",
   downloadHint: "قد يستغرق التحميل بضع ثوانٍ.",
   preview: "عرض",
-  invoiceNote: "تعرض الفاتورة حالة السداد الحالية.",
 } as const;
 
 /** `/d/<token>` -> `<token>`. */
@@ -60,7 +56,6 @@ const hasSickLeave = (documents: PublicVisitDocuments): boolean =>
 
 const available = (documents: PublicVisitDocuments, kind: DocumentKind): boolean => {
   if (kind === "sickLeave") return hasSickLeave(documents);
-  if (kind === "invoice") return documents.invoice !== null;
   return true;
 };
 
@@ -160,23 +155,13 @@ function Documents({ token, documents }: { token: string; documents: PublicVisit
                   {COPY.download}
                 </a>
               </div>
-              {kind === "invoice" && <p className="mt-2 text-xs text-neutral-600">{COPY.invoiceNote}</p>}
 
               <details className="mt-3">
                 <summary className="cursor-pointer text-sm text-neutral-700">{COPY.preview}</summary>
                 {/* The sheets are laid out for A4; on a phone they scroll sideways rather than reflow. */}
                 <div className="mt-3 overflow-x-auto">
                   <div className="min-w-[640px]">
-                    {kind === "invoice" && documents.invoice !== null ? (
-                      <InvoiceArticle
-                        clinic={documents.clinic}
-                        logo={documents.images.logo}
-                        charge={documents.invoice}
-                        currency={documents.currency}
-                      />
-                    ) : (
-                      <PrintSheets visit={printable} branding={branding} only={kind as SheetKind} />
-                    )}
+                    <PrintSheets visit={printable} branding={branding} only={kind as SheetKind} />
                   </div>
                 </div>
               </details>
@@ -219,16 +204,7 @@ function PrintMode({ documents, kind }: { documents: PublicVisitDocuments; kind:
   return createPortal(
     <>
       <style>{PRINT_STYLESHEET}</style>
-      {kind === "invoice" && documents.invoice !== null ? (
-        <InvoiceArticle
-          clinic={documents.clinic}
-          logo={documents.images.logo}
-          charge={documents.invoice}
-          currency={documents.currency}
-        />
-      ) : (
-        <PrintSheets visit={toPrintable(documents)} branding={brandingOf(documents)} only={kind as SheetKind} />
-      )}
+      <PrintSheets visit={toPrintable(documents)} branding={brandingOf(documents)} only={kind as SheetKind} />
     </>,
     host,
   );

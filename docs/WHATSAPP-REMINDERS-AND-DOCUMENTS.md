@@ -6,10 +6,10 @@ owner or an admin switches it on in Settings → *Automatic WhatsApp messages*
 
 | Message | When | Template (Arabic) | Switch |
 |---|---|---|---|
-| Reminder with **Confirm / Cancel** buttons | `reminder_lead_hours` (default 5) before the appointment | `appointment_reminder_confirm`, or `appointment_reminder` when it will not cancel | `appointment_reminders_enabled` |
+| Reminder with **Confirm / Edit / Cancel** buttons | `reminder_lead_hours` (default 5) before the appointment | `appointment_reminder_confirm_v2`, or `appointment_reminder_v2` when it will not cancel | `appointment_reminders_enabled` |
 | Cancellation notice | the patient did not confirm within `reminder_confirm_window_hours` (default 2) | `appointment_auto_cancelled` | with reminders |
 | "Go to room N" | the doctor starts the consultation | free text inside the 24 h window, `patient_call_in` otherwise | `call_in_message_enabled` |
-| Link to the visit documents | the visit is completed | `visit_documents` (URL button) | `visit_documents_link_enabled` |
+| Link to the visit documents (prescription, investigations, sick leave) | the visit is completed | `visit_documents_v2` (URL button) | `visit_documents_link_enabled` |
 
 Meta bills every one of these to **the clinic's own WhatsApp Business Account** (a Tech Provider has no
 credit line), so nothing here keeps a quota or meters usage.
@@ -25,6 +25,11 @@ credit line), so nothing here keeps a quota or meters usage.
 - **Booked at short notice** (less than lead + window ahead): reminded, never auto-cancelled.
 - **Already CONFIRMED by reception** (and walk-ins): reminded, never auto-cancelled.
 - A tap on **Cancel** frees the slot at once. A tap on **Confirm** moves `BOOKED → CONFIRMED`.
+- A tap on **Edit** (`rem:e:<intentId>`) opens the bot's date → time → confirm steps for the same doctor and service
+  (whatsapp-flow.ts `startReschedule`) and ends in `POST /bot/appointments/:id/reschedule`. It is **not an answer** to
+  the reminder: the confirm deadline keeps running as the clinic set it, and the old reminder is superseded when the
+  appointment actually moves. A patient can move one appointment twice (`MAX_PATIENT_RESCHEDULES`); a different doctor
+  means cancelling and booking again. Only the patient's own number can start an edit, as with Confirm and Cancel.
 - A reschedule closes the old reminder and a new one is made for the new time.
 - A patient with **no WhatsApp consent** on file is skipped (`skipped_reason = NO_CONSENT`). Consent is currently
   recorded only by the bot; a patient created at the desk who never wrote to the bot will not be messaged.
@@ -127,7 +132,8 @@ A message is only delivered once its template is `APPROVED`. Before that the sen
 "template does not exist" error, is not retried, and the desk gets a notification. A clinic running on the `.env`
 test number has no stored WABA id; submit the five templates in WhatsApp Manager instead (texts in
 `src/modules/whatsapp/whatsapp-templates.ts`). Meta will not let an approved template be edited: changing the wording
-means a new `name`.
+means a new `name`: the reminder, documents and (now) edit-button templates are the `_v2` names, and the previous ones
+can be deleted from WhatsApp Manager once nothing in flight uses them.
 
 ## The documents link
 
@@ -138,6 +144,7 @@ means a new `name`.
 - Every refusal (malformed, unknown, expired, revoked, not yet completed) is the same 404.
 - The payload is a **new narrow DTO**: what the printed sheets already print, and nothing else — no private notes,
   history, revision counters, or price-adjustment reasons. It reads finished visits only.
-- The **invoice is rendered live**: it shows what has been paid *now*, not what was owed when the doctor finished.
+- It offers three papers only: the **prescription**, the **investigations request** and the **sick leave** (when
+  there is one). The medical report and the invoice are not on the link and their PDF routes are 404.
 - Responses are `no-store`, `noindex`, `no-referrer`.
 - PDFs are produced by the same React sheets the doctor prints, so the patient's PDF is the doctor's paper.

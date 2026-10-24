@@ -9,6 +9,18 @@ import { isIntakeIncomplete } from "../patients/domain/intake-completeness.ts";
 import { latinSearchKey } from "../patients/domain/transliterate.ts";
 import { recordNotification } from "../notifications/notifications.service.ts";
 
+/**
+ * The clinic's currency (ISO 4217). A service's price is minor units with no currency of its own -- the
+ * currency lives on the clinic -- so the bot's service list carries it alongside, and a price can be
+ * written as "300 جنيه" rather than a bare number.
+ */
+export async function readClinicCurrency(ctx: CallerContext): Promise<string> {
+  return withTenant(ctx.tenantId, ctx.actor, async (tx) => {
+    const tenant = await tx.tenant.findUniqueOrThrow({ where: { id: ctx.tenantId }, select: { currency: true } });
+    return tenant.currency;
+  });
+}
+
 /** One household member, and the whole of what the bot learns about them. */
 export interface BotHouseholdMember {
   patientId: string;
@@ -250,7 +262,13 @@ export async function createComplaint(
 export async function readAppointmentStatus(
   ctx: CallerContext,
   appointmentId: string,
-): Promise<{ appointmentId: string; status: string; scheduledStart: Date; doctorName: string } | null> {
+): Promise<{
+  appointmentId: string;
+  status: string;
+  scheduledStart: Date;
+  doctorName: string;
+  rescheduleCount: number;
+} | null> {
   return withTenant(ctx.tenantId, ctx.actor, async (tx) => {
     const appointment = await tx.appointment.findFirst({
       where: { id: appointmentId },
@@ -258,6 +276,7 @@ export async function readAppointmentStatus(
         id: true,
         status: true,
         scheduledStart: true,
+        rescheduleCount: true,
         doctor: { select: { membership: { select: { user: { select: { fullName: true } } } } } },
       },
     });
@@ -268,6 +287,7 @@ export async function readAppointmentStatus(
       status: appointment.status,
       scheduledStart: appointment.scheduledStart,
       doctorName: appointment.doctor?.membership?.user?.fullName ?? "",
+      rescheduleCount: appointment.rescheduleCount,
     };
   });
 }

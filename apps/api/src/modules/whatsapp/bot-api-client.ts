@@ -64,6 +64,10 @@ export interface BotService {
   nameAr: string;
   nameEn: string;
   durationMinutes: number;
+  /** Integer minor units (piastres for EGP). The currency is the clinic's own, so every service in one
+   *  list carries the same one. */
+  priceMinor: number;
+  currency: string;
 }
 
 /** `/bot/slots` returns the slot engine's own shape unchanged (bot.controller.ts: `{ slots:
@@ -236,7 +240,9 @@ export class BotApiClient {
    *  no `ok` wrapper on success (a 404 is the failure path instead) -- `scheduledStart` JSON-serialized. */
   async readAppointmentStatus(
     appointmentId: string,
-  ): Promise<BotResult<{ appointmentId: string; status: string; scheduledStart: string; doctorName: string }>> {
+  ): Promise<
+    BotResult<{ appointmentId: string; status: string; scheduledStart: string; doctorName: string; rescheduleCount: number }>
+  > {
     return this.request(`/bot/appointments/${appointmentId}`, { method: "GET" });
   }
 }

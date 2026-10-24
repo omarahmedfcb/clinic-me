@@ -40,7 +40,7 @@ export interface InboundWhatsAppMessage {
 /** A `FlowOutgoing` is graph-API-shaped already (whatsapp-flow.ts builds it directly against
  *  whatsapp-graph-client.ts's own types) -- this is purely "which of the three send functions",
  *  plus the flat text this turn's `Message` row is logged with regardless of which one fired. */
-async function sendFlowOutgoing(
+export async function sendFlowOutgoing(
   tenant: ResolvedWhatsAppTenant,
   waId: string,
   outgoing: FlowOutgoing,

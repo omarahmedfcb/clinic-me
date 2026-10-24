@@ -25,7 +25,7 @@ const TENANT: WhatsAppTenant = {
 };
 
 const DOCTOR: BotDoctor = { id: "doc-1", fullName: "أحمد سامي", title: "Dr.", specialty: "أسنان" };
-const SERVICE: BotService = { id: "svc-1", nameAr: "كشف", nameEn: "Consultation", durationMinutes: 20 };
+const SERVICE: BotService = { id: "svc-1", nameAr: "كشف", nameEn: "Consultation", durationMinutes: 20, priceMinor: 30000, currency: "EGP" };
 
 function ok<T>(value: T): BotResult<T> {
   return { ok: true, value };
@@ -154,16 +154,19 @@ describe("opening a session", () => {
   });
 });
 
-describe("identity: the number first, then who is on it", () => {
-  const known = { patientId: "pat-1", displayName: "سارة محمد", relationshipToContact: "SELF", intakeIncomplete: false };
+describe("identity: the number first, then the patient's own full name", () => {
+  const known = { patientId: "pat-1", displayName: "سارة محمد علي", relationshipToContact: "SELF", intakeIncomplete: false };
+  const nameAsk = { step: "NAME_ASK", lang: "ar", phoneE164: "+201001234567" } as const;
 
-  test("yes to 'this number' looks up that number and confirms the one patient found", async () => {
+  test("yes to 'this number' goes straight to asking the name -- nothing stored is looked up or shown", async () => {
     const findPatientsByPhone = jest.fn().mockResolvedValue(ok({ patients: [known] }));
     const client = fakeClient({ findPatientsByPhone });
     const result = await runFlow(ctxFor(client, { step: "PHONE_CHOICE", lang: "ar" }, { kind: "interactive", id: "yn_yes" }));
 
-    expect(findPatientsByPhone).toHaveBeenCalledWith("+201001234567");
-    expect(result.nextState).toMatchObject({ step: "IDENTITY_YESNO", patientId: "pat-1", phoneE164: "+201001234567" });
+    expect(findPatientsByPhone).not.toHaveBeenCalled();
+    expect(result.nextState).toEqual({ step: "NAME_ASK", lang: "ar", phoneE164: "+201001234567" });
+    expect(result.outgoing?.kind).toBe("text");
+    expect(JSON.stringify(result.outgoing)).not.toContain("سارة");
   });
 
   test("no to 'this number' asks for the actual number, and nothing is looked up yet", async () => {
@@ -180,48 +183,68 @@ describe("identity: the number first, then who is on it", () => {
     expect(result.nextState).toMatchObject({ step: "NAME_ASK", phoneE164: "+201001234567" });
   });
 
-  test("the number the patient types is normalised and is the one searched", async () => {
-    const findPatientsByPhone = jest.fn().mockResolvedValue(ok({ patients: [] }));
-    const client = fakeClient({ findPatientsByPhone });
+  test("the number the patient types is normalised and carried to the name step", async () => {
+    const client = fakeClient({});
     const result = await runFlow(ctxFor(client, { step: "PHONE_ASK", lang: "ar" }, { kind: "text", text: "01012345678" }));
-    expect(findPatientsByPhone).toHaveBeenCalledWith("+201012345678");
     expect(result.nextState).toEqual({ step: "NAME_ASK", lang: "ar", phoneE164: "+201012345678" });
   });
 
-  test("yes on the found patient moves to the medical complaint", async () => {
-    const client = fakeClient({});
-    const state: FlowState = { step: "IDENTITY_YESNO", lang: "ar", phoneE164: "+201001234567", patientId: "pat-1", patientName: "سارة محمد" };
-    const result = await runFlow(ctxFor(client, state, { kind: "interactive", id: "yn_yes" }));
-    expect(result.nextState).toEqual({ step: "BOOKING_COMPLAINT", lang: "ar", patientId: "pat-1", patientName: "سارة محمد" });
+  test("a one-word name is asked for again", async () => {
+    const findPatientsByPhone = jest.fn();
+    const client = fakeClient({ findPatientsByPhone });
+    const result = await runFlow(ctxFor(client, nameAsk, { kind: "text", text: "سارة" }));
+    expect(result.nextState).toEqual(nameAsk);
+    expect(findPatientsByPhone).not.toHaveBeenCalled();
   });
 
-  test("no on the found patient asks for a name for the SAME number -- the record on file is not renamed", async () => {
-    const client = fakeClient({});
-    const state: FlowState = { step: "IDENTITY_YESNO", lang: "ar", phoneE164: "+201012345678", patientId: "pat-1", patientName: "سارة محمد" };
-    const result = await runFlow(ctxFor(client, state, { kind: "interactive", id: "yn_no" }));
-    expect(result.nextState).toEqual({ step: "NAME_ASK", lang: "ar", phoneE164: "+201012345678" });
-  });
-
-  test("a new name creates a new patient on that number", async () => {
-    const createProvisionalPatient = jest.fn().mockResolvedValue(ok({ patientId: "pat-2", displayName: "منى علي" }));
+  test("a name that is not on the number creates a new patient (and the model is not asked)", async () => {
+    const createProvisionalPatient = jest.fn().mockResolvedValue(ok({ patientId: "pat-2", displayName: "منى حسن" }));
     const client = fakeClient({
       findPatientsByPhone: jest.fn().mockResolvedValue(ok({ patients: [known] })),
       createProvisionalPatient,
     });
-    const result = await runFlow(ctxFor(client, { step: "NAME_ASK", lang: "ar", phoneE164: "+201001234567" }, { kind: "text", text: "منى علي" }));
-    expect(createProvisionalPatient).toHaveBeenCalledWith({ fullNameAr: "منى علي", phoneE164: "+201001234567" });
+    const result = await runFlow(ctxFor(client, nameAsk, { kind: "text", text: "منى حسن" }));
+    expect(createProvisionalPatient).toHaveBeenCalledWith({ fullNameAr: "منى حسن", phoneE164: "+201001234567" });
     expect(result.nextState).toMatchObject({ step: "BOOKING_COMPLAINT", patientId: "pat-2" });
+    expect(mockedCallGpt).not.toHaveBeenCalled();
   });
 
-  test("the same name typed again on the same number reuses the patient instead of duplicating", async () => {
+  test("the same name reuses the patient, and the patient only ever sees the name they typed", async () => {
     const createProvisionalPatient = jest.fn();
     const client = fakeClient({
       findPatientsByPhone: jest.fn().mockResolvedValue(ok({ patients: [known] })),
       createProvisionalPatient,
     });
-    const result = await runFlow(ctxFor(client, { step: "NAME_ASK", lang: "ar", phoneE164: "+201001234567" }, { kind: "text", text: "سارة محمد" }));
+    // Spelling and word order differ; a middle name is left out. All settled locally.
+    const result = await runFlow(ctxFor(client, nameAsk, { kind: "text", text: "سارة علي" }));
     expect(createProvisionalPatient).not.toHaveBeenCalled();
-    expect(result.nextState).toMatchObject({ step: "BOOKING_COMPLAINT", patientId: "pat-1" });
+    expect(mockedCallGpt).not.toHaveBeenCalled();
+    expect(result.nextState).toMatchObject({ step: "BOOKING_COMPLAINT", patientId: "pat-1", patientName: "سارة علي" });
+  });
+
+  test("a related but unclear name goes to the model, which can only pick from the names on the number", async () => {
+    gptSays("1");
+    const createProvisionalPatient = jest.fn();
+    const client = fakeClient({
+      findPatientsByPhone: jest.fn().mockResolvedValue(ok({ patients: [known] })),
+      createProvisionalPatient,
+    });
+    const result = await runFlow(ctxFor(client, nameAsk, { kind: "text", text: "Sara Mohamed Aly" }));
+    expect(mockedCallGpt).toHaveBeenCalledTimes(1);
+    expect(createProvisionalPatient).not.toHaveBeenCalled();
+    expect(result.nextState).toMatchObject({ step: "BOOKING_COMPLAINT", patientId: "pat-1", patientName: "Sara Mohamed Aly" });
+  });
+
+  test("a model answer that is not one of the offered numbers means a new patient", async () => {
+    gptSays("7");
+    const createProvisionalPatient = jest.fn().mockResolvedValue(ok({ patientId: "pat-3", displayName: "Sara Mohamed Aly" }));
+    const client = fakeClient({
+      findPatientsByPhone: jest.fn().mockResolvedValue(ok({ patients: [known] })),
+      createProvisionalPatient,
+    });
+    const result = await runFlow(ctxFor(client, nameAsk, { kind: "text", text: "Sara Mohamed Aly" }));
+    expect(createProvisionalPatient).toHaveBeenCalledTimes(1);
+    expect(result.nextState).toMatchObject({ patientId: "pat-3" });
   });
 });
 
@@ -435,7 +458,7 @@ describe("off-script detour", () => {
   test("free text at a button-only step is answered by the model, then the same question repeats", async () => {
     gptSays("العيادة مفتوحة من ٩ لـ٥.");
     const client = fakeClient({});
-    const state: FlowState = { step: "IDENTITY_YESNO", lang: "ar", phoneE164: "+201001234567", patientId: "pat-1", patientName: "سارة محمد" };
+    const state: FlowState = { step: "PHONE_CHOICE", lang: "ar" };
     const result = await runFlow(ctxFor(client, state, { kind: "text", text: "امتى العيادة بتفتح؟" }));
 
     expect(mockedCallGpt).toHaveBeenCalledTimes(1);
@@ -452,7 +475,7 @@ describe("off-script detour", () => {
   test("a failed off-script call still returns a nudge rather than leaving the patient with nothing", async () => {
     mockedCallGpt.mockRejectedValue(new Error("network down"));
     const client = fakeClient({});
-    const state: FlowState = { step: "IDENTITY_YESNO", lang: "en", phoneE164: "+201001234567", patientId: "pat-1", patientName: "Sara" };
+    const state: FlowState = { step: "PHONE_CHOICE", lang: "en" };
     const result = await runFlow(ctxFor(client, state, { kind: "text", text: "what are your hours?" }));
     expect(result.nextState).toMatchObject(state);
     expect(result.outgoing?.kind).toBe("buttons");

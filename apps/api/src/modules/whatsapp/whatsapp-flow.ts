@@ -14,7 +14,8 @@ import { normalisePhone } from "../auth/phone.ts";
 import { callGpt } from "../webchat/gpt-client.ts";
 import { dayPeriodInClinic, formatInClinicTime, parseFlexibleDate, todayInClinic, weekdayName } from "../../common/clinic-time.ts";
 import type { BotApiClient } from "./bot-api-client.ts";
-import { detectLang, T, type Lang } from "./whatsapp-flow-text.ts";
+import { detectLang, formatPrice, T, type Lang } from "./whatsapp-flow-text.ts";
+import { matchByName, pickByModel } from "./patient-name-match.ts";
 import type { WhatsAppButton, WhatsAppListSection } from "./whatsapp-graph-client.ts";
 import type { WhatsAppTenant } from "./whatsapp-tenants.ts";
 import type { InboundWhatsAppInput } from "./whatsapp-orchestrator.ts";
@@ -40,8 +41,25 @@ interface Person {
    *  consultation's complaint field. Optional in the type only so a booking that was mid-way when
    *  this field was introduced can still finish; every new booking has it before the doctor step. */
   complaint?: string;
+  /** Present when this "booking" is really an edit of an existing appointment (the reminder's
+   *  "تعديل الموعد" button): the steps are the same ones, but the last one moves that appointment
+   *  instead of creating a new one. Carried through every step with the rest of `Person`. */
+  reschedule?: RescheduleTarget;
 }
 
+/** The appointment being edited, as it was when the patient tapped the button. */
+export interface RescheduleTarget {
+  appointmentId: string;
+  /** ISO instant the appointment had at the tap -- compared again at the end, so an appointment the desk
+   *  moved or cancelled in the meantime is never overwritten from a stale screen. */
+  originalStart: string;
+  /** "الأحد، 18 أكتوبر 10:30" -- shown on the confirm screen as the time being left. */
+  fromLabel: string;
+}
+
+/** A patient may move one appointment this many times from WhatsApp; after that they cancel and rebook.
+ *  Also checked when the reminder's edit button is tapped (reminder-reply.ts). */
+export const MAX_PATIENT_RESCHEDULES = 2;
 /** A complaint shorter than this is not an answer ("." or "ok") -- asked again, never skipped. */
 const MIN_COMPLAINT_CHARS = 3;
 /** The booking API accepts 2000; a patient's own words are kept to half that, plenty for a reason
@@ -64,8 +82,6 @@ export type FlowState = FlowStateBase &
   (
     | { step: "PHONE_CHOICE"; lang: Lang }
     | { step: "PHONE_ASK"; lang: Lang }
-    | { step: "IDENTITY_PICK"; lang: Lang; phoneE164: string; options: { patientId: string; name: string }[] }
-    | { step: "IDENTITY_YESNO"; lang: Lang; phoneE164: string; patientId: string; patientName: string }
     | { step: "NAME_ASK"; lang: Lang; phoneE164: string }
     | ({ step: "BOOKING_COMPLAINT"; lang: Lang } & Person)
     | ({ step: "BOOKING_DOCTOR"; lang: Lang } & Person)
@@ -94,6 +110,8 @@ export type FlowState = FlowStateBase &
       slotIso: string;
       slotLabel: string;
       token: string;
+      /** "300 جنيه", shown on the confirm screen and in the success message. Absent when the service has no price. */
+      priceLabel?: string;
     } & Person)
   );
 
@@ -440,10 +458,6 @@ export async function runFlow(ctx: FlowContext): Promise<FlowResult> {
   }
 
   switch (ctx.state.step) {
-    case "IDENTITY_PICK":
-      return stepIdentityPick(ctx, ctx.state);
-    case "IDENTITY_YESNO":
-      return stepIdentityYesNo(ctx, ctx.state);
     case "PHONE_CHOICE":
       return stepPhoneChoice(ctx, ctx.state);
     case "PHONE_ASK":
@@ -466,7 +480,8 @@ export async function runFlow(ctx: FlowContext): Promise<FlowResult> {
       return stepBookingConfirm(ctx, ctx.state);
 
     // Only reachable with a state written by an older build (INTENT, COMPLAINT_TEXT,
-    // COMPLAINT_CONFIRM -- the complaint route is gone from the bot). Such a half-finished flow is
+    // COMPLAINT_CONFIRM -- the complaint route is gone from the bot -- and IDENTITY_PICK /
+    // IDENTITY_YESNO, which read stored names back to the patient and no longer exist). Such a half-finished flow is
     // dropped and the patient is started on a fresh booking rather than left stuck on a step
     // nothing handles.
     default: {
@@ -521,7 +536,7 @@ async function stepPhoneChoice(ctx: FlowContext, state: Extract<FlowState, { ste
   const id = idOf(ctx.input);
   // `phone_same` / `phone_other` are the ids an older build offered -- still honoured for a patient
   // tapping a button from a conversation that was mid-way through when this shipped.
-  if (id === "yn_yes" || id === "phone_same") return lookupIdentity(ctx, state.lang, ctx.phoneE164);
+  if (id === "yn_yes" || id === "phone_same") return askForName(state.lang, ctx.phoneE164);
   if (id === "yn_no" || id === "phone_other") {
     return {
       handled: true,
@@ -540,113 +555,46 @@ async function stepPhoneAsk(ctx: FlowContext, state: Extract<FlowState, { step: 
   }
   // A different number the patient names is their contact phone only -- the WhatsApp sender stays
   // the conversation's own contact (whatsapp-conversation.ts's Contact row is never touched here).
-  return lookupIdentity(ctx, state.lang, normalised);
+  return askForName(state.lang, normalised);
 }
 
-/** The number to book under is settled; find who is registered on it and ask whether that is the
- *  patient. Nobody on file means a new patient (name next); one person is confirmed with yes/no;
- *  several are offered as a list with "someone else". */
-async function lookupIdentity(ctx: FlowContext, lang: Lang, phoneE164: string): Promise<FlowResult> {
-  const found = await ctx.client.findPatientsByPhone(phoneE164);
-  if (!found.ok) return errorResult(lang, "");
-
-  if (found.value.patients.length === 0) {
-    return {
-      handled: true,
-      nextState: { step: "NAME_ASK", lang, phoneE164 },
-      outgoing: { kind: "text", text: T.nameAskQuestion(lang) },
-    };
-  }
-  if (found.value.patients.length === 1) {
-    const only = found.value.patients[0]!;
-    return {
-      handled: true,
-      nextState: { step: "IDENTITY_YESNO", lang, phoneE164, patientId: only.patientId, patientName: only.displayName },
-      outgoing: identityYesNoOutgoing(lang, only.displayName, phoneE164),
-    };
-  }
-  const options = found.value.patients.map((p) => ({ patientId: p.patientId, name: p.displayName }));
+/** The number to book under is settled. Nothing stored about that number is read back to the patient --
+ *  a number can be dropped and resold, and its next owner must not learn a stranger's name. They are
+ *  asked for their own full name instead, and `stepNameAsk` matches it quietly against the names on file. */
+function askForName(lang: Lang, phoneE164: string): FlowResult {
   return {
     handled: true,
-    nextState: { step: "IDENTITY_PICK", lang, phoneE164, options },
-    outgoing: identityPickOutgoing(lang, options),
+    nextState: { step: "NAME_ASK", lang, phoneE164 },
+    outgoing: { kind: "text", text: T.nameAskQuestion(lang) },
   };
 }
 
-function identityYesNoOutgoing(lang: Lang, patientName: string, phoneE164: string): FlowOutgoing {
-  return {
-    kind: "buttons",
-    body: T.identityConfirmSingle(lang, patientName, phoneE164),
-    buttons: [
-      { id: "yn_yes", title: T.yes(lang) },
-      { id: "yn_no", title: T.no(lang) },
-    ],
-  };
-}
-
-function identityPickOutgoing(lang: Lang, options: { patientId: string; name: string }[]): FlowOutgoing {
-  const rows = options.map((option) => ({ id: `pat_${option.patientId}`, title: option.name.slice(0, 24) }));
-  rows.push({ id: "pat_other", title: T.identityOptionSomeoneElse(lang).slice(0, 24) });
-  return {
-    kind: "list",
-    body: T.identityConfirmMultiple(lang),
-    buttonLabel: T.bookingListOpen(lang),
-    sections: [{ title: T.identityConfirmMultiple(lang).slice(0, 24), rows }],
-  };
-}
-
-async function stepIdentityYesNo(ctx: FlowContext, state: Extract<FlowState, { step: "IDENTITY_YESNO" }>): Promise<FlowResult> {
-  const id = idOf(ctx.input);
-  if (id === "yn_yes") {
-    return afterIdentity(state.lang, { patientId: state.patientId, patientName: state.patientName });
-  }
-  if (id === "yn_no") {
-    // Not this person: never rename the record on file -- it belongs to whoever it describes, with
-    // their own history -- so the name asked for next becomes a new patient on the same number.
-    return {
-      handled: true,
-      nextState: { step: "NAME_ASK", lang: state.lang, phoneE164: state.phoneE164 },
-      outgoing: { kind: "text", text: T.nameAskQuestion(state.lang) },
-    };
-  }
-  return offScriptThenRepeat(ctx, state.lang, identityYesNoOutgoing(state.lang, state.patientName, state.phoneE164));
-}
-
-async function stepIdentityPick(ctx: FlowContext, state: Extract<FlowState, { step: "IDENTITY_PICK" }>): Promise<FlowResult> {
-  const id = idOf(ctx.input);
-  if (id === "pat_other") {
-    return {
-      handled: true,
-      nextState: { step: "NAME_ASK", lang: state.lang, phoneE164: state.phoneE164 },
-      outgoing: { kind: "text", text: T.nameAskQuestion(state.lang) },
-    };
-  }
-  const picked = id?.startsWith("pat_") ? state.options.find((o) => `pat_${o.patientId}` === id) : undefined;
-  if (picked !== undefined) {
-    return afterIdentity(state.lang, { patientId: picked.patientId, patientName: picked.name });
-  }
-  return offScriptThenRepeat(ctx, state.lang, identityPickOutgoing(state.lang, state.options));
-}
+/** Two words at least ("أحمد محمد"): one first name alone is too easy to guess and too weak to match on. */
+const MIN_NAME_WORDS = 2;
+const MAX_NAME_CHARS = 120;
 
 async function stepNameAsk(ctx: FlowContext, state: Extract<FlowState, { step: "NAME_ASK" }>): Promise<FlowResult> {
-  const text = textOf(ctx.input)?.trim();
-  if (!text || text.length < 2) {
+  const text = textOf(ctx.input)?.trim().replace(/\s+/g, " ");
+  const words = text === undefined || text === "" ? [] : text.split(" ");
+  if (text === undefined || words.length < MIN_NAME_WORDS || !/\p{L}/u.test(text) || text.length > MAX_NAME_CHARS) {
     return { handled: true, nextState: state, outgoing: { kind: "text", text: T.nameInvalid(state.lang) } };
   }
 
-  // The same person typing their name twice (a retry after a dropped reply, a second chat on the
-  // same number) must not become two patients: reuse the record already on this number whose name
-  // reads the same. Anything else -- including a different name -- is a new patient.
+  // Is this one of the people already registered on the number? Never answered by showing a stored name:
+  // the patient sees only the name they typed themselves (patient-name-match.ts has the two tiers).
   const existing = await ctx.client.findPatientsByPhone(state.phoneE164);
-  if (existing.ok) {
-    const wanted = normaliseForMatch(text);
-    const same = existing.value.patients.find((p) => normaliseForMatch(p.displayName) === wanted);
-    if (same !== undefined) return afterIdentity(state.lang, { patientId: same.patientId, patientName: same.displayName });
-  }
+  if (!existing.ok) return errorResult(state.lang, "");
+  const onFile = existing.value.patients.map((p) => ({ patientId: p.patientId, displayName: p.displayName }));
 
+  const found = matchByName(text, onFile);
+  const matched =
+    found.kind === "match" ? found.patient : found.kind === "candidates" ? await pickByModel(text, found.candidates) : null;
+  if (matched !== null) return afterIdentity(state.lang, { patientId: matched.patientId, patientName: text });
+
+  // Nobody on this number goes by that name: a new patient, never a rename of anyone's record.
   const created = await ctx.client.createProvisionalPatient({ fullNameAr: text, phoneE164: state.phoneE164 });
   if (!created.ok) return errorResult(state.lang, "");
-  return afterIdentity(state.lang, { patientId: created.value.patientId, patientName: created.value.displayName });
+  return afterIdentity(state.lang, { patientId: created.value.patientId, patientName: text });
 }
 
 /** Identity resolved -- the medical complaint is the next thing a booking needs, before the doctor. */
@@ -690,6 +638,7 @@ function personOf(state: Person): Person {
     patientId: state.patientId,
     patientName: state.patientName,
     ...(state.complaint === undefined ? {} : { complaint: state.complaint }),
+    ...(state.reschedule === undefined ? {} : { reschedule: state.reschedule }),
   };
 }
 
@@ -784,7 +733,8 @@ async function beginBookingDate(
 ): Promise<FlowResult> {
   const dates = await findUpcomingDates(ctx.client, doctor.id, service.id, ctx.tenant.timezone);
   if (dates.length === 0) {
-    return { handled: true, nextState: null, outgoing: { kind: "text", text: T.bookingNoDatesAhead(lang) } };
+    const noDates = person.reschedule === undefined ? T.bookingNoDatesAhead(lang) : T.rescheduleNoDates(lang);
+    return { handled: true, nextState: null, outgoing: { kind: "text", text: noDates } };
   }
 
   return {
@@ -952,14 +902,36 @@ function sendSlotPage(state: BookingBase, date: string, slots: { iso: string; to
 }
 
 function confirmOutgoing(state: Extract<FlowState, { step: "BOOKING_CONFIRM" }>, slotLabel: string): FlowOutgoing {
+  const dateLabel = dateRowLabel(state.date, state.lang);
+  if (state.reschedule !== undefined) {
+    return {
+      kind: "buttons",
+      body: T.rescheduleConfirmQuestion(state.lang, state.doctorName, state.serviceName, state.reschedule.fromLabel, dateLabel, slotLabel, state.priceLabel),
+      buttons: [
+        { id: "yn_yes", title: T.rescheduleConfirmButton(state.lang) },
+        { id: "yn_no", title: T.bookingChangeButton(state.lang) },
+      ],
+    };
+  }
   return {
     kind: "buttons",
-    body: T.bookingConfirmQuestion(state.lang, state.doctorName, state.serviceName, dateRowLabel(state.date, state.lang), slotLabel, state.patientName, state.complaint),
+    body: T.bookingConfirmQuestion(state.lang, state.doctorName, state.serviceName, dateLabel, slotLabel, state.patientName, state.complaint, state.priceLabel),
     buttons: [
       { id: "yn_yes", title: T.bookingConfirmButton(state.lang) },
       { id: "yn_no", title: T.bookingChangeButton(state.lang) },
     ],
   };
+}
+
+/** The price of the service the patient picked, as a message line ("300 جنيه"). Read from the service list
+ *  at the moment the confirm screen is built; `undefined` when the clinic has not priced it, or the list
+ *  could not be read -- a missing price never blocks a booking. */
+async function priceLabelFor(client: BotApiClient, serviceId: string, lang: Lang): Promise<string | undefined> {
+  const services = await client.listServices();
+  if (!services.ok) return undefined;
+  const service = services.value.services.find((candidate) => candidate.id === serviceId);
+  if (service === undefined) return undefined;
+  return formatPrice(service.priceMinor, service.currency, lang) ?? undefined;
 }
 
 async function stepBookingSlot(ctx: FlowContext, state: Extract<FlowState, { step: "BOOKING_SLOT" }>): Promise<FlowResult> {
@@ -972,6 +944,7 @@ async function stepBookingSlot(ctx: FlowContext, state: Extract<FlowState, { ste
     const { pageItems } = pageSlots(state.slots, state.page);
     const picked = pageItems[indexOnPage];
     if (picked !== undefined) {
+      const priceLabel = await priceLabelFor(ctx.client, state.serviceId, state.lang);
       const nextState: Extract<FlowState, { step: "BOOKING_CONFIRM" }> = {
         step: "BOOKING_CONFIRM",
         ...bookingBaseOf(state),
@@ -979,6 +952,7 @@ async function stepBookingSlot(ctx: FlowContext, state: Extract<FlowState, { ste
         slotIso: picked.iso,
         slotLabel: picked.label,
         token: picked.token,
+        ...(priceLabel === undefined ? {} : { priceLabel }),
       };
       return { handled: true, nextState, outgoing: confirmOutgoing(nextState, picked.label) };
     }
@@ -989,11 +963,15 @@ async function stepBookingSlot(ctx: FlowContext, state: Extract<FlowState, { ste
 async function stepBookingConfirm(ctx: FlowContext, state: Extract<FlowState, { step: "BOOKING_CONFIRM" }>): Promise<FlowResult> {
   const id = idOf(ctx.input);
   if (id === "yn_no") {
+    // Editing an appointment keeps its doctor and service: only the day and time are chosen again.
+    if (state.reschedule !== undefined) {
+      return beginBookingDate(ctx, state.lang, personOf(state), { id: state.doctorId, name: state.doctorName }, { id: state.serviceId, name: state.serviceName });
+    }
     // "Change" starts the choices over but keeps who is booking and why -- neither is re-asked.
     return beginBookingDoctor(ctx, state.lang, personOf(state));
   }
   if (id === "yn_yes") {
-    return confirmBooking(ctx, state);
+    return state.reschedule === undefined ? confirmBooking(ctx, state) : rescheduleBooking(ctx, state, state.reschedule);
   }
   return offScriptThenRepeat(ctx, state.lang, confirmOutgoing(state, state.slotLabel));
 }
@@ -1015,10 +993,7 @@ async function confirmBooking(ctx: FlowContext, state: Extract<FlowState, { step
 
   if (!result.ok) {
     if (result.code === "SLOT_TAKEN" || result.code === "INVALID_TOKEN" || result.code === "EXPIRED_TOKEN") {
-      return listSlotsForDate(ctx, state, state.date).then((slotResult) => ({
-        ...slotResult,
-        outgoing: slotResult.outgoing?.kind === "text" ? slotResult.outgoing : prependText(slotResult.outgoing, T.bookingSlotTaken(state.lang)),
-      }));
+      return offerSlotsAgain(ctx, state);
     }
     return errorResult(state.lang, "");
   }
@@ -1026,7 +1001,110 @@ async function confirmBooking(ctx: FlowContext, state: Extract<FlowState, { step
   return {
     handled: true,
     nextState: null,
-    outgoing: { kind: "text", text: T.bookingSuccess(state.lang, state.doctorName, dateRowLabel(state.date, state.lang), state.slotLabel) },
+    outgoing: { kind: "text", text: T.bookingSuccess(state.lang, state.doctorName, dateRowLabel(state.date, state.lang), state.slotLabel, state.priceLabel) },
+  };
+}
+
+/** The slot was taken (or its token went stale): the same day's list again, with the apology on top. */
+async function offerSlotsAgain(ctx: FlowContext, state: Extract<FlowState, { step: "BOOKING_CONFIRM" }>): Promise<FlowResult> {
+  const slotResult = await listSlotsForDate(ctx, state, state.date);
+  return {
+    ...slotResult,
+    outgoing: slotResult.outgoing?.kind === "text" ? slotResult.outgoing : prependText(slotResult.outgoing, T.bookingSlotTaken(state.lang)),
+  };
+}
+
+/**
+ * Editing an existing appointment: the last step of the same date -> time -> confirm steps a booking uses,
+ * but it moves the appointment the reminder was about instead of creating a second one. The move is one
+ * atomic update on the server, so the patient never loses the old time before holding the new one.
+ *
+ * Checked again here, not trusted from the tap: the appointment may have been cancelled, moved by the
+ * desk, or already edited twice since the screen was shown.
+ */
+async function rescheduleBooking(
+  ctx: FlowContext,
+  state: Extract<FlowState, { step: "BOOKING_CONFIRM" }>,
+  target: RescheduleTarget,
+): Promise<FlowResult> {
+  const lang = state.lang;
+  const unavailable: FlowResult = { handled: true, nextState: null, outgoing: { kind: "text", text: T.rescheduleUnavailable(lang) } };
+
+  const status = await ctx.client.readAppointmentStatus(target.appointmentId);
+  if (!status.ok) return status.status === 404 ? unavailable : errorResult(lang, "");
+  const live = status.value.status === "BOOKED" || status.value.status === "CONFIRMED";
+  const unchanged = new Date(status.value.scheduledStart).getTime() === new Date(target.originalStart).getTime();
+  if (!live || !unchanged) return unavailable;
+  if (status.value.rescheduleCount >= MAX_PATIENT_RESCHEDULES) {
+    return { handled: true, nextState: null, outgoing: { kind: "text", text: T.rescheduleLimit(lang) } };
+  }
+
+  let result = await ctx.client.rescheduleAppointment(target.appointmentId, state.token);
+  // Same token refresh a booking gets: re-list the day, and retry only against what the API just offered.
+  if (!result.ok && (result.code === "INVALID_TOKEN" || result.code === "EXPIRED_TOKEN")) {
+    const refreshed = await ctx.client.listSlots({ doctorId: state.doctorId, serviceId: state.serviceId, date: state.date });
+    const match = refreshed.ok ? refreshed.value.slots.find((slot) => slot.start === state.slotIso) : undefined;
+    if (match !== undefined) result = await ctx.client.rescheduleAppointment(target.appointmentId, match.token);
+  }
+
+  if (!result.ok) {
+    if (["SLOT_TAKEN", "INVALID_TOKEN", "EXPIRED_TOKEN", "PAST_SLOT", "CONTENDED"].includes(result.code)) {
+      return offerSlotsAgain(ctx, state);
+    }
+    if (result.code === "ILLEGAL_TRANSITION" || result.code === "NOT_FOUND") return unavailable;
+    return errorResult(lang, "");
+  }
+
+  return {
+    handled: true,
+    nextState: null,
+    outgoing: { kind: "text", text: T.rescheduleSuccess(lang, state.doctorName, dateRowLabel(state.date, lang), state.slotLabel, state.priceLabel) },
+  };
+}
+
+export interface RescheduleStart {
+  tenant: WhatsAppTenant;
+  client: BotApiClient;
+  appointmentId: string;
+  originalStart: Date;
+  patient: { id: string; name: string };
+  doctor: { id: string; name: string };
+  service: { id: string; name: string };
+}
+
+/**
+ * Entry point for the reminder's "تعديل الموعد" button (reminder-reply.ts, which has already verified the
+ * sender owns the appointment and that it is still editable). Starts the booking steps at the date list,
+ * keeping the appointment's own doctor and service; a different doctor means cancelling and rebooking.
+ * The reminder itself is left untouched, so its confirm deadline keeps running as the clinic set it.
+ */
+export async function startReschedule(input: RescheduleStart): Promise<FlowResult> {
+  const lang: Lang = "ar";
+  const [fromDate = "", fromTime = ""] = formatInClinicTime(input.originalStart, input.tenant.timezone).split(" ");
+  const reschedule: RescheduleTarget = {
+    appointmentId: input.appointmentId,
+    originalStart: input.originalStart.toISOString(),
+    fromLabel: `${dateRowLabel(fromDate, lang)} ${fromTime}`.trim(),
+  };
+  const person: Person = { patientId: input.patient.id, patientName: input.patient.name, reschedule };
+
+  const dates = await findUpcomingDates(input.client, input.doctor.id, input.service.id, input.tenant.timezone);
+  if (dates.length === 0) {
+    return { handled: true, nextState: null, outgoing: { kind: "text", text: T.rescheduleNoDates(lang) } };
+  }
+  const list = dateListOutgoing(lang, dates);
+  return {
+    handled: true,
+    nextState: {
+      step: "BOOKING_DATE",
+      lang,
+      doctorId: input.doctor.id,
+      doctorName: input.doctor.name,
+      serviceId: input.service.id,
+      serviceName: input.service.name,
+      ...person,
+    },
+    outgoing: prependText(list, T.rescheduleIntro(lang)) ?? list,
   };
 }
 

@@ -1,12 +1,11 @@
 // The patient's documents page talks to one public endpoint. No session: the token in the address is the
 // whole credential, and it is never sent anywhere but this API.
 
-import type { DeskCharge } from "../billing/billing-api.ts";
 import type { PrintableVisit } from "../visits/PrintDocuments.tsx";
 import type { ClinicIdentity, DoctorPrintIdentity } from "../visits/clinic-identity-api.ts";
 import type { PatientHeader } from "../visits/draft-api.ts";
 
-export type DocumentKind = "prescription" | "report" | "investigations" | "sickLeave" | "invoice";
+export type DocumentKind = "prescription" | "investigations" | "sickLeave";
 
 /** Mirrors the API's `PublicVisitDocuments`: the paper the patient would have been handed, and nothing else. */
 export interface PublicVisitDocuments {
@@ -26,20 +25,6 @@ export interface PublicVisitDocuments {
   prescription: PrintableVisit["prescription"];
   investigations: PrintableVisit["investigations"];
   sickLeave: PrintableVisit["sickLeave"];
-  invoice: Pick<
-    DeskCharge,
-    | "chargeId"
-    | "issuedOn"
-    | "patientFileNumber"
-    | "patientName"
-    | "lines"
-    | "subtotalMinor"
-    | "discountMinor"
-    | "payerShareMinor"
-    | "patientShareMinor"
-    | "paidMinor"
-    | "balanceMinor"
-  > | null;
 }
 
 export type LoadResult = { ok: true; documents: PublicVisitDocuments } | { ok: false };
