@@ -64,7 +64,7 @@ export function resolveReferenceDate(env: NodeJS.ProcessEnv = process.env): Date
   if (Number.isNaN(parsed.getTime())) {
     throw new Error(
       `SEED_REFERENCE_DATE="${override}" is not a date this can parse. Use an ISO 8601 value such ` +
-        'as "2026-08-25" or "2026-08-25T09:00:00Z". Leaving it unset uses the pinned default.',
+      'as "2026-08-25" or "2026-08-25T09:00:00Z". Leaving it unset uses the pinned default.',
     );
   }
   return parsed;
@@ -469,6 +469,13 @@ export const PLATFORM_ADMIN = {
   platformRole: "OWNER",
 } as const;
 
+
+export const PLATFORM_ADMIN2 = {
+  fullName: "2 مشغّل المنصة",
+  phoneE164: "+201000000001",
+  email: "operator2@clinic-os.example",
+  platformRole: "OWNER",
+} as const;
 // A fixed authenticator secret lived here until 2026-09-15, so a review build would be
 // signable-into. It did the opposite — a pre-enrolled operator put the console behind a code prompt
 // the reviewer could not answer — and `OPERATOR_TOTP=off` replaced it. The seed now enrols nobody.

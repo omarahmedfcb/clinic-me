@@ -5,8 +5,10 @@ import { listActiveMemberships } from "../../src/modules/auth/user-lookup.ts";
 import {
   CLINICS,
   PLATFORM_ADMIN,
+  PLATFORM_ADMIN2,
   resolveReferenceDate,
-  SEED_PASSWORD,  SHARED_STAFF_PHONE,
+  SEED_PASSWORD,
+  SHARED_STAFF_PHONE,
 } from "./blueprint.ts";
 import { ensurePlatformAdmin } from "./platform-admin.ts";
 
@@ -68,9 +70,9 @@ async function main(): Promise<void> {
     }
     console.log(
       "\nThis seed is re-runnable but not re-seedable: seeded tenants own append-only audit_logs\n" +
-        "rows referencing them with ON DELETE RESTRICT, so they cannot be deleted. To start over,\n" +
-        "discard the database volume:\n\n" +
-        `${RESEED_INSTRUCTIONS}\n`,
+      "rows referencing them with ON DELETE RESTRICT, so they cannot be deleted. To start over,\n" +
+      "discard the database volume:\n\n" +
+      `${RESEED_INSTRUCTIONS}\n`,
     );
     return;
   }
@@ -102,7 +104,13 @@ async function main(): Promise<void> {
   const operator = await ensurePlatformAdmin({ ...PLATFORM_ADMIN, password: SEED_PASSWORD });
   console.log(
     `Platform operator ${PLATFORM_ADMIN.phoneE164} ${operator.created ? "created" : "already present"} ` +
-      "-- no membership in any clinic, and no authenticator enrolled.",
+    "-- no membership in any clinic, and no authenticator enrolled.",
+  );
+
+  const operator2 = await ensurePlatformAdmin({ ...PLATFORM_ADMIN2, password: SEED_PASSWORD });
+  console.log(
+    `Platform operator2 ${PLATFORM_ADMIN2.phoneE164} ${operator2.created ? "created" : "already present"} ` +
+    "-- no membership in any clinic, and no authenticator enrolled.",
   );
 
   console.log(`Reference date: ${referenceDate.toISOString()}`);
@@ -181,7 +189,7 @@ async function recordOneUserEdit(
     if (audited === 0) {
       throw new Error(
         "Seed: no `users` audit row was written, so «سجل التدقيق» would open without the record " +
-          "type it exists to show. Check that users_audit is still AFTER UPDATE ON users.",
+        "type it exists to show. Check that users_audit is still AFTER UPDATE ON users.",
       );
     }
   });
