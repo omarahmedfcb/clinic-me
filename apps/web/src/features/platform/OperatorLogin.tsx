@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "../../design-system/Button.tsx";
 import { PasswordField, TextInput } from "../../design-system/fields.tsx";
 import { useLocale } from "../../i18n/locale-context.tsx";
+import { LanguageToggle } from "../auth/LanguageToggle.tsx";
 import { answerSecondFactor, beginEnrolment, platformLogin, signInWithRecoveryCode } from "./platform-api.ts";
 import { qrSvg } from "./qr.ts";
 import { RecoveryCodesPanel } from "./RecoveryCodesPanel.tsx";
@@ -96,7 +97,10 @@ export function OperatorLogin({ onSignedIn }: { onSignedIn: (name: string) => vo
 
   return (
     <main className="mx-auto max-w-sm p-6" data-testid="platform-login">
-      <h1 className="mb-1 text-lg font-semibold text-ink">{t("platform.title")}</h1>
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <h1 className="text-lg font-semibold text-ink">{t("platform.title")}</h1>
+        <LanguageToggle inline />
+      </div>
       <p className="mb-4 text-sm text-ink-muted">{t("platform.loginHint")}</p>
 
       {step.kind === "password" ? (

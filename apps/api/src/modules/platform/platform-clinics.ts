@@ -9,9 +9,10 @@ import { withPlatformActor, withTenant, type ActorContext } from "../../prisma/w
 import { hashPassword } from "../auth/password.ts";
 import { normalisePhone } from "../auth/phone.ts";
 import { generateTemporaryPassword } from "../memberships/staff.service.ts";
-import { accountStatesFor } from "./platform-client-file.ts";
+import { accountStatesFor, saveClientFile } from "./platform-client-file.ts";
 import { newTenantData, type SupportedCountry } from "./new-clinic.ts";
 import { planFor, type PlanLine } from "./plan.ts";
+import { isSubscriptionExpired, SUBSCRIPTION_EXPIRED_REASON } from "./subscription-dates.ts";
 
 export type ClinicRefusal =
   | "NOT_FOUND"
@@ -19,7 +20,8 @@ export type ClinicRefusal =
   | "SLUG_TAKEN"
   | "DUPLICATE_PHONE"
   | "REASON_REQUIRED"
-  | "ALREADY_IN_THAT_STATE";
+  | "ALREADY_IN_THAT_STATE"
+  | "INVALID_DATE_RANGE";
 
 export type ClinicResult<T> = { ok: true; value: T } | { ok: false; code: ClinicRefusal; params: RefusalParams };
 
@@ -50,6 +52,14 @@ export interface ClinicRow {
   renewalInDays: number | null;
   /** Inside the 14-day window the founder asked the console to warn on, or already past it. */
   renewalDue: boolean;
+  /** NONE: no connection. CONNECTED: ACTIVE. NEEDS_ATTENTION: token invalid or disconnected. */
+  whatsapp: { state: "NONE" | "CONNECTED" | "NEEDS_ATTENTION"; displayPhoneNumber: string | null };
+}
+
+interface WhatsAppStateRow {
+  tenant_id: string;
+  status: string;
+  display_phone_number: string | null;
 }
 
 interface AdminRow {
@@ -81,13 +91,15 @@ export async function listClinics(actor: ActorContext, today: Date = new Date())
   const accounts = await accountStatesFor(actor, today);
 
   return withPlatformActor(actor, async (tx) => {
-    const [tenants, counts, admins] = await Promise.all([
+    const [tenants, counts, admins, whatsappRows] = await Promise.all([
       tx.tenant.findMany({ orderBy: { createdAt: "asc" } }),
       tx.$queryRaw<CountsRow[]>`SELECT * FROM platform_clinic_counts()`,
       tx.$queryRaw<AdminRow[]>`SELECT * FROM platform_clinic_admins()`,
+      tx.$queryRaw<WhatsAppStateRow[]>`SELECT * FROM platform_whatsapp_states()`,
     ]);
 
     const byTenant = new Map(counts.map((row) => [row.tenant_id, row]));
+    const whatsappOf = new Map(whatsappRows.map((row) => [row.tenant_id, row]));
 
     return tenants.map((tenant) => {
       const count = byTenant.get(tenant.id);
@@ -99,8 +111,16 @@ export async function listClinics(actor: ActorContext, today: Date = new Date())
         renewalInDays: null,
         renewalDue: false,
       };
+      const connection = whatsappOf.get(tenant.id);
       return {
         ...account,
+        whatsapp:
+          connection === undefined
+            ? { state: "NONE" as const, displayPhoneNumber: null }
+            : {
+                state: connection.status === "ACTIVE" ? ("CONNECTED" as const) : ("NEEDS_ATTENTION" as const),
+                displayPhoneNumber: connection.display_phone_number,
+              },
         tenantId: tenant.id,
         name: tenant.name,
         slug: tenant.slug,
@@ -220,12 +240,21 @@ export async function setClinicSuspension(
   }
 
   return withPlatformActor<ClinicResult<{ status: string }>>(actor, async (tx) => {
-    const tenant = await tx.tenant.findFirst({ where: { id: tenantId }, select: { status: true } });
+    const tenant = await tx.tenant.findFirst({ where: { id: tenantId }, select: { status: true, timezone: true } });
     if (tenant === null) return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "clinic" as const } };
 
     const target = input.suspended ? "SUSPENDED" : "ACTIVE";
     if (tenant.status === target) {
       return { ok: false as const, code: "ALREADY_IN_THAT_STATE" as const, params: { status: target } };
+    }
+
+    // Reactivating a clinic whose last day has already passed would be undone by the expiry job within
+    // a minute. The operator renews it instead (`renewClinic`), which sets a new date and reactivates.
+    if (!input.suspended) {
+      const file = await tx.platformClinicFile.findFirst({ where: { tenantId }, select: { renewalOn: true } });
+      if (file?.renewalOn && isSubscriptionExpired(file.renewalOn.toISOString().slice(0, 10), new Date(), tenant.timezone)) {
+        return { ok: false as const, code: "INVALID_DATE_RANGE" as const, params: { field: "renewalOn" } };
+      }
     }
 
     await tx.tenant.update({
@@ -237,6 +266,39 @@ export async function setClinicSuspension(
 
     return { ok: true as const, value: { status: target } };
   });
+}
+
+/**
+ * Records a manual renewal: the new last day, and a reactivation when the clinic was stopped by its
+ * expiry. The payment happened outside the platform; this only says "paid through <date>".
+ *
+ * A clinic suspended for another reason stays suspended -- renewing a subscription must not undo a
+ * suspension somebody chose. The WhatsApp connection and bot credential are not touched either way.
+ */
+export async function renewClinic(
+  actor: ActorContext,
+  tenantId: string,
+  renewalOn: string,
+): Promise<ClinicResult<{ status: string; renewalOn: string }>> {
+  const tenant = await withPlatformActor(actor, (tx) =>
+    tx.tenant.findFirst({ where: { id: tenantId }, select: { status: true, suspensionReason: true, timezone: true } }),
+  );
+  if (tenant === null) return { ok: false, code: "NOT_FOUND", params: { resource: "clinic" } };
+
+  // Not in the past, in the clinic's own zone: a date that has already expired would suspend it again.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(renewalOn) || isSubscriptionExpired(renewalOn, new Date(), tenant.timezone)) {
+    return { ok: false, code: "INVALID_DATE_RANGE", params: { field: "renewalOn" } };
+  }
+
+  const saved = await saveClientFile(actor, tenantId, { renewalOn });
+  if (!saved.ok) return { ok: false, code: "INVALID_DATE_RANGE", params: { field: "renewalOn" } };
+
+  if (tenant.status === "SUSPENDED" && tenant.suspensionReason === SUBSCRIPTION_EXPIRED_REASON) {
+    const reactivated = await setClinicSuspension(actor, tenantId, { suspended: false });
+    if (!reactivated.ok) return reactivated;
+    return { ok: true, value: { status: "ACTIVE", renewalOn } };
+  }
+  return { ok: true, value: { status: tenant.status, renewalOn } };
 }
 
 /**

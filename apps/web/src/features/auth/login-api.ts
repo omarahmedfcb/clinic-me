@@ -68,6 +68,15 @@ export async function login(
     return { ok: false, messageKey: "login.error.rateLimited", retryable: false };
   }
 
+  // The password was right but the clinic's platform subscription has expired. The server only says so
+  // after verifying the password, so this is not an oracle for guessing accounts.
+  if (response.status === 403) {
+    const body = (await response.json().catch(() => ({}))) as { reason?: string };
+    if (body.reason === "SUBSCRIPTION_EXPIRED") {
+      return { ok: false, messageKey: "login.error.subscriptionExpired", retryable: false };
+    }
+  }
+
   if (response.status >= 500) {
     return { ok: false, messageKey: "login.error.server", retryable: true };
   }

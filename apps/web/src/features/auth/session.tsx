@@ -61,6 +61,8 @@ export interface CurrentUser {
   currency: string;
   role: string;
   memberships: Membership[];
+  /** Set only for an ADMIN or OWNER in the last 14 days of the subscription. A display hint. */
+  subscriptionNotice?: { endsOn: string; daysLeft: number } | null;
   /** DISPLAY HINT ONLY (see permissions.ts). Hides controls; authorises nothing. */
   permissions: Record<string, "full" | "own" | "none">;
 }

@@ -35,6 +35,7 @@ export async function createClinicThroughMeta(
       clinicPhone: draft.phone.trim(),
       ownerFullName: draft.adminFullName.trim(),
       ownerPhone: draft.adminPhone.trim(),
+      renewalOn: draft.renewalOn,
       ...outcome.result,
     });
     if (!result.ok) return { ok: false, messageKey: `signup.error.${result.failure}` as TranslationKey };

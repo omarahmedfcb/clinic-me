@@ -6,6 +6,7 @@ import { actorContext } from "../../common/actor-context.ts";
 import { WhatsAppSignupDto } from "../whatsapp/whatsapp-signup.dto.ts";
 import { signUpClinic, type SignupRefusal } from "../whatsapp/whatsapp-signup.ts";
 import { recordOperatorAction } from "./platform-audit.ts";
+import { saveClientFile } from "./platform-client-file.ts";
 import { PlatformAuthGuard, type PlatformRequest } from "./platform.guard.ts";
 
 @Controller("platform/clinics/whatsapp")
@@ -20,6 +21,9 @@ export class PlatformClinicWhatsAppController {
     });
 
     if (result.ok) {
+      if (body.renewalOn !== undefined) {
+        await saveClientFile(actorContext.getOrThrow(), result.tenantId, { renewalOn: body.renewalOn });
+      }
       await recordOperatorAction(actorContext.getOrThrow(), {
         tenantId: result.tenantId,
         action: "CREATE",

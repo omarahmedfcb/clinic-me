@@ -38,6 +38,8 @@ export interface Clinic {
   renewalInDays: number | null;
   /** Inside the fourteen-day window, or already past it. Computed on the server. */
   renewalDue: boolean;
+  /** NONE: no connection. CONNECTED: working. NEEDS_ATTENTION: token invalid or disconnected. */
+  whatsapp: { state: "NONE" | "CONNECTED" | "NEEDS_ATTENTION"; displayPhoneNumber: string | null };
 }
 
 export interface NewClinicInput {
@@ -53,6 +55,8 @@ export interface NewClinicInput {
   adminPhone: string;
   /** Printed on the clinic's documents when present. Left out of the request when blank. */
   nameEn?: string;
+  /** The subscription's last working day, `YYYY-MM-DD`. The form requires it. */
+  renewalOn: string;
 }
 
 export interface Operator {
@@ -341,6 +345,7 @@ export interface CreateWithWhatsAppPayload {
   phoneNumberId?: string;
   businessId?: string;
   skipRegistration: boolean;
+  renewalOn: string;
 }
 
 export async function createClinicWithWhatsApp(
@@ -369,6 +374,46 @@ export async function createClinicWithWhatsApp(
   if (reason) return { ok: false, failure: reason };
   return { ok: false, failure: body.code === "INVALID_FIELD" ? "INVALID_FIELD" : "UNKNOWN" };
 }
+
+export type ConnectWhatsAppFailure =
+  | "CLINIC_NOT_FOUND"
+  | "ALREADY_CONNECTED"
+  | "NUMBER_ALREADY_CONNECTED"
+  | "META_CODE_REJECTED"
+  | "META_NUMBER_MISMATCH"
+  | "META_SETUP_FAILED"
+  | "UNKNOWN";
+
+/** What Meta's popup handed back, for a clinic that already exists. The server verifies the Meta half. */
+export interface ConnectWhatsAppPayload {
+  code: string;
+  wabaId: string;
+  phoneNumberId?: string;
+  businessId?: string;
+  skipRegistration: boolean;
+}
+
+export async function connectWhatsApp(
+  tenantId: string,
+  payload: ConnectWhatsAppPayload,
+): Promise<{ ok: true; mode: "ATTACHED" | "RECONNECTED" } | { ok: false; failure: ConnectWhatsAppFailure }> {
+  const response = await send(`/platform/clinics/${tenantId}/whatsapp`, { method: "POST", body: JSON.stringify(payload) });
+  if (response.ok) return { ok: true, mode: ((await response.json()) as { mode: "ATTACHED" | "RECONNECTED" }).mode };
+
+  const body = (await response.json().catch(() => ({}))) as { reason?: string };
+  const known: ConnectWhatsAppFailure[] = [
+    "CLINIC_NOT_FOUND", "ALREADY_CONNECTED", "NUMBER_ALREADY_CONNECTED",
+    "META_CODE_REJECTED", "META_NUMBER_MISMATCH", "META_SETUP_FAILED",
+  ];
+  return { ok: false, failure: known.find((value) => value === body.reason) ?? "UNKNOWN" };
+}
+
+/** Manual renewal, paid outside the platform: the new last day, and a reactivation after an expiry. */
+export const renewClinic = (
+  tenantId: string,
+  renewalOn: string,
+): Promise<{ ok: true; status: string; renewalOn: string } | Refused> =>
+  post(`/platform/clinics/${tenantId}/renewal`, { renewalOn });
 
 export const setSuspension = (
   tenantId: string,

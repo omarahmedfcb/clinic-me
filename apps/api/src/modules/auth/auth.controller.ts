@@ -1,4 +1,15 @@
-import { Body, Controller, Get, HttpCode, Post, Req, Res, UnauthorizedException, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  HttpCode,
+  Post,
+  Req,
+  Res,
+  UnauthorizedException,
+  UseGuards,
+} from "@nestjs/common";
 import { SkipThrottle, ThrottlerGuard } from "@nestjs/throttler";
 import { skipAllExcept } from "../../common/throttlers.ts";
 import type { Request, Response } from "express";
@@ -23,6 +34,8 @@ import {
   rotateRefreshToken,
   switchTenant,
 } from "./refresh-tokens.ts";
+import { hasExpiredSubscription, subscriptionEndFor } from "../platform/subscription-reads.ts";
+import { daysLeft, SUBSCRIPTION_NOTICE_DAYS } from "../platform/subscription-dates.ts";
 import { listActiveMemberships, verifyCredentials } from "./user-lookup.ts";
 
 /**
@@ -154,7 +167,12 @@ export class AuthController {
     const first = memberships[0];
     // A real account with no active membership gets the same answer as a wrong password. Whether an
     // account exists but is unattached is not something an unauthenticated caller should learn.
-    if (!first) throw new UnauthorizedException(INVALID_CREDENTIALS);
+    if (!first) {
+      // The password above was correct, so saying why this account cannot sign in reveals nothing to a
+      // guesser: only that a clinic's subscription expired, to the person it expired for.
+      if (await hasExpiredSubscription(user.id)) throw new ForbiddenException({ reason: "SUBSCRIPTION_EXPIRED" });
+      throw new UnauthorizedException(INVALID_CREDENTIALS);
+    }
 
     const facts = clientFacts(request);
     const pair = await issueSession(user.id, first.membershipId, facts.ip, facts.userAgent);
@@ -323,15 +341,27 @@ export class AuthController {
     // Filtered by the tenant id from the validated token, never from anything the client sent.
     const tenant = await prisma.tenant.findUnique({
       where: { id: claims.tenantId },
-      select: { currency: true },
+      select: { currency: true, timezone: true },
     });
     if (!tenant) throw new UnauthorizedException("Not authenticated.");
+
+    // "Your subscription ends in N days", for the people who can act on it. A DISPLAY HINT like
+    // `permissions`: null outside the window and for every role that cannot renew anything.
+    let subscriptionNotice: { endsOn: string; daysLeft: number } | null = null;
+    if (claims.role === "ADMIN" || claims.role === "OWNER") {
+      const endsOn = await subscriptionEndFor(claims.tenantId);
+      if (endsOn !== null) {
+        const left = daysLeft(endsOn, new Date(), tenant.timezone);
+        if (left <= SUBSCRIPTION_NOTICE_DAYS) subscriptionNotice = { endsOn, daysLeft: left };
+      }
+    }
 
     return {
       user,
       membershipId: claims.membershipId,
       tenantId: claims.tenantId,
       currency: tenant.currency,
+      subscriptionNotice,
       role: claims.role,
       memberships: await listActiveMemberships(claims.sub),
 

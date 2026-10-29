@@ -27,8 +27,9 @@ import { useLocale } from "../../i18n/locale-context.tsx";
  *
  * ## Scope
  *
- * Login and the shell. The English catalogue covers exactly those two screens, so putting this
- * button anywhere else — the gallery, or a Phase 2 screen — would render raw keys.
+ * Login, the shell and the platform console (its login and its main screen: its English `platform.*`
+ * strings exist). The English catalogue covers those screens, so putting this button anywhere else —
+ * the gallery, or a Phase 2 screen — would render raw keys.
  * `test/unit/web-locale.spec.ts` asserts the translated set, so extending it fails a test first.
  */
 export function LanguageToggle({ inline = false }: { inline?: boolean } = {}) {

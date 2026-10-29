@@ -278,6 +278,22 @@ export function AppShell() {
 
         <ConnectionBanner />
 
+        {/* Only for an ADMIN or OWNER inside the final fortnight: the server sends null for everyone else.
+            Renewal is arranged with the vendor outside the app, so this only says when it ends. */}
+        {me.subscriptionNotice != null && (
+          <p
+            role="status"
+            data-testid="subscription-banner"
+            className="border-b border-border bg-warning-soft px-4 py-2 text-sm text-warning"
+          >
+            {me.subscriptionNotice.daysLeft <= 0
+              ? t("shell.subscription.endsToday")
+              : me.subscriptionNotice.daysLeft === 1
+                ? t("shell.subscription.endsTomorrow")
+                : t("shell.subscription.endsIn").replace("{days}", String(me.subscriptionNotice.daysLeft))}
+          </p>
+        )}
+
         {switchError && (
           <p
             role="alert"

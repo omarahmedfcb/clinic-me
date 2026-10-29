@@ -6,10 +6,15 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "../../design-system/Button.tsx";
 import { Card, DataTable, EmptyState, type Column } from "../../design-system/display.tsx";
 import { Spinner } from "../../design-system/Spinner.tsx";
+import { LanguageToggle } from "../auth/LanguageToggle.tsx";
 import { formatMinor, intlLocale } from "../../i18n/format.ts";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import type { TranslationKey } from "../../i18n/strings.ts";
 import { ClientFilePanel } from "./ClientFilePanel.tsx";
+import { ConnectWhatsAppPanel } from "./ConnectWhatsAppPanel.tsx";
+import { RenewPanel } from "./RenewPanel.tsx";
+import { WhatsAppBadge } from "./WhatsAppBadge.tsx";
+import { attachWhatsAppThroughMeta } from "./clinic-whatsapp-attach.ts";
 import { NewClinicForm, BLANK_CLINIC, type NewClinicSubmit } from "./NewClinicForm.tsx";
 import { createClinicThroughMeta } from "./clinic-whatsapp-create.ts";
 import { OperatorLogin } from "./OperatorLogin.tsx";
@@ -21,6 +26,7 @@ import {
   loadClinics,
   loadMe,
   loadOperators,
+  renewClinic,
   resetAdminPassword,
   setSuspension,
   type Clinic,
@@ -29,6 +35,9 @@ import {
   type Operator,
 } from "./platform-api.ts";
 import { refusalText } from "./refusal-text.ts";
+
+/** What the expiry job writes into `suspensionReason` (api: subscription-dates.ts). */
+const SUBSCRIPTION_EXPIRED_REASON = "SUBSCRIPTION_EXPIRED";
 
 /** A password shown once. Held in state only until the operator dismisses it. */
 interface Issued {
@@ -53,6 +62,9 @@ export function PlatformConsole() {
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<NewClinicInput>(BLANK_CLINIC);
   const [openFile, setOpenFile] = useState<string | null>(null);
+  /** The clinic whose WhatsApp panel / renewal panel is open. One at a time, like the client file. */
+  const [connecting, setConnecting] = useState<string | null>(null);
+  const [renewing, setRenewing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -131,6 +143,23 @@ export function PlatformConsole() {
     setIssued({ what: "reset", who: result.fullName, password: result.temporaryPassword });
   }
 
+  async function onConnect(row: Clinic, existingNumber: boolean): Promise<void> {
+    setBusy(true);
+    setRefusal(null);
+    const result = await attachWhatsAppThroughMeta(row.tenantId, existingNumber);
+    setBusy(false);
+    if (!result.ok) {
+      setRefusal(t(result.messageKey));
+      return;
+    }
+    setConnecting(null);
+    await refresh();
+  }
+
+  async function onRenew(row: Clinic, renewalOn: string): Promise<void> {
+    if (await act(() => renewClinic(row.tenantId, renewalOn))) setRenewing(null);
+  }
+
   async function onSuspension(row: Clinic): Promise<void> {
     if (row.status !== "ACTIVE") {
       await act(() => setSuspension(row.tenantId, { suspended: false }));
@@ -160,10 +189,19 @@ export function PlatformConsole() {
         <span className={row.status === "ACTIVE" ? "text-ink" : "text-danger"}>
           {t(`platform.status.${row.status}` as TranslationKey)}
           {row.suspensionReason !== null && (
-            <span className="block text-xs text-ink-subtle">{row.suspensionReason}</span>
+            <span className="block text-xs text-ink-subtle">
+              {row.suspensionReason === SUBSCRIPTION_EXPIRED_REASON
+                ? t("platform.suspension.SUBSCRIPTION_EXPIRED")
+                : row.suspensionReason}
+            </span>
           )}
         </span>
       ),
+    },
+    {
+      key: "whatsapp",
+      header: t("platform.whatsapp"),
+      render: (row) => <WhatsAppBadge clinic={row} />,
     },
     {
       key: "account",
@@ -236,15 +274,43 @@ export function PlatformConsole() {
           >
             {t("platform.clientFile")}
           </Button>
+          {/* A clinic stopped by its expiry is turned back on by renewing it, which sets the new date;
+              a plain reactivation would be undone by the expiry job within a minute. */}
+          {!(row.status !== "ACTIVE" && row.suspensionReason === SUBSCRIPTION_EXPIRED_REASON) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              loading={busy}
+              data-testid={`suspend-${row.tenantId}`}
+              onClick={() => void onSuspension(row)}
+            >
+              {t(row.status === "ACTIVE" ? "platform.suspend" : "platform.reactivate")}
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"
-            loading={busy}
-            data-testid={`suspend-${row.tenantId}`}
-            onClick={() => void onSuspension(row)}
+            data-testid={`renew-${row.tenantId}`}
+            onClick={() => {
+              setConnecting(null);
+              setRenewing(renewing === row.tenantId ? null : row.tenantId);
+            }}
           >
-            {t(row.status === "ACTIVE" ? "platform.suspend" : "platform.reactivate")}
+            {t("platform.renew")}
           </Button>
+          {(row.whatsapp?.state ?? "NONE") !== "CONNECTED" && (
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid={`connect-whatsapp-${row.tenantId}`}
+              onClick={() => {
+                setRenewing(null);
+                setConnecting(connecting === row.tenantId ? null : row.tenantId);
+              }}
+            >
+              {t((row.whatsapp?.state ?? "NONE") === "NONE" ? "platform.whatsapp.connect" : "platform.whatsapp.reconnect")}
+            </Button>
+          )}
           {/* Only for an admin the server would accept: a doctor is not in `admins` at all, so
               there is no button here to be refused. */}
           {row.admins.map((admin) => (
@@ -265,6 +331,8 @@ export function PlatformConsole() {
   ];
 
   const selected = clinics?.find((row) => row.tenantId === openFile) ?? null;
+  const connectingClinic = clinics?.find((row) => row.tenantId === connecting) ?? null;
+  const renewingClinic = clinics?.find((row) => row.tenantId === renewing) ?? null;
 
   return (
     <main className="mx-auto max-w-6xl p-6" data-testid="platform-console">
@@ -273,9 +341,12 @@ export function PlatformConsole() {
           <h1 className="text-lg font-semibold text-ink">{t("platform.title")}</h1>
           <p className="text-sm text-ink-muted">{t("platform.subtitle")}</p>
         </div>
-        <p className="text-sm text-ink-muted">
-          {me.fullName} · {t(`platform.role.${me.platformRole}` as TranslationKey)}
-        </p>
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-ink-muted">
+            {me.fullName} · {t(`platform.role.${me.platformRole}` as TranslationKey)}
+          </p>
+          <LanguageToggle inline />
+        </div>
       </div>
 
       <div className="mb-4 flex gap-2">
@@ -393,6 +464,26 @@ export function PlatformConsole() {
                   />
                 </div>
               </Card>
+              {connectingClinic !== null && (
+                <div className="mt-4">
+                  <ConnectWhatsAppPanel
+                    clinic={connectingClinic}
+                    busy={busy}
+                    onConnect={(existingNumber) => void onConnect(connectingClinic, existingNumber)}
+                    onCancel={() => setConnecting(null)}
+                  />
+                </div>
+              )}
+              {renewingClinic !== null && (
+                <div className="mt-4">
+                  <RenewPanel
+                    clinic={renewingClinic}
+                    busy={busy}
+                    onRenew={(date) => void onRenew(renewingClinic, date)}
+                    onCancel={() => setRenewing(null)}
+                  />
+                </div>
+              )}
               {selected !== null && (
                 <div className="mt-4">
                   <ClientFilePanel clinic={selected} operators={operators} onClose={() => setOpenFile(null)} />

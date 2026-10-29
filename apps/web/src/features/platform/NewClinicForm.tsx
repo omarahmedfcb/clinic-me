@@ -25,6 +25,7 @@ export const BLANK_CLINIC: NewClinicInput = {
   adminFullName: "",
   adminPhone: "",
   nameEn: "",
+  renewalOn: "",
 };
 
 /** The server's rule, spelled once here so the screen can say so before the request is sent. */
@@ -65,7 +66,8 @@ export function NewClinicForm({
     draft.address.trim() !== "" &&
     draft.phone.trim() !== "" &&
     draft.adminFullName.trim() !== "" &&
-    draft.adminPhone.trim() !== "";
+    draft.adminPhone.trim() !== "" &&
+    draft.renewalOn !== "";
 
   return (
     <Card title={t("platform.newClinic")} subtitle={t("platform.firstAdminIsUs")}>
@@ -123,6 +125,15 @@ export function NewClinicForm({
           value={draft.adminPhone}
           data-testid="admin-phone"
           onChange={(e) => set("adminPhone")(e.target.value)}
+        />
+        <TextInput
+          label={t("platform.subscriptionEndsOn")}
+          hint={t("platform.subscriptionEndsOnHint")}
+          type="date"
+          dir="ltr"
+          value={draft.renewalOn}
+          data-testid="clinic-renewal-on"
+          onChange={(e) => set("renewalOn")(e.target.value)}
         />
       </div>
 

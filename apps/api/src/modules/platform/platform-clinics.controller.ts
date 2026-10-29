@@ -16,7 +16,9 @@ import { IsBoolean, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } 
 import { actorContext } from "../../common/actor-context.ts";
 import { refusal } from "../../common/refusals.ts";
 import { recordOperatorAction } from "./platform-audit.ts";
+import { saveClientFile } from "./platform-client-file.ts";
 import {
+  renewClinic,
   createClinic,
   listClinics,
   resetClinicAdminPassword,
@@ -43,6 +45,13 @@ export class CreateClinicDto {
   @IsString() @MaxLength(40) phone!: string;
   @IsString() @MinLength(2) @MaxLength(200) adminFullName!: string;
   @IsString() @MaxLength(40) adminPhone!: string;
+  /** The last day the clinic works, `YYYY-MM-DD`. The console's form requires it; the API tolerates its absence. */
+  @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/) renewalOn?: string;
+}
+
+export class RenewClinicDto {
+  /** The new last working day, `YYYY-MM-DD`, in the clinic's own timezone. */
+  @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/) renewalOn!: string;
 }
 
 export class SuspendClinicDto {
@@ -87,6 +96,7 @@ export class PlatformClinicsController {
   async create(@Req() request: PlatformRequest, @Body() body: CreateClinicDto) {
     const actor = actorContext.getOrThrow();
     const created = this.unwrap(await createClinic(actor, body));
+    if (body.renewalOn !== undefined) await saveClientFile(actor, created.tenantId, { renewalOn: body.renewalOn });
 
     await recordOperatorAction(actor, {
       tenantId: created.tenantId,
@@ -98,6 +108,28 @@ export class PlatformClinicsController {
     });
 
     return created;
+  }
+
+  /** Manual renewal, paid outside the platform: a new last day, and a reactivation after an expiry. */
+  @Post(":tenantId/renewal")
+  @HttpCode(200)
+  async renew(
+    @Req() request: PlatformRequest,
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Body() body: RenewClinicDto,
+  ) {
+    const actor = actorContext.getOrThrow();
+    const result = this.unwrap(await renewClinic(actor, tenantId, body.renewalOn));
+
+    await recordOperatorAction(actor, {
+      tenantId,
+      action: "UPDATE",
+      entityType: "tenants",
+      entityId: tenantId,
+      detail: { renewalOn: result.renewalOn, status: result.status, by: request.platformAdmin.fullName },
+    });
+
+    return result;
   }
 
   @Post(":tenantId/suspension")
