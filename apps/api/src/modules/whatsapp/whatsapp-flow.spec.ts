@@ -21,7 +21,7 @@ const TENANT: WhatsAppTenant = {
   clinicName: "عيادة النور",
   clinicNameEn: "Al Noor Clinic",
   phoneNumberId: "1234567890",
-  bot: { userId: "bot-user", ip: "127.0.0.1", userAgent: "bot" } as WhatsAppTenant["bot"],
+  bot: { membershipId: "bot-membership", userId: "bot-user" },
 };
 
 const DOCTOR: BotDoctor = { id: "doc-1", fullName: "أحمد سامي", title: "Dr.", specialty: "أسنان" };

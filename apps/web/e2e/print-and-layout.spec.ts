@@ -93,7 +93,11 @@ async function mockApi(page: Page): Promise<void> {
     if (url.includes("/clinic-identity")) {
       return json({ name: CLINIC_NAME, address: "١٢ شارع النصر، المعادي", phones: ["+20223456789"], hasLogo: false, taxRegistrationNumber: null, commercialRegisterNumber: null, email: null, whatsappNumber: null, workingHours: null, tagline: null });
     }
-    if (url.includes("/notifications/count")) return json({ count: 0 });
+    if (url.includes("/notifications/count")) return json({ unread: 0, latestId: null });
+    // The shell's connection banner reads `{ connection }` and dereferences it. Falling through to
+    // the empty list below made `connection` undefined, which threw during render and blanked the
+    // whole page -- so neither the print root nor the visit form ever mounted.
+    if (url.includes("/whatsapp/connection")) return json({ connection: null });
     // Lists — services, medications, procedures, open visits, notifications.
     return json([]);
   });

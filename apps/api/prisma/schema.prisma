@@ -1108,11 +1108,10 @@ model Appointment {
   followupTasksResolved FollowupTask[]
   notifications         Notification[]
   webhookDeliveries     WebhookDelivery[]
+  outboundMessageIntents OutboundMessageIntent[]
 
   @@index([tenantId, doctorId, scheduledStart])
   @@index([tenantId, scheduledStart, status])
-  outboundMessageIntents OutboundMessageIntent[]
-
   @@map("appointments")
 }
 
@@ -1564,7 +1563,6 @@ model WhatsAppConnection {
 
   @@map("whatsapp_connections")
 }
-
 
 /// One thing the bot is owed. docs/WHATSAPP-BOT-CONTRACT.md §6.
 ///

@@ -265,6 +265,19 @@ describe("the manifest itself is legible", () => {
       "GET /platform/clinics/:tenantId/file",
       "GET /platform/me",
       "GET /platform/operators",
+      /**
+       * **The public surface: no login, so no membership, so no capability to ask.** Each is
+       * governed by something other than the matrix, and is listed one by one (not by a
+       * `/public/*` pattern) so a new public route is a visible edit here:
+       * - the visit-document links by an unguessable token in the path (`VisitDocumentLink`),
+       * - the WhatsApp sign-up config by being a public page's bootstrap, holding no secret,
+       * - the web chat by its own throttle and the bot actor it resolves per clinic,
+       * - the WhatsApp webhook by Meta's verify token (GET) and request signature (POST), not by a user.
+       */
+      "GET /public/visit-documents/:token",
+      "GET /public/visit-documents/:token/pdf/:kind",
+      "GET /public/whatsapp-signup/config",
+      "GET /webhooks/whatsapp",
       "POST /auth/login",
       "POST /auth/logout",
       // PR 10. Deliberately ungoverned: it is the one route a holder of a temporary password may
@@ -302,6 +315,8 @@ describe("the manifest itself is legible", () => {
       "POST /platform/totp/replace",
       "POST /platform/totp/replace/confirm",
       "POST /platform/totp/verify",
+      "POST /public/webchat/message",
+      "POST /webhooks/whatsapp",
     ]);
   });
 });

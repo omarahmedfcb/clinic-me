@@ -27,7 +27,9 @@ describe("tenant-scoped-models registry", () => {
     // 53 as of 2026-09-16: OperatorRecoveryCode joined, classified "none".
     // 54 as of 2026-09-18: BotCredential joined, scoped — a credential belongs to one clinic.
     // 55 as of 2026-09-18: WebhookDelivery joined, scoped — one clinic's outbox.
-    expect(allModelNames).toHaveLength(55);
+    // 59 as of 2026-10-24: Complaint, WhatsAppConnection, OutboundMessageIntent and
+    // VisitDocumentLink joined, all scoped -- each row belongs to one clinic.
+    expect(allModelNames).toHaveLength(59);
     for (const name of allModelNames) {
       expect(["scoped", "nullable", "none", "platform"]).toContain(tenantPolicyOf(name));
     }
@@ -66,7 +68,7 @@ describe("tenant-scoped-models registry", () => {
     }
   });
 
-  test("has exactly 46 scoped, 2 nullable, 4 none and 3 platform models (46 + 2 + 4 + 3 = 55)", () => {
+  test("has exactly 50 scoped, 2 nullable, 4 none and 3 platform models (50 + 2 + 4 + 3 = 59)", () => {
     const counts = { scoped: 0, nullable: 0, none: 0, platform: 0 };
     for (const name of allModelNames) {
       counts[tenantPolicyOf(name)] += 1;
@@ -91,6 +93,6 @@ describe("tenant-scoped-models registry", () => {
     // 2026-09-18: bot_credentials joined as "scoped". The bot authenticates before any tenant is
     // bound, which is why `resolve_bot_credential` exists — not a reason to loosen the model.
     // 2026-09-18: webhook_deliveries joined as "scoped". Its rows name one clinic's appointments.
-    expect(counts).toEqual({ scoped: 46, nullable: 2, none: 4, platform: 3 });
+    expect(counts).toEqual({ scoped: 50, nullable: 2, none: 4, platform: 3 });
   });
 });

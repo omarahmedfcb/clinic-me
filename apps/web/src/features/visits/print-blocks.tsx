@@ -19,8 +19,8 @@ function Field({ label, value, auto }: { label: string; value: string; auto?: bo
   return (
     <div className="print-line">
       <span className="block text-[10px] uppercase tracking-wide text-neutral-600">{label}</span>
-      {/* dir="auto" keeps Arabic letters joined; text-left keeps the name directly under its label. */}
-      <span className="block text-left text-sm" {...(auto === true ? { dir: "auto" } : {})}>
+      {/* dir="auto" keeps Arabic letters joined; the sheet is English, so the name is left-aligned under its label. */}
+      <span className="block text-left text-sm" /* rtl-allow-physical: print sheet is English, LTR */ {...(auto === true ? { dir: "auto" } : {})}>
         {value === "" ? "—" : value}
       </span>
     </div>
@@ -49,7 +49,7 @@ export function Letterhead({ clinic, logo }: { clinic: ClinicIdentity | null; lo
       className="print-letterhead flex items-start justify-between gap-6 border-b-2 border-black pb-3"
     >
       {/* LEFT: clinic name, tagline, address, phones. To move it, change this wrapper's classes. */}
-      <div className="min-w-0 text-left">
+      <div className="min-w-0 text-left" /* rtl-allow-physical: print sheet is English, LTR */>
         <h1 className="text-2xl font-bold leading-tight">{name}</h1>
         {clinic?.tagline != null && clinic.tagline !== "" && (
           <p className="text-xs italic">{clinic.tagline}</p>

@@ -82,6 +82,8 @@ describe("notifications", () => {
     bell = {
       tenantId: fixture.tenantId,
       membershipId: own.doctorMembership,
+      // Role decides what the caller may see (`visibleTo`); a missing role sees nothing at all.
+      role: "DOCTOR",
       actor: actorFor(fixture.userId),
     };
   });
@@ -91,6 +93,11 @@ describe("notifications", () => {
     await deleteTestUser(receptionUserId);
     await prisma.$disconnect();
   });
+
+  /** `unreadCount` returns `{ unread, latestId }`; every assertion here is about the number. */
+  async function unread(who: NotificationCaller): Promise<number> {
+    return (await unreadCount(who)).unread;
+  }
 
   async function book(): Promise<string> {
     const availability = await findAvailableSlots(caller, {
@@ -113,9 +120,9 @@ describe("notifications", () => {
   }
 
   test("a booking produces exactly one notification", async () => {
-    const before = await unreadCount(bell);
+    const before = await unread(bell);
     await book();
-    expect(await unreadCount(bell)).toBe(before + 1);
+    expect(await unread(bell)).toBe(before + 1);
 
     const [latest] = await listNotifications(bell);
     expect(latest?.kind).toBe("APPOINTMENT_BOOKED");
@@ -150,30 +157,30 @@ describe("notifications", () => {
    */
   test("queue movement produces no notification", async () => {
     const appointmentId = await book();
-    const before = await unreadCount(bell);
+    const before = await unread(bell);
 
     await changeAppointmentStatus(caller, appointmentId, "CONFIRM", { now: NOW });
     await changeAppointmentStatus(caller, appointmentId, "ARRIVE", { now: NOW });
 
-    expect(await unreadCount(bell)).toBe(before);
+    expect(await unread(bell)).toBe(before);
   });
 
   describe("read state is per membership, not per user", () => {
     test("marking read for one membership leaves the other's count untouched", async () => {
       await book();
-      const reception: NotificationCaller = { ...bell, membershipId: receptionMembershipId };
+      const reception: NotificationCaller = { ...bell, membershipId: receptionMembershipId, role: "RECEPTIONIST" };
 
-      const doctorBefore = await unreadCount(bell);
-      const receptionBefore = await unreadCount(reception);
+      const doctorBefore = await unread(bell);
+      const receptionBefore = await unread(reception);
       expect(doctorBefore).toBeGreaterThan(0);
       expect(receptionBefore).toBe(doctorBefore);
 
       const items = await listNotifications(bell);
       await markRead(bell, items.map((item) => item.id));
 
-      expect(await unreadCount(bell)).toBe(0);
+      expect(await unread(bell)).toBe(0);
       // The whole point: reception has not read anything.
-      expect(await unreadCount(reception)).toBe(receptionBefore);
+      expect(await unread(reception)).toBe(receptionBefore);
     });
 
     test("marking the same notification twice is a no-op rather than an error", async () => {
@@ -182,7 +189,7 @@ describe("notifications", () => {
 
       await markRead(bell, ids);
       await expect(markRead(bell, ids)).resolves.toBeGreaterThanOrEqual(0);
-      expect(await unreadCount(bell)).toBe(0);
+      expect(await unread(bell)).toBe(0);
     });
   });
 
@@ -195,7 +202,7 @@ describe("notifications", () => {
   test("a failed booking leaves no notification behind", async () => {
     const items = await listNotifications(bell);
     await markRead(bell, items.map((item) => item.id));
-    expect(await unreadCount(bell)).toBe(0);
+    expect(await unread(bell)).toBe(0);
 
     const result = await bookAppointment(caller, {
       slotToken: "not-a-real-token",
@@ -204,6 +211,6 @@ describe("notifications", () => {
       now: NOW,
     });
     expect(result.ok).toBe(false);
-    expect(await unreadCount(bell)).toBe(0);
+    expect(await unread(bell)).toBe(0);
   });
 });

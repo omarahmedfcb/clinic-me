@@ -85,9 +85,11 @@ const TIMELINE_TONES: Record<AppointmentStatus, string> = {
   // muted ink token is 5.17:1 against free and stays 1.84:1 apart from the break grey, so the two
   // greys on this bar remain distinguishable. Reported rather than absorbed.
   IN_CONSULTATION: "bg-success border-ink-muted",
-  // Q34: still occupying the slot, so it is still drawn as a busy block — in blue, which is the one
-  // family neither the green ramp nor the consultation grey uses, and which reads at bar size.
-  PAUSED: "bg-info border-info",
+  // Q34: still occupying the slot, so it is still drawn as a busy block. It was blue until the
+  // rebrand made `info` a teal (index.css), which put it 1.4 deltaE from IN_CONSULTATION's
+  // `success` teal -- two bars no one could tell apart. The dark gold `warning` token reads at bar
+  // size and is 31 deltaE from every other bar (status-colour-separation.spec.ts measures it).
+  PAUSED: "bg-warning border-warning",
   COMPLETED: "bg-transparent border-ink-muted",
   // Never drawn: both release the slot, so no busy block is ever built for them
   // (slot-engine-boundaries.spec.ts asserts it). Present so the map stays total.

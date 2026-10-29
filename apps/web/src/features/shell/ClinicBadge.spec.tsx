@@ -91,7 +91,10 @@ describe("the clinic's mark in the top bar", () => {
     // Secondary by size and colour, so the ordering the ruling asks for is visible and not implied.
     expect(account.className).toContain("text-xs");
     expect(account.className).toContain("text-ink-muted");
-    expect(heading.className).toContain("text-xl");
+    // Larger than the account line at every width: base size on a phone, larger from `sm` up.
+    expect(heading.className).toContain("text-lg");
+    expect(heading.className).toContain("sm:text-2xl");
+    expect(heading.className).toContain("font-semibold");
   });
 });
 
