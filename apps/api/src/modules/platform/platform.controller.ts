@@ -306,6 +306,26 @@ export class PlatformController {
     };
   }
 
+  /**
+   * A fresh ten-minute token for a session that is still valid.
+   *
+   * Exists for Meta's popup: the existing-number flow has the clinic scan a QR code and can outlast
+   * the token's life, and the Meta code it returns is single-use, so the clinic cannot be created
+   * again after signing in a second time. The console calls this while the popup is open.
+   *
+   * It re-runs `PlatformAuthGuard` (operator still active, authenticator still enrolled), keeps the
+   * `via` claim so a recovery-code session stays a recovery-code session, and cannot revive a token
+   * that has already expired.
+   */
+  @Post("session/refresh")
+  @HttpCode(200)
+  @UseGuards(PlatformAuthGuard)
+  async refreshSession(@Req() request: PlatformRequest): Promise<{ accessToken: string }> {
+    return {
+      accessToken: await issuePlatformToken(request.platformAdmin.userId, "full", request.platformAdmin.via),
+    };
+  }
+
   /** Who the operator is, and which seat they hold — the console reads it to decide what to show. */
   @Get("me")
   @UseGuards(PlatformAuthGuard)

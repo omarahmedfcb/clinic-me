@@ -138,6 +138,42 @@ async function send(path: string, init?: RequestInit): Promise<Response> {
   });
 }
 
+/**
+ * Swaps the operator's token for a fresh one. False when the session is already over (401) or the
+ * server could not be reached; the caller then tells the operator to sign in again.
+ */
+export async function refreshPlatformSession(): Promise<boolean> {
+  try {
+    const response = await send("/platform/session/refresh", { method: "POST" });
+    if (!response.ok) return false;
+    const body = (await response.json()) as { accessToken?: string };
+    if (typeof body.accessToken !== "string") return false;
+    token = body.accessToken;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const KEEP_ALIVE_EVERY_MS = 4 * 60 * 1000;
+const KEEP_ALIVE_MAX_MS = 30 * 60 * 1000;
+
+/**
+ * Keeps the operator's ten-minute token alive while Meta's popup is open, then lets it go.
+ *
+ * The existing-number flow (scan a QR code from the Business app) can take longer than the token
+ * lives, and the Meta code it hands back works once and for a short while: if the token has expired
+ * by then, the create request is a 401 and the code is spent. Returns the function that stops it.
+ */
+export function keepPlatformSessionAlive(): () => void {
+  const timer = window.setInterval(() => void refreshPlatformSession(), KEEP_ALIVE_EVERY_MS);
+  const limit = window.setTimeout(() => window.clearInterval(timer), KEEP_ALIVE_MAX_MS);
+  return () => {
+    window.clearInterval(timer);
+    window.clearTimeout(limit);
+  };
+}
+
 async function post<T>(path: string, body?: unknown): Promise<({ ok: true } & T) | Refused> {
   const response = await send(path, {
     method: "POST",
@@ -333,6 +369,7 @@ export type CreateWithWhatsAppFailure =
   | "META_NUMBER_MISMATCH"
   | "META_SETUP_FAILED"
   | "INVALID_FIELD"
+  | "SESSION_EXPIRED"
   | "UNKNOWN";
 
 /** The clinic's details plus what Meta's popup handed back; the server verifies the Meta half. */
@@ -373,6 +410,9 @@ export async function createClinicWithWhatsApp(
     return { ok: true, ...data };
   }
 
+  // The operator's token ran out while the popup was open: not an "unknown" error, a sign-in.
+  if (response.status === 401) return { ok: false, failure: "SESSION_EXPIRED" };
+
   const body = (await response.json().catch(() => ({}))) as { reason?: string; code?: string };
   const known: CreateWithWhatsAppFailure[] = [
     "INVALID_PHONE", "OWNER_PHONE_TAKEN", "SLUG_TAKEN", "NUMBER_ALREADY_CONNECTED",
@@ -390,6 +430,7 @@ export type ConnectWhatsAppFailure =
   | "META_CODE_REJECTED"
   | "META_NUMBER_MISMATCH"
   | "META_SETUP_FAILED"
+  | "SESSION_EXPIRED"
   | "UNKNOWN";
 
 /** What Meta's popup handed back, for a clinic that already exists. The server verifies the Meta half. */
@@ -407,6 +448,8 @@ export async function connectWhatsApp(
 ): Promise<{ ok: true; mode: "ATTACHED" | "RECONNECTED" } | { ok: false; failure: ConnectWhatsAppFailure }> {
   const response = await send(`/platform/clinics/${tenantId}/whatsapp`, { method: "POST", body: JSON.stringify(payload) });
   if (response.ok) return { ok: true, mode: ((await response.json()) as { mode: "ATTACHED" | "RECONNECTED" }).mode };
+
+  if (response.status === 401) return { ok: false, failure: "SESSION_EXPIRED" };
 
   const body = (await response.json().catch(() => ({}))) as { reason?: string };
   const known: ConnectWhatsAppFailure[] = [

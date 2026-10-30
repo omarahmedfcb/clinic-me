@@ -4,7 +4,12 @@
 import type { TranslationKey } from "../../i18n/strings.ts";
 import { fetchSignupConfig } from "../signup/signup-api.ts";
 import { launchEmbeddedSignup, loadFacebookSdk } from "../signup/meta-signup.ts";
-import { createClinicWithWhatsApp, type NewClinicInput } from "./platform-api.ts";
+import {
+  createClinicWithWhatsApp,
+  keepPlatformSessionAlive,
+  refreshPlatformSession,
+  type NewClinicInput,
+} from "./platform-api.ts";
 
 export type ClinicWithWhatsAppResult =
   | { ok: true; who: string; temporaryPassword: string }
@@ -14,9 +19,14 @@ export async function createClinicThroughMeta(
   draft: NewClinicInput,
   existingNumber: boolean,
 ): Promise<ClinicWithWhatsAppResult> {
+  let stopKeepAlive: (() => void) | undefined;
   try {
-    const config = await fetchSignupConfig();
+    // Renewed alongside the config fetch (no extra wait before the popup). If it fails the session is
+    // already over, and opening Meta's popup would only spend its one-time code on a request that 401s.
+    const [config, sessionOk] = await Promise.all([fetchSignupConfig(), refreshPlatformSession()]);
+    if (!sessionOk) return { ok: false, messageKey: "signup.error.SESSION_EXPIRED" };
     if (config === null) return { ok: false, messageKey: "signup.error.notConfigured" };
+    stopKeepAlive = keepPlatformSessionAlive();
 
     const fb = await loadFacebookSdk(config.appId, config.graphVersion);
     const outcome = await launchEmbeddedSignup(fb, config.configId, { existingNumber });
@@ -43,5 +53,7 @@ export async function createClinicThroughMeta(
     return { ok: true, who: draft.adminFullName, temporaryPassword: result.temporaryPassword };
   } catch {
     return { ok: false, messageKey: "signup.error.UNKNOWN" };
+  } finally {
+    stopKeepAlive?.();
   }
 }
