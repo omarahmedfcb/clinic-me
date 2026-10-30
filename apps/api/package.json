@@ -4,7 +4,7 @@
   "private": true,
   "engines": {
     "node": ">=24",
-    "npm": "11.19.0"
+    "npm": ">=11.19.0 <12"
   },
   "scripts": {
     "prisma:validate": "prisma validate",
