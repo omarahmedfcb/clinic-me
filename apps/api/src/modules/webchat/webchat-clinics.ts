@@ -51,7 +51,10 @@ export async function resolveBotActor(tenantId: string): Promise<BotActor | null
 /** One clinic, by id -- for `select_clinic`, once the patient has named one from the list below. */
 export async function getBookableClinic(clinicId: string): Promise<BookableClinic | null> {
   try {
-    return await prisma.tenant.findFirst({ where: { id: clinicId, status: "ACTIVE" }, select: CLINIC_SELECT });
+    return await prisma.tenant.findFirst({
+      where: { id: clinicId, status: "ACTIVE", botPaused: false },
+      select: CLINIC_SELECT,
+    });
   } catch {
     // A malformed id (not a UUID) throws from Prisma's own validation rather than returning null --
     // treated the same as "no such clinic", since that is what it is to the patient asking.
@@ -72,7 +75,7 @@ export async function getBookableClinic(clinicId: string): Promise<BookableClini
  */
 export async function listBookableClinics(): Promise<BookableClinic[]> {
   const tenants = await prisma.tenant.findMany({
-    where: { status: "ACTIVE" },
+    where: { status: "ACTIVE", botPaused: false },
     select: CLINIC_SELECT,
     orderBy: { name: "asc" },
   });

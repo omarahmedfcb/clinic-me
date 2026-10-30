@@ -35,6 +35,7 @@ export async function createClinicThroughMeta(
       clinicPhone: draft.phone.trim(),
       ownerFullName: draft.adminFullName.trim(),
       ownerPhone: draft.adminPhone.trim(),
+      subscriptionStartsOn: draft.subscriptionStartsOn,
       renewalOn: draft.renewalOn,
       ...outcome.result,
     });

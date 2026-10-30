@@ -8,6 +8,7 @@ import { withPlatformActor, type ActorContext } from "../../prisma/with-tenant.t
 import { normalisePhone } from "../auth/phone.ts";
 import { contractKeyFor } from "./contract-key.ts";
 import type { SupportedCountry } from "./new-clinic.ts";
+import { botIsPausedIn, subscriptionPhase } from "./subscription-dates.ts";
 
 /** TRIAL | ACTIVE | OVERDUE | SUSPENDED, mirroring the CHECK. A fifth is a migration. */
 export const ACCOUNT_STATUSES = ["TRIAL", "ACTIVE", "OVERDUE", "SUSPENDED"] as const;
@@ -46,6 +47,8 @@ export interface ClientFile {
   discountPercent: number | null;
   accountStatus: string;
   trialEndsOn: string | null;
+  /** The subscription's first working day. With `renewalOn` (the last one) it is the clinic's range. */
+  subscriptionStartsOn: string | null;
   renewalOn: string | null;
   notes: string | null;
   contacts: {
@@ -91,10 +94,21 @@ export const renewalIsDue = (days: number | null): boolean =>
 export async function accountStatesFor(
   actor: ActorContext,
   today: Date,
-): Promise<Map<string, { accountStatus: string; renewalOn: string | null; renewalInDays: number | null; renewalDue: boolean }>> {
+): Promise<
+  Map<
+    string,
+    {
+      accountStatus: string;
+      subscriptionStartsOn: string | null;
+      renewalOn: string | null;
+      renewalInDays: number | null;
+      renewalDue: boolean;
+    }
+  >
+> {
   const files = await withPlatformActor(actor, (tx) =>
     tx.platformClinicFile.findMany({
-      select: { tenantId: true, accountStatus: true, renewalOn: true },
+      select: { tenantId: true, accountStatus: true, subscriptionStartsOn: true, renewalOn: true },
     }),
   );
 
@@ -105,6 +119,7 @@ export async function accountStatesFor(
         file.tenantId,
         {
           accountStatus: file.accountStatus,
+          subscriptionStartsOn: asDay(file.subscriptionStartsOn),
           renewalOn: asDay(file.renewalOn),
           renewalInDays: days,
           renewalDue: renewalIsDue(days),
@@ -140,8 +155,9 @@ export async function readClientFile(actor: ActorContext, tenantId: string): Pro
         agreedPlan: file?.agreedPlan ?? null,
         agreedMonthlyMinor: file?.agreedMonthlyMinor ?? null,
         discountPercent: file?.discountPercent ?? null,
-        accountStatus: file?.accountStatus ?? "TRIAL",
+        accountStatus: file?.accountStatus ?? "ACTIVE",
         trialEndsOn: asDay(file?.trialEndsOn ?? null),
+        subscriptionStartsOn: asDay(file?.subscriptionStartsOn ?? null),
         renewalOn: asDay(file?.renewalOn ?? null),
         notes: file?.notes ?? null,
         contacts: contacts.map((contact) => ({
@@ -171,6 +187,8 @@ export interface ClientFileEdit {
   discountPercent?: number | null;
   accountStatus?: AccountStatus;
   trialEndsOn?: string | null;
+  /** The range's first and last working day. Sent together: a start without an end is refused. */
+  subscriptionStartsOn?: string | null;
   renewalOn?: string | null;
   notes?: string | null;
 }
@@ -195,6 +213,7 @@ export async function saveClientFile(
   actor: ActorContext,
   tenantId: string,
   edit: ClientFileEdit,
+  now: Date = new Date(),
 ): Promise<ClientFileResult<{ tenantId: string }>> {
   if (edit.agreedMonthlyMinor !== undefined && edit.agreedMonthlyMinor !== null && edit.agreedMonthlyMinor < 0) {
     return { ok: false, code: "INVALID_AMOUNT", params: { field: "agreedMonthlyMinor" } };
@@ -209,20 +228,51 @@ export async function saveClientFile(
 
   const trialEndsOn = asDate(edit.trialEndsOn);
   if (trialEndsOn === undefined && edit.trialEndsOn !== undefined) {
-    return { ok: false, code: "INVALID_DATE_RANGE", params: { field: "startsOn" } };
+    return { ok: false, code: "INVALID_DATE_RANGE", params: { field: "trialEndsOn" } };
   }
   const renewalOn = asDate(edit.renewalOn);
   if (renewalOn === undefined && edit.renewalOn !== undefined) {
     return { ok: false, code: "INVALID_DATE_RANGE", params: { field: "renewalOn" } };
   }
+  const subscriptionStartsOn = asDate(edit.subscriptionStartsOn);
+  if (subscriptionStartsOn === undefined && edit.subscriptionStartsOn !== undefined) {
+    return { ok: false, code: "INVALID_DATE_RANGE", params: { field: "subscriptionStartsOn" } };
+  }
 
   return withPlatformActor<ClientFileResult<{ tenantId: string }>>(actor, async (tx) => {
-    const tenant = await tx.tenant.findFirst({ where: { id: tenantId }, select: { id: true } });
+    const tenant = await tx.tenant.findFirst({ where: { id: tenantId }, select: { id: true, timezone: true } });
     if (tenant === null) {
       return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "clinic" as const } };
     }
 
-    const existing = await tx.platformClinicFile.findFirst({ where: { tenantId }, select: { id: true } });
+    const existing = await tx.platformClinicFile.findFirst({
+      where: { tenantId },
+      select: { id: true, accountStatus: true, trialEndsOn: true, subscriptionStartsOn: true, renewalOn: true },
+    });
+
+    // What the row will hold once this edit is applied. The database refuses a TRIAL with no trial
+    // date (platform_clinic_files_trial_is_dated), and a first save used to create the row as a TRIAL
+    // whatever was being saved -- so the answer is worked out here, and a combination the database
+    // would refuse comes back as a refusal instead of a server error.
+    const finalTrial = trialEndsOn !== undefined ? trialEndsOn : (existing?.trialEndsOn ?? null);
+    const finalStatus = edit.accountStatus ?? existing?.accountStatus ?? (finalTrial === null ? "ACTIVE" : "TRIAL");
+    if (finalStatus === "TRIAL" && finalTrial === null) {
+      return { ok: false as const, code: "INVALID_DATE_RANGE" as const, params: { field: "trialEndsOn" as const } };
+    }
+
+    // The subscription range is both days or neither, and in order.
+    const rangeTouched = subscriptionStartsOn !== undefined || renewalOn !== undefined;
+    const finalStart = subscriptionStartsOn !== undefined ? subscriptionStartsOn : (existing?.subscriptionStartsOn ?? null);
+    const finalEnd = renewalOn !== undefined ? renewalOn : (existing?.renewalOn ?? null);
+    if (rangeTouched) {
+      if ((finalStart === null) !== (finalEnd === null)) {
+        const missing = finalStart === null ? ("subscriptionStartsOn" as const) : ("renewalOn" as const);
+        return { ok: false as const, code: "INVALID_DATE_RANGE" as const, params: { field: missing } };
+      }
+      if (finalStart !== null && finalEnd !== null && finalEnd.getTime() < finalStart.getTime()) {
+        return { ok: false as const, code: "INVALID_DATE_RANGE" as const, params: { field: "renewalOn" as const } };
+      }
+    }
 
     // Only the keys actually supplied reach the database, so an untouched field keeps its value.
     const data = {
@@ -232,14 +282,21 @@ export async function saveClientFile(
       ...(edit.discountPercent === undefined ? {} : { discountPercent: edit.discountPercent }),
       ...(edit.accountStatus === undefined ? {} : { accountStatus: edit.accountStatus }),
       ...(trialEndsOn === undefined ? {} : { trialEndsOn }),
+      ...(subscriptionStartsOn === undefined ? {} : { subscriptionStartsOn }),
       ...(renewalOn === undefined ? {} : { renewalOn }),
       ...(edit.notes === undefined ? {} : { notes: edit.notes }),
     };
 
     if (existing === null) {
-      await tx.platformClinicFile.create({ data: { id: uuidv7(), tenantId, ...data } });
+      await tx.platformClinicFile.create({ data: { id: uuidv7(), tenantId, accountStatus: finalStatus, ...data } });
     } else {
       await tx.platformClinicFile.update({ where: { id: existing.id }, data });
+    }
+
+    // The bot follows the range at once, rather than waiting for the worker's next pass.
+    if (rangeTouched) {
+      const phase = subscriptionPhase(asDay(finalStart), asDay(finalEnd), now, tenant.timezone);
+      await tx.tenant.update({ where: { id: tenantId }, data: { botPaused: botIsPausedIn(phase) } });
     }
 
     return { ok: true as const, value: { tenantId } };

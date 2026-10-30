@@ -489,7 +489,7 @@ describe("the platform back office", () => {
       // A clinic with no client file reads as a trial with no date, which is what it is.
       const untouched = listed.clinics.find((entry) => entry.tenantId === clinic.tenantId);
       expect({ status: untouched?.accountStatus, due: untouched?.renewalDue }).toEqual({
-        status: "TRIAL",
+        status: "ACTIVE",
         due: false,
       });
     });

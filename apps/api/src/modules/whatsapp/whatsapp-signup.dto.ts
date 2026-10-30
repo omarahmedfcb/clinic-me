@@ -75,6 +75,12 @@ export class WhatsAppSignupDto {
   @IsBoolean()
   skipRegistration!: boolean;
 
+  /** The first day the clinic works, `YYYY-MM-DD`. Saved with `renewalOn` once the clinic exists. */
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  subscriptionStartsOn?: string;
+
   /** The last day the clinic works, `YYYY-MM-DD`. Saved to the client file once the clinic exists. */
   @IsOptional()
   @IsString()

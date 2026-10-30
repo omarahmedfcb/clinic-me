@@ -145,7 +145,9 @@ the code.
 | `TOTP_INVALID` | — | Six digits that are not the current code. Different action: read the app again | 422 |
 | `TOTP_ALREADY_ENROLLED` | — | An authenticator is confirmed already; re-enrolling would lock the old one out. It is reset, not replaced quietly | 422 |
 | `NOT_RECOVERY_SESSION` | — | Replacing the authenticator is only for a session a recovery code opened. An operator who still has theirs wants `recovery-codes/regenerate`, which demands it | 403 |
-| `INVALID_DATE_RANGE` | `field` | A contract that ends before it starts, or a date that is not one | 422 |
+| `INVALID_DATE_RANGE` | `field` | A contract or subscription range that ends before it starts, a date that is not one, or a TRIAL with no trial end date | 422 |
+| `DATE_IN_PAST` | `field` | A subscription start or end day before today, in the clinic's own timezone | 422 |
+| `SUBSCRIPTION_GAP` | `field` | A renewal that would leave a gap after a subscription that is still running or has not started | 422 |
 | `INVALID_AMOUNT` | `field` | A discount outside 0–100, or an agreed price below zero | 422 |
 | `CLIENT_FILE_EXISTS` | — | A clinic has one client file. It is edited, not created twice | 422 |
 | `DUPLICATE_PHONE` | — | That number is already somebody's login. It parses; it is taken | 409 |

@@ -395,6 +395,10 @@ model Tenant {
   /// it — a CHECK enforces both halves, because `status` alone cannot answer "why" months later.
   suspensionReason         String?      @map("suspension_reason")
   suspendedAt              DateTime?    @map("suspended_at") @db.Timestamptz(6)
+  /// The bot (WhatsApp webhook, reminders, web chat) is silent while this is true: the clinic has no
+  /// subscription range, or its range has not started yet. Owned by the subscription sync (the outbound
+  /// worker and the client-file save) -- never set by hand. Staff can still sign in.
+  botPaused                Boolean      @default(false) @map("bot_paused")
   settings                 Json
   createdAt                DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -591,8 +595,11 @@ model PlatformClinicFile {
   discountPercent    Int?      @map("discount_percent")
   /// TRIAL | ACTIVE | OVERDUE | SUSPENDED. Not `tenants.status`: a clinic can be live and overdue
   /// at once, and switching it off is a separate act with its own reason.
-  accountStatus      String    @default("TRIAL") @map("account_status")
+  accountStatus      String    @default("ACTIVE") @map("account_status")
   trialEndsOn        DateTime? @map("trial_ends_on") @db.Date
+  /// The subscription range is [subscriptionStartsOn, renewalOn], both days inclusive, in the clinic's
+  /// own timezone. `renewalOn` is the LAST working day (the name predates the start date).
+  subscriptionStartsOn DateTime? @map("subscription_starts_on") @db.Date
   renewalOn          DateTime? @map("renewal_on") @db.Date
   notes              String?
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)

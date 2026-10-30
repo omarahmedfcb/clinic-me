@@ -27,6 +27,7 @@ import {
   type ClinicResult,
 } from "./platform-clinics.ts";
 import { PlatformAuthGuard, type PlatformRequest } from "./platform.guard.ts";
+import { validateNewSubscription } from "./subscription-input.ts";
 
 /** Lower-case, digits and hyphens: it goes in a URL and is typed by a person over the phone. */
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -45,12 +46,16 @@ export class CreateClinicDto {
   @IsString() @MaxLength(40) phone!: string;
   @IsString() @MinLength(2) @MaxLength(200) adminFullName!: string;
   @IsString() @MaxLength(40) adminPhone!: string;
+  /** The first day the clinic works, `YYYY-MM-DD`. Sent with `renewalOn`; the API tolerates both being absent. */
+  @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/) subscriptionStartsOn?: string;
   /** The last day the clinic works, `YYYY-MM-DD`. The console's form requires it; the API tolerates its absence. */
   @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/) renewalOn?: string;
 }
 
 export class RenewClinicDto {
-  /** The new last working day, `YYYY-MM-DD`, in the clinic's own timezone. */
+  /** The first day of the range paid for, `YYYY-MM-DD`, in the clinic's own timezone. */
+  @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/) subscriptionStartsOn!: string;
+  /** The last day of the range paid for. Merged into the clinic's current range by the service. */
   @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/) renewalOn!: string;
 }
 
@@ -80,7 +85,12 @@ export class PlatformClinicsController {
     const body = refusal(code, result.params);
     if (code === "NOT_FOUND") throw new NotFoundException(body);
     // Well formed and refusable on content, like every other money-or-state refusal here.
-    if (code === "ALREADY_IN_THAT_STATE" || code === "REASON_REQUIRED") {
+    if (
+      code === "ALREADY_IN_THAT_STATE" ||
+      code === "REASON_REQUIRED" ||
+      code === "DATE_IN_PAST" ||
+      code === "SUBSCRIPTION_GAP"
+    ) {
       throw new UnprocessableEntityException(body);
     }
     throw new BadRequestException(body);
@@ -95,8 +105,12 @@ export class PlatformClinicsController {
   @HttpCode(201)
   async create(@Req() request: PlatformRequest, @Body() body: CreateClinicDto) {
     const actor = actorContext.getOrThrow();
+    // Checked before the clinic exists: a refusal after it would leave a clinic with no range behind.
+    const range = validateNewSubscription(body);
     const created = this.unwrap(await createClinic(actor, body));
-    if (body.renewalOn !== undefined) await saveClientFile(actor, created.tenantId, { renewalOn: body.renewalOn });
+    if (range !== null) {
+      await saveClientFile(actor, created.tenantId, { subscriptionStartsOn: range.startsOn, renewalOn: range.endsOn });
+    }
 
     await recordOperatorAction(actor, {
       tenantId: created.tenantId,
@@ -119,14 +133,21 @@ export class PlatformClinicsController {
     @Body() body: RenewClinicDto,
   ) {
     const actor = actorContext.getOrThrow();
-    const result = this.unwrap(await renewClinic(actor, tenantId, body.renewalOn));
+    const result = this.unwrap(
+      await renewClinic(actor, tenantId, { startsOn: body.subscriptionStartsOn, endsOn: body.renewalOn }),
+    );
 
     await recordOperatorAction(actor, {
       tenantId,
       action: "UPDATE",
       entityType: "tenants",
       entityId: tenantId,
-      detail: { renewalOn: result.renewalOn, status: result.status, by: request.platformAdmin.fullName },
+      detail: {
+        subscriptionStartsOn: result.subscriptionStartsOn,
+        renewalOn: result.renewalOn,
+        status: result.status,
+        by: request.platformAdmin.fullName,
+      },
     });
 
     return result;

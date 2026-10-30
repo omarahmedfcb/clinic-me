@@ -97,6 +97,9 @@ export const FIELD_NAMES = [
   "startsOn",
   "endsOn",
   "renewalOn",
+  // The subscription range's first working day, and a trial's last one (client file, renew, create).
+  "subscriptionStartsOn",
+  "trialEndsOn",
   "operatorRole",
   "fullName",
   "totpCode",
@@ -298,6 +301,11 @@ export const REFUSAL_CODES = [
   "NOT_RECOVERY_SESSION",
   // A contract whose end is not after its start, or a renewal before the contract begins.
   "INVALID_DATE_RANGE",
+  // A subscription start or end day before today. Different action: pick today or later.
+  "DATE_IN_PAST",
+  // A renewal that leaves a gap after a subscription still running. Different action: start it on
+  // or before the day after the current last day.
+  "SUBSCRIPTION_GAP",
   // A discount outside 0-100, or an agreed price below zero. Different action: correct the number.
   "INVALID_AMOUNT",
   // A clinic already has a client file. It is edited, not created twice.

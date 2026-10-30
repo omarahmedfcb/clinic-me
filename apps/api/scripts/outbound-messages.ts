@@ -1,7 +1,9 @@
 // One pass of the WhatsApp outbox: queue the reminders that are due, cancel the ones nobody answered,
 // then send everything owed (reminders, "go to the room", cancellation notices, documents links).
 //
-// The same loop also suspends clinics whose subscription ended (src/modules/platform/subscription.ts).
+// The same loop also keeps clinics in line with their subscription range: it suspends the ones whose last
+// day passed and pauses or resumes the bot of the ones with no range or a range that has not started
+// (src/modules/platform/subscription.ts).
 //
 // Run it under pm2 as a loop -- OUTBOUND_INTERVAL_MS=30000 -- or from cron once a minute, exactly like
 // scripts/webhook-dispatch.ts. Safe to overlap or to run twice: the database owns exactly-once, so a pass
@@ -17,8 +19,11 @@ async function main(): Promise<void> {
   // Subscriptions first, so a clinic whose last day just passed is suspended before this pass sends
   // anything on its behalf. A failure here is logged and must never stop the outbox.
   let expired = 0;
+  let botChanged = 0;
   try {
-    expired = (await runExpiryPass(now)).suspended;
+    const pass = await runExpiryPass(now);
+    expired = pass.suspended;
+    botChanged = pass.botChanged;
   } catch (error) {
     console.error("subscription-expiry failed:", error);
   }
@@ -32,7 +37,7 @@ async function main(): Promise<void> {
   // One line a person can read in a log, naming what happened rather than that it ran.
   console.log(
     `outbound-messages ${now.toISOString()} reminders_queued=${tally.remindersQueued} ` +
-      `expired=${expired} auto_cancelled=${tally.autoCancelled} superseded=${tally.superseded} sent=${tally.sent} ` +
+      `expired=${expired} bot_switched=${botChanged} auto_cancelled=${tally.autoCancelled} superseded=${tally.superseded} sent=${tally.sent} ` +
       `retrying=${tally.retrying} failed=${tally.failed} ${skipped}`.trimEnd(),
   );
 }

@@ -8,6 +8,7 @@ import { signUpClinic, type SignupRefusal } from "../whatsapp/whatsapp-signup.ts
 import { recordOperatorAction } from "./platform-audit.ts";
 import { saveClientFile } from "./platform-client-file.ts";
 import { PlatformAuthGuard, type PlatformRequest } from "./platform.guard.ts";
+import { validateNewSubscription } from "./subscription-input.ts";
 
 @Controller("platform/clinics/whatsapp")
 @UseGuards(PlatformAuthGuard)
@@ -15,14 +16,19 @@ export class PlatformClinicWhatsAppController {
   @Post()
   @HttpCode(201)
   async create(@Req() request: PlatformRequest, @Body() body: WhatsAppSignupDto) {
+    // Before the clinic and its Meta setup exist: a refusal afterwards would leave them with no range.
+    const range = validateNewSubscription(body);
     const result = await signUpClinic(body, {
       ip: request.ip ?? "unknown",
       userAgent: request.header("user-agent") ?? "unknown",
     });
 
     if (result.ok) {
-      if (body.renewalOn !== undefined) {
-        await saveClientFile(actorContext.getOrThrow(), result.tenantId, { renewalOn: body.renewalOn });
+      if (range !== null) {
+        await saveClientFile(actorContext.getOrThrow(), result.tenantId, {
+          subscriptionStartsOn: range.startsOn,
+          renewalOn: range.endsOn,
+        });
       }
       await recordOperatorAction(actorContext.getOrThrow(), {
         tenantId: result.tenantId,

@@ -12,7 +12,7 @@ import { generateTemporaryPassword } from "../memberships/staff.service.ts";
 import { accountStatesFor, saveClientFile } from "./platform-client-file.ts";
 import { newTenantData, type SupportedCountry } from "./new-clinic.ts";
 import { planFor, type PlanLine } from "./plan.ts";
-import { isSubscriptionExpired, SUBSCRIPTION_EXPIRED_REASON } from "./subscription-dates.ts";
+import { isSubscriptionExpired, planSubscription, SUBSCRIPTION_EXPIRED_REASON } from "./subscription-dates.ts";
 
 export type ClinicRefusal =
   | "NOT_FOUND"
@@ -21,7 +21,9 @@ export type ClinicRefusal =
   | "DUPLICATE_PHONE"
   | "REASON_REQUIRED"
   | "ALREADY_IN_THAT_STATE"
-  | "INVALID_DATE_RANGE";
+  | "INVALID_DATE_RANGE"
+  | "DATE_IN_PAST"
+  | "SUBSCRIPTION_GAP";
 
 export type ClinicResult<T> = { ok: true; value: T } | { ok: false; code: ClinicRefusal; params: RefusalParams };
 
@@ -45,9 +47,13 @@ export interface ClinicRow {
   plan: PlanLine;
   /** Who a temporary password may be issued to (0e). ADMIN and OWNER only, never a doctor. */
   admins: { userId: string; fullName: string; role: string }[];
-  /** TRIAL | ACTIVE | OVERDUE | SUSPENDED, from the client file. TRIAL for a clinic with no file. */
+  /** TRIAL | ACTIVE | OVERDUE | SUSPENDED, from the client file. ACTIVE for a clinic with no file. */
   accountStatus: string;
+  /** The subscription range is [subscriptionStartsOn, renewalOn]; null/null means no range yet. */
+  subscriptionStartsOn: string | null;
   renewalOn: string | null;
+  /** The bot is silent: no range yet, or the range has not started. Staff can still sign in. */
+  botPaused: boolean;
   /** Whole days until the renewal, negative once it is past. Null when no date is recorded. */
   renewalInDays: number | null;
   /** Inside the 14-day window the founder asked the console to warn on, or already past it. */
@@ -104,9 +110,10 @@ export async function listClinics(actor: ActorContext, today: Date = new Date())
     return tenants.map((tenant) => {
       const count = byTenant.get(tenant.id);
       const doctors = count?.doctors ?? 0;
-      // A clinic with no client file yet reads as a trial with no renewal date, which is what it is.
+      // A clinic with no client file yet has no subscription range, which is what it is.
       const account = accounts.get(tenant.id) ?? {
-        accountStatus: "TRIAL",
+        accountStatus: "ACTIVE",
+        subscriptionStartsOn: null,
         renewalOn: null,
         renewalInDays: null,
         renewalDue: false,
@@ -129,6 +136,7 @@ export async function listClinics(actor: ActorContext, today: Date = new Date())
         timezone: tenant.timezone,
         status: tenant.status,
         suspensionReason: tenant.suspensionReason,
+        botPaused: tenant.botPaused,
         createdAt: tenant.createdAt,
         lastActivity: count?.last_activity ?? null,
         patients: count?.patients ?? 0,
@@ -269,8 +277,9 @@ export async function setClinicSuspension(
 }
 
 /**
- * Records a manual renewal: the new last day, and a reactivation when the clinic was stopped by its
- * expiry. The payment happened outside the platform; this only says "paid through <date>".
+ * Records a manual renewal: the range the operator was paid for, merged into the clinic's current
+ * one (see `planSubscription`), and a reactivation when the clinic was stopped by its expiry. The
+ * payment happened outside the platform; this only says "paid through <date>".
  *
  * A clinic suspended for another reason stays suspended -- renewing a subscription must not undo a
  * suspension somebody chose. The WhatsApp connection and bot credential are not touched either way.
@@ -278,27 +287,45 @@ export async function setClinicSuspension(
 export async function renewClinic(
   actor: ActorContext,
   tenantId: string,
-  renewalOn: string,
-): Promise<ClinicResult<{ status: string; renewalOn: string }>> {
-  const tenant = await withPlatformActor(actor, (tx) =>
-    tx.tenant.findFirst({ where: { id: tenantId }, select: { status: true, suspensionReason: true, timezone: true } }),
-  );
+  input: { startsOn: string; endsOn: string },
+  now: Date = new Date(),
+): Promise<ClinicResult<{ status: string; subscriptionStartsOn: string; renewalOn: string }>> {
+  const { tenant, file } = await withPlatformActor(actor, async (tx) => ({
+    tenant: await tx.tenant.findFirst({
+      where: { id: tenantId },
+      select: { status: true, suspensionReason: true, timezone: true },
+    }),
+    file: await tx.platformClinicFile.findFirst({
+      where: { tenantId },
+      select: { subscriptionStartsOn: true, renewalOn: true },
+    }),
+  }));
   if (tenant === null) return { ok: false, code: "NOT_FOUND", params: { resource: "clinic" } };
 
-  // Not in the past, in the clinic's own zone: a date that has already expired would suspend it again.
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(renewalOn) || isSubscriptionExpired(renewalOn, new Date(), tenant.timezone)) {
-    return { ok: false, code: "INVALID_DATE_RANGE", params: { field: "renewalOn" } };
-  }
+  const day = (value: Date | null | undefined): string | null => (value ? value.toISOString().slice(0, 10) : null);
+  const plan = planSubscription(
+    { startsOn: day(file?.subscriptionStartsOn), endsOn: day(file?.renewalOn) },
+    input,
+    now,
+    tenant.timezone,
+  );
+  if (!plan.ok) return { ok: false, code: plan.code, params: { field: plan.field } };
 
-  const saved = await saveClientFile(actor, tenantId, { renewalOn });
+  const saved = await saveClientFile(
+    actor,
+    tenantId,
+    { subscriptionStartsOn: plan.startsOn, renewalOn: plan.endsOn },
+    now,
+  );
   if (!saved.ok) return { ok: false, code: "INVALID_DATE_RANGE", params: { field: "renewalOn" } };
 
+  const result = { subscriptionStartsOn: plan.startsOn, renewalOn: plan.endsOn };
   if (tenant.status === "SUSPENDED" && tenant.suspensionReason === SUBSCRIPTION_EXPIRED_REASON) {
     const reactivated = await setClinicSuspension(actor, tenantId, { suspended: false });
     if (!reactivated.ok) return reactivated;
-    return { ok: true, value: { status: "ACTIVE", renewalOn } };
+    return { ok: true, value: { status: "ACTIVE", ...result } };
   }
-  return { ok: true, value: { status: tenant.status, renewalOn } };
+  return { ok: true, value: { status: tenant.status, ...result } };
 }
 
 /**

@@ -9,6 +9,7 @@ import { useLocale } from "../../i18n/locale-context.tsx";
 import type { TranslationKey } from "../../i18n/strings.ts";
 import { cx } from "../../lib/cx.ts";
 import type { NewClinicInput } from "./platform-api.ts";
+import { rangeIsAcceptable, todayIso } from "./subscription-days.ts";
 
 /** "new": a number nobody has used on WhatsApp. "existing": the clinic's WhatsApp Business app number (coexistence). */
 export type NumberType = "new" | "existing";
@@ -25,6 +26,7 @@ export const BLANK_CLINIC: NewClinicInput = {
   adminFullName: "",
   adminPhone: "",
   nameEn: "",
+  subscriptionStartsOn: "",
   renewalOn: "",
 };
 
@@ -67,7 +69,7 @@ export function NewClinicForm({
     draft.phone.trim() !== "" &&
     draft.adminFullName.trim() !== "" &&
     draft.adminPhone.trim() !== "" &&
-    draft.renewalOn !== "";
+    rangeIsAcceptable(draft.subscriptionStartsOn, draft.renewalOn);
 
   return (
     <Card title={t("platform.newClinic")} subtitle={t("platform.firstAdminIsUs")}>
@@ -127,10 +129,21 @@ export function NewClinicForm({
           onChange={(e) => set("adminPhone")(e.target.value)}
         />
         <TextInput
+          label={t("platform.subscriptionStartsOn")}
+          hint={t("platform.subscriptionStartsOnHint")}
+          type="date"
+          dir="ltr"
+          min={todayIso()}
+          value={draft.subscriptionStartsOn}
+          data-testid="clinic-subscription-starts-on"
+          onChange={(e) => set("subscriptionStartsOn")(e.target.value)}
+        />
+        <TextInput
           label={t("platform.subscriptionEndsOn")}
           hint={t("platform.subscriptionEndsOnHint")}
           type="date"
           dir="ltr"
+          min={draft.subscriptionStartsOn !== "" ? draft.subscriptionStartsOn : todayIso()}
           value={draft.renewalOn}
           data-testid="clinic-renewal-on"
           onChange={(e) => set("renewalOn")(e.target.value)}

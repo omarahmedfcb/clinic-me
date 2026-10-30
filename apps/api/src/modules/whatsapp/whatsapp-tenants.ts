@@ -44,7 +44,9 @@ export interface ResolvedWhatsAppTenant extends WhatsAppTenant {
  */
 export async function resolveTenantByPhoneNumberId(phoneNumberId: string): Promise<ResolvedWhatsAppTenant | null> {
   const tenant = await prisma.tenant.findFirst({
-    where: { whatsappPhoneNumberId: phoneNumberId, status: "ACTIVE" },
+    // `botPaused`: the clinic has no subscription range yet, or its range has not started. The bot says
+    // nothing -- the webhook, the reminders and the documents links all resolve the clinic here.
+    where: { whatsappPhoneNumberId: phoneNumberId, status: "ACTIVE", botPaused: false },
     select: { id: true, timezone: true, whatsappPhoneNumberId: true, name: true, nameEn: true },
   });
   if (tenant === null || tenant.whatsappPhoneNumberId === null) return null;

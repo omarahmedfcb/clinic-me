@@ -115,6 +115,9 @@ const fillNewClinic = (over: Record<string, string> = {}): void => {
     "clinic-phone": "01000000001",
     "admin-name": "مديرة",
     "admin-phone": "01000000002",
+    // The form requires a subscription range, and neither day may be in the past.
+    "clinic-subscription-starts-on": "2099-01-01",
+    "clinic-renewal-on": "2099-12-31",
     ...over,
   };
   for (const [id, value] of Object.entries(values)) {

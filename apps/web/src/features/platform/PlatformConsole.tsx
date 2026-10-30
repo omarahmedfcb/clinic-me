@@ -2,7 +2,7 @@
 // surface: clinics, their size, what was agreed, and the acts that keep one running. No clinical
 // data reaches it, and the server is what guarantees that.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../../design-system/Button.tsx";
 import { Card, DataTable, EmptyState, type Column } from "../../design-system/display.tsx";
 import { Spinner } from "../../design-system/Spinner.tsx";
@@ -66,6 +66,22 @@ export function PlatformConsole() {
   const [connecting, setConnecting] = useState<string | null>(null);
   const [renewing, setRenewing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // The three panels open below the table, out of sight on a long list. Each scrolls itself into view
+  // when it opens. `scrollIntoView` is absent in the test DOM, hence the optional call.
+  const connectRef = useRef<HTMLDivElement | null>(null);
+  const renewRef = useRef<HTMLDivElement | null>(null);
+  const fileRef = useRef<HTMLDivElement | null>(null);
+  const scrollTo = (element: HTMLDivElement | null) => element?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  useEffect(() => {
+    if (connecting !== null) scrollTo(connectRef.current);
+  }, [connecting]);
+  useEffect(() => {
+    if (renewing !== null) scrollTo(renewRef.current);
+  }, [renewing]);
+  useEffect(() => {
+    if (openFile !== null) scrollTo(fileRef.current);
+  }, [openFile]);
 
   const refresh = useCallback(async () => {
     try {
@@ -156,8 +172,8 @@ export function PlatformConsole() {
     await refresh();
   }
 
-  async function onRenew(row: Clinic, renewalOn: string): Promise<void> {
-    if (await act(() => renewClinic(row.tenantId, renewalOn))) setRenewing(null);
+  async function onRenew(row: Clinic, subscriptionStartsOn: string, renewalOn: string): Promise<void> {
+    if (await act(() => renewClinic(row.tenantId, subscriptionStartsOn, renewalOn))) setRenewing(null);
   }
 
   async function onSuspension(row: Clinic): Promise<void> {
@@ -222,7 +238,15 @@ export function PlatformConsole() {
             </span>
           )}
           {!row.renewalDue && row.renewalOn !== null && (
-            <span className="numeric block text-ink-subtle">{row.renewalOn}</span>
+            <span className="numeric block text-ink-subtle">
+              {row.subscriptionStartsOn !== null ? `${row.subscriptionStartsOn} → ${row.renewalOn}` : row.renewalOn}
+            </span>
+          )}
+          {/* No range yet, or one that has not started: the clinic is up, the bot is silent. */}
+          {row.botPaused && (
+            <span className="block text-danger" data-testid={`bot-paused-${row.tenantId}`}>
+              {t(row.renewalOn === null ? "platform.range.none" : "platform.range.botPaused")}
+            </span>
           )}
         </span>
       ),
@@ -465,7 +489,7 @@ export function PlatformConsole() {
                 </div>
               </Card>
               {connectingClinic !== null && (
-                <div className="mt-4">
+                <div className="mt-4 scroll-mt-4" ref={connectRef}>
                   <ConnectWhatsAppPanel
                     clinic={connectingClinic}
                     busy={busy}
@@ -475,17 +499,17 @@ export function PlatformConsole() {
                 </div>
               )}
               {renewingClinic !== null && (
-                <div className="mt-4">
+                <div className="mt-4 scroll-mt-4" ref={renewRef}>
                   <RenewPanel
                     clinic={renewingClinic}
                     busy={busy}
-                    onRenew={(date) => void onRenew(renewingClinic, date)}
+                    onRenew={(from, to) => void onRenew(renewingClinic, from, to)}
                     onCancel={() => setRenewing(null)}
                   />
                 </div>
               )}
               {selected !== null && (
-                <div className="mt-4">
+                <div className="mt-4 scroll-mt-4" ref={fileRef}>
                   <ClientFilePanel clinic={selected} operators={operators} onClose={() => setOpenFile(null)} />
                 </div>
               )}

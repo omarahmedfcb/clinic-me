@@ -50,6 +50,12 @@ export function ClientFilePanel({
   const [contactPhone, setContactPhone] = useState("");
   const [contactEmail, setContactEmail] = useState("");
 
+  /** The subscription range while it is being typed; saved together once both days are set. */
+  const [subStart, setSubStart] = useState("");
+  const [subEnd, setSubEnd] = useState("");
+  /** TRIAL was picked but its end date has not been given yet -- the server refuses a trial without one. */
+  const [pendingTrial, setPendingTrial] = useState(false);
+
   const [contractFile, setContractFile] = useState<File | null>(null);
   const [startsOn, setStartsOn] = useState("");
   const [endsOn, setEndsOn] = useState("");
@@ -58,6 +64,8 @@ export function ClientFilePanel({
     const next = await loadClientFile(clinic.tenantId);
     setFile(next);
     setAgreedDraft(next.agreedMonthlyMinor);
+    setSubStart(next.subscriptionStartsOn ?? "");
+    setSubEnd(next.renewalOn ?? "");
   }, [clinic.tenantId]);
 
   useEffect(() => {
@@ -90,6 +98,14 @@ export function ClientFilePanel({
   // operators editing different halves cannot blank each other's work.
   const save = (edit: Parameters<typeof saveClientFile>[1]) => void act(() => saveClientFile(clinic.tenantId, edit));
 
+  // The subscription range goes as a pair: the server refuses a start with no end, so nothing is sent
+  // until both days are filled (or both are cleared), and nothing is sent when nothing changed.
+  const saveRange = () => {
+    if ((subStart === "") !== (subEnd === "")) return;
+    if (subStart === (file.subscriptionStartsOn ?? "") && subEnd === (file.renewalOn ?? "")) return;
+    save({ subscriptionStartsOn: subStart === "" ? null : subStart, renewalOn: subEnd === "" ? null : subEnd });
+  };
+
   return (
     <Card title={`${t("platform.clientFile")} — ${clinic.name}`} subtitle={t("platform.clientFileHint")}>
       {refusal !== null && (
@@ -101,13 +117,21 @@ export function ClientFilePanel({
       <div className="grid gap-3 sm:grid-cols-2">
         <Select
           label={t("platform.accountStatus")}
-          value={file.accountStatus}
+          value={pendingTrial ? "TRIAL" : file.accountStatus}
           data-testid="account-status"
           options={ACCOUNT_STATUSES.map((value) => ({
             value,
             label: t(`platform.account.${value}` as TranslationKey),
           }))}
-          onChange={(event) => save({ accountStatus: event.target.value })}
+          onChange={(event) => {
+            // A trial needs its end date, so picking TRIAL waits for the date field below.
+            if (event.target.value === "TRIAL" && file.trialEndsOn === null) {
+              setPendingTrial(true);
+              return;
+            }
+            setPendingTrial(false);
+            save({ accountStatus: event.target.value });
+          }}
         />
         <Select
           label={t("platform.salesOwner")}
@@ -151,19 +175,42 @@ export function ClientFilePanel({
           onBlur={(event) => save({ discountPercent: wholeNumber(event.target.value) })}
         />
         <TextInput
-          label={t("platform.renewalOn")}
+          label={t("platform.subscriptionStartsOn")}
           type="date"
-          defaultValue={file.renewalOn ?? ""}
-          data-testid="renewal-on"
-          onBlur={(event) => save({ renewalOn: event.target.value === "" ? null : event.target.value })}
+          dir="ltr"
+          value={subStart}
+          data-testid="subscription-starts-on"
+          onChange={(event) => setSubStart(event.target.value)}
+          onBlur={saveRange}
         />
-        {file.accountStatus === "TRIAL" && (
+        <TextInput
+          label={t("platform.subscriptionEndsOn")}
+          type="date"
+          dir="ltr"
+          value={subEnd}
+          data-testid="renewal-on"
+          onChange={(event) => setSubEnd(event.target.value)}
+          onBlur={saveRange}
+        />
+        {(file.accountStatus === "TRIAL" || pendingTrial) && (
           <TextInput
             label={t("platform.trialEndsOn")}
             type="date"
             defaultValue={file.trialEndsOn ?? ""}
             data-testid="trial-ends-on"
-            onBlur={(event) => save({ trialEndsOn: event.target.value === "" ? null : event.target.value })}
+            onBlur={(event) => {
+              const value = event.target.value;
+              if (pendingTrial) {
+                if (value === "") return;
+                void act(() => saveClientFile(clinic.tenantId, { accountStatus: "TRIAL", trialEndsOn: value })).then(
+                  (saved) => {
+                    if (saved) setPendingTrial(false);
+                  },
+                );
+                return;
+              }
+              save({ trialEndsOn: value === "" ? null : value });
+            }}
           />
         )}
       </div>

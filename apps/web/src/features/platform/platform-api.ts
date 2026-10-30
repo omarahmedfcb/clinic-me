@@ -34,7 +34,11 @@ export interface Clinic {
   admins: { userId: string; fullName: string; role: string }[];
   /** TRIAL | ACTIVE | OVERDUE | SUSPENDED — the commercial state, not `status`. */
   accountStatus: string;
+  /** The subscription range is [subscriptionStartsOn, renewalOn]; both null means no range yet. */
+  subscriptionStartsOn: string | null;
   renewalOn: string | null;
+  /** The bot is silent: no range yet, or the range has not started. Staff can still sign in. */
+  botPaused: boolean;
   renewalInDays: number | null;
   /** Inside the fourteen-day window, or already past it. Computed on the server. */
   renewalDue: boolean;
@@ -55,6 +59,8 @@ export interface NewClinicInput {
   adminPhone: string;
   /** Printed on the clinic's documents when present. Left out of the request when blank. */
   nameEn?: string;
+  /** The subscription's first working day, `YYYY-MM-DD`. The form requires it. */
+  subscriptionStartsOn: string;
   /** The subscription's last working day, `YYYY-MM-DD`. The form requires it. */
   renewalOn: string;
 }
@@ -78,6 +84,7 @@ export interface ClientFile {
   discountPercent: number | null;
   accountStatus: string;
   trialEndsOn: string | null;
+  subscriptionStartsOn: string | null;
   renewalOn: string | null;
   notes: string | null;
   contacts: { id: string; fullName: string; role: string | null; phoneE164: string | null; email: string | null }[];
@@ -345,6 +352,7 @@ export interface CreateWithWhatsAppPayload {
   phoneNumberId?: string;
   businessId?: string;
   skipRegistration: boolean;
+  subscriptionStartsOn: string;
   renewalOn: string;
 }
 
@@ -408,12 +416,13 @@ export async function connectWhatsApp(
   return { ok: false, failure: known.find((value) => value === body.reason) ?? "UNKNOWN" };
 }
 
-/** Manual renewal, paid outside the platform: the new last day, and a reactivation after an expiry. */
+/** Manual renewal, paid outside the platform: the range paid for, merged into the current one, and a reactivation after an expiry. */
 export const renewClinic = (
   tenantId: string,
+  subscriptionStartsOn: string,
   renewalOn: string,
-): Promise<{ ok: true; status: string; renewalOn: string } | Refused> =>
-  post(`/platform/clinics/${tenantId}/renewal`, { renewalOn });
+): Promise<{ ok: true; status: string; subscriptionStartsOn: string; renewalOn: string } | Refused> =>
+  post(`/platform/clinics/${tenantId}/renewal`, { subscriptionStartsOn, renewalOn });
 
 export const setSuspension = (
   tenantId: string,
@@ -471,6 +480,7 @@ export type ClientFileEdit = Partial<{
   discountPercent: number | null;
   accountStatus: string;
   trialEndsOn: string | null;
+  subscriptionStartsOn: string | null;
   renewalOn: string | null;
   notes: string | null;
 }>;

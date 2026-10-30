@@ -47,6 +47,7 @@ export class SaveClientFileDto {
   @IsOptional() @IsInt() @Min(0) @Max(100) discountPercent?: number | null;
   @IsOptional() @IsIn([...ACCOUNT_STATUSES]) accountStatus?: AccountStatus;
   @IsOptional() @IsString() @Matches(ISO_DAY) trialEndsOn?: string | null;
+  @IsOptional() @IsString() @Matches(ISO_DAY) subscriptionStartsOn?: string | null;
   @IsOptional() @IsString() @Matches(ISO_DAY) renewalOn?: string | null;
   @IsOptional() @IsString() @MaxLength(4000) notes?: string | null;
   @IsOptional() @IsString() salesOwnerUserId?: string | null;
