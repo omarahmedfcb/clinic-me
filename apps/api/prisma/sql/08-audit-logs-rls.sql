@@ -127,6 +127,7 @@ BEGIN
   FROM audit_logs a
   WHERE a.tenant_id IS NULL
     AND a.id <> v_event_id
+  -- Superseded 2026-10-29 by 20261029175000_orphaned_audit_read_by_transaction: ids carry no order.
   ORDER BY a.created_at DESC, a.id DESC
   LIMIT p_limit;
 END;

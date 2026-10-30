@@ -81,6 +81,7 @@ describe("the patient book", () => {
     await withTenant(fixture.tenantId, actorFor(fixture.userId), async (tx) => {
       await tx.appointment.create({
         data: injected({
+          branchId: fixture.branchId,
           patientId,
           doctorId: fixture.doctorId,
           serviceId: fixture.serviceId,

@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import {
   SLOT_TOKEN_TTL_MS,
   mintSlotToken,
@@ -28,6 +29,7 @@ const claims = {
   tenantId: TENANT,
   doctorId: "00000000-0000-7000-8000-0000000000d1",
   serviceId: "00000000-0000-7000-8000-0000000000s1",
+  branchId: "00000000-0000-7000-8000-0000000000b1",
   startMs: Date.parse("2026-09-02T07:00:00Z"),
   endMs: Date.parse("2026-09-02T07:30:00Z"),
 };
@@ -53,6 +55,25 @@ describe("slot token", () => {
     expect(result.claims.serviceId).toBe(claims.serviceId);
     expect(result.claims.startMs).toBe(claims.startMs);
     expect(result.claims.endMs).toBe(claims.endMs);
+    expect(result.claims.branchId).toBe(claims.branchId);
+  });
+
+  describe("a token that names no branch, retired with its grace period in branches stage 5", () => {
+    const signed = (fields: (string | number)[]): string => {
+      const body = fields.join(".");
+      const signature = createHmac("sha256", SECRET).update(body).digest("base64url");
+      return `${Buffer.from(body).toString("base64url")}.${signature}`;
+    };
+
+    it("the seven-field shape minted before branches is malformed, even correctly signed and unexpired", () => {
+      const legacy = signed([TENANT, claims.doctorId, claims.serviceId, claims.startMs, claims.endMs, NOW.getTime() + 60_000, "ab12"]);
+      expect(verifySlotToken(legacy, TENANT, NOW)).toMatchObject({ ok: false, failure: "MALFORMED" });
+    });
+
+    it("an eight-field token with an empty branch is malformed too, not a token for the sole branch", () => {
+      const empty = signed([TENANT, claims.doctorId, claims.serviceId, "", claims.startMs, claims.endMs, NOW.getTime() + 60_000, "ab12"]);
+      expect(verifySlotToken(empty, TENANT, NOW)).toMatchObject({ ok: false, failure: "MALFORMED" });
+    });
   });
 
   /**

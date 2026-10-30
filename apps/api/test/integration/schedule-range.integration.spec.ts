@@ -41,6 +41,7 @@ describe("schedule range", () => {
       ] as const) {
         await tx.scheduleTemplate.create({
           data: injected({
+            branchId: fixture.branchId,
             doctorId: fixture.doctorId,
             weekday,
             startTime: new Date(Date.UTC(1970, 0, 1, startHour, 0, 0)),
@@ -54,6 +55,7 @@ describe("schedule range", () => {
       // A clinic-wide holiday inside the range: it must show up identically both ways.
       await tx.scheduleException.create({
         data: injected({
+          scope: "EVERY_BRANCH",
           doctorId: null,
           date: new Date("2026-09-03T00:00:00Z"),
           type: "HOLIDAY",

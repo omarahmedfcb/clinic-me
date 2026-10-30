@@ -148,6 +148,7 @@ describe("attachments", () => {
       await tx.appointment.create({
         data: injected({
           id: appointmentId,
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
           serviceId: clinic.serviceId,
@@ -296,6 +297,7 @@ describe("attachments", () => {
         await tx.appointment.create({
           data: injected({
             id: pastAppointmentId,
+            branchId: clinic.branchId,
             patientId: strangerId,
             doctorId: clinic.doctorId,
             serviceId: clinic.serviceId,
@@ -678,6 +680,7 @@ describe("attachments", () => {
         await tx.appointment.create({
           data: injected({
             id: appointmentId,
+            branchId: clinic.branchId,
             patientId: clinic.patientId,
             doctorId,
             serviceId: clinic.serviceId,

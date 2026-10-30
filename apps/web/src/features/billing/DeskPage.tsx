@@ -2,10 +2,6 @@
 // the printed invoice and receipt. Reached from the payments screen and the appointment panel.
 
 import { useCallback, useEffect, useState } from "react";
-import { Button } from "../../design-system/Button.tsx";
-import { Card } from "../../design-system/display.tsx";
-import { Select, TextInput } from "../../design-system/fields.tsx";
-import { MoneyInput } from "../../design-system/MoneyInput.tsx";
 import { formatMinor } from "../../i18n/format.ts";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import type { TranslationKey } from "../../i18n/strings.ts";
@@ -13,7 +9,6 @@ import {
   applyDiscount,
   loadCharge,
   loadSplit,
-  PAYMENT_METHODS,
   recordPayment,
   setPayerShare,
   type DeskCharge,
@@ -22,13 +17,14 @@ import {
   type Receipt,
 } from "./billing-api.ts";
 import { CreditPanel } from "./CreditPanel.tsx";
+import { DeskChargeCard } from "./DeskChargeCard.tsx";
+import { DeskDiscountCard } from "./DeskDiscountCard.tsx";
+import { DeskPaymentCard } from "./DeskPaymentCard.tsx";
+import { DeskSplitCard, type ShareMode } from "./DeskSplitCard.tsx";
 import { ReceiptSheet } from "./ReceiptSheet.tsx";
 import { InvoiceSheet } from "./InvoiceSheet.tsx";
 
 type AuthFetch = (path: string, init?: RequestInit) => Promise<Response>;
-
-/** What the insurer's share is being entered as. The wire only ever carries an amount. */
-type ShareMode = "AMOUNT" | "PERCENT";
 
 export function DeskPage({
   authFetch,
@@ -164,87 +160,19 @@ export function DeskPage({
         </p>
       )}
 
-      <Card
-        title={t("desk.lines")}
-        actions={
-          <Button size="sm" variant="secondary" data-testid="print-invoice" onClick={() => setInvoicing(true)}>
-            {t("desk.printInvoice")}
-          </Button>
-        }
-      >
-        <ul className="flex flex-col gap-1" data-testid="charge-lines">
-          {charge.lines.map((line) => (
-            <li key={line.id} className="flex items-baseline justify-between gap-3 text-sm">
-              <span className="text-ink">
-                {line.nameSnapshot}
-                {line.quantity > 1 && <span className="numeric ms-2 text-ink-subtle">×{line.quantity}</span>}
-                {line.adjustedBy !== null && (
-                  <span className="ms-2 text-xs text-ink-subtle">
-                    {`${t("desk.adjustedBy")} ${line.adjustedBy}`}
-                    {line.adjustmentReason !== null && ` — ${line.adjustmentReason}`}
-                  </span>
-                )}
-              </span>
-              <span className="numeric text-ink">{money(line.unitPriceMinor * line.quantity)}</span>
-            </li>
-          ))}
-        </ul>
-
-        {/*
-          **Negative amounts are formatted as negative numbers, never signed by hand.** `Intl` puts
-          an LRM immediately before its own minus so the sign stays inside the number's
-          left-to-right run; a `−` concatenated in front sits outside that run and, in an Arabic
-          paragraph, renders detached from the figure it belongs to.
-        */}
-        <dl className="mt-4 grid gap-1 border-t border-border pt-3 text-sm">
-          <Row label={t("desk.subtotal")} value={money(charge.subtotalMinor)} />
-          {charge.discountMinor > 0 && (
-            <Row label={t("desk.discount")} value={money(-charge.discountMinor)} testId="discount-row" />
-          )}
-          {charge.payerShareMinor > 0 && (
-            <Row label={t("desk.payerShare")} value={money(-charge.payerShareMinor)} />
-          )}
-          <Row label={t("desk.patientShare")} value={money(charge.patientShareMinor)} />
-          <Row label={t("desk.paid")} value={money(charge.paidMinor)} />
-          <Row label={t("desk.balance")} value={money(charge.balanceMinor)} strong testId="balance" />
-        </dl>
-      </Card>
+      <DeskChargeCard charge={charge} currency={currency} onPrintInvoice={() => setInvoicing(true)} />
 
       <div className="mt-4">
-        <Card title={t("desk.discountTitle")}>
-          {charge.discountCeilingMinor !== null && (
-            <p className="mb-2 text-xs text-ink-subtle" data-testid="ceiling-hint">
-              {t("desk.ceilingHint").replace("{amount}", money(charge.discountCeilingMinor))}
-            </p>
-          )}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <MoneyInput
-              label={t("desk.discountAmount")}
-              currency={currency}
-              valueMinor={discountMinor}
-              onChangeMinor={setDiscountMinor}
-              data-testid="discount-amount"
-            />
-            <TextInput
-              label={t("desk.discountReason")}
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-            />
-          </div>
-          <div className="mt-3">
-            <Button
-              size="sm"
-              loading={busy}
-              // A discount with no reason is refused by the database; saying so before the round
-              // trip is kinder than a refusal that arrives after the patient has been told a total.
-              disabled={discountMinor === null || reason.trim() === ""}
-              data-testid="apply-discount"
-              onClick={() => void onDiscount()}
-            >
-              {t("desk.applyDiscount")}
-            </Button>
-          </div>
-        </Card>
+        <DeskDiscountCard
+          charge={charge}
+          currency={currency}
+          discountMinor={discountMinor}
+          onDiscountMinor={setDiscountMinor}
+          reason={reason}
+          onReason={setReason}
+          busy={busy}
+          onApply={() => void onDiscount()}
+        />
       </div>
 
       {/*
@@ -253,144 +181,36 @@ export function DeskPage({
         than no box, because it reads as a thing the clinic could do and simply did not.
       */}
       <div className="mt-4">
-        <Card title={t("desk.splitTitle")} subtitle={split?.payerName ?? t("desk.noPayer")}>
-          {!hasCover ? (
-            <p className="text-sm text-ink-muted" data-testid="no-cover">
-              {t("desk.noPayerExplain")}
-            </p>
-          ) : (
-            <>
-              <div className="mb-3 flex gap-2" role="group" aria-label={t("desk.shareMode")}>
-                {(["AMOUNT", "PERCENT"] as const).map((mode) => (
-                  <Button
-                    key={mode}
-                    size="sm"
-                    variant={shareMode === mode ? "secondary" : "ghost"}
-                    aria-pressed={shareMode === mode}
-                    data-testid={`share-mode-${mode}`}
-                    onClick={() => setShareMode(mode)}
-                  >
-                    {t(mode === "AMOUNT" ? "desk.shareAsAmount" : "desk.shareAsPercent")}
-                  </Button>
-                ))}
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                {shareMode === "AMOUNT" ? (
-                  <MoneyInput
-                    label={t("desk.payerShareAmount")}
-                    currency={currency}
-                    valueMinor={payerShareMinor}
-                    onChangeMinor={setPayerShareMinor}
-                    data-testid="payer-share-amount"
-                  />
-                ) : (
-                  <TextInput
-                    label={t("desk.payerSharePercent")}
-                    numeric
-                    inputMode="decimal"
-                    value={payerPercent}
-                    data-testid="payer-share-percent"
-                    onChange={(event) => setPayerPercent(event.target.value)}
-                  />
-                )}
-              </div>
-
-              {shareMode === "PERCENT" && percentAsMinor !== null && (
-                <p className="mt-2 text-xs text-ink-subtle" data-testid="percent-preview">
-                  {t("desk.sharePreview")
-                    .replace("{percent}", payerPercent.trim())
-                    .replace("{amount}", money(percentAsMinor))}
-                </p>
-              )}
-
-              <div className="mt-3">
-                <Button
-                  size="sm"
-                  loading={busy}
-                  disabled={shareToSend === null}
-                  data-testid="set-split"
-                  onClick={() => void onSplit()}
-                >
-                  {t("desk.setSplit")}
-                </Button>
-              </div>
-            </>
-          )}
-        </Card>
+        <DeskSplitCard
+          payerName={split?.payerName}
+          hasCover={hasCover}
+          currency={currency}
+          shareMode={shareMode}
+          onShareMode={setShareMode}
+          payerShareMinor={payerShareMinor}
+          onPayerShareMinor={setPayerShareMinor}
+          payerPercent={payerPercent}
+          onPayerPercent={setPayerPercent}
+          percentAsMinor={percentAsMinor}
+          shareToSend={shareToSend}
+          busy={busy}
+          onSet={() => void onSplit()}
+        />
       </div>
 
       <div className="mt-4">
-        <Card title={t("desk.paymentTitle")}>
-          <p className="mb-2 text-xs text-ink-subtle" data-testid="due-hint">
-            {t("desk.dueHint").replace("{amount}", money(charge.balanceMinor))}
-          </p>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <MoneyInput
-              label={t("desk.amount")}
-              currency={currency}
-              valueMinor={amountMinor}
-              onChangeMinor={setAmountMinor}
-              data-testid="payment-amount"
-            />
-            <Select
-              label={t("desk.method")}
-              value={method}
-              options={PAYMENT_METHODS.map((value) => ({
-                value,
-                label: t(`payment.method.${value}` as TranslationKey),
-              }))}
-              onChange={(event) => setMethod(event.target.value as PaymentMethod)}
-            />
-          </div>
-
-          {/* **Refused, not said** — R-A. The server returns 422 either way; the button says so
-              first, because a receptionist should learn it before the patient is told a total. */}
-          {overBalance && (
-            <p role="alert" className="mt-2 text-xs text-danger" data-testid="over-balance">
-              {t("desk.overBalance").replace("{amount}", money(charge.balanceMinor))}
-            </p>
-          )}
-
-          <div className="mt-3">
-            <Button
-              size="sm"
-              loading={busy}
-              disabled={amountMinor === null || amountMinor <= 0 || overBalance}
-              data-testid="record-payment"
-              onClick={() => void onPay()}
-            >
-              {t("desk.recordPayment")}
-            </Button>
-          </div>
-
-          {charge.receipts.length > 0 && (
-            <ul className="mt-4 flex flex-col gap-1 border-t border-border pt-3" data-testid="receipts">
-              {charge.receipts.map((receipt) => (
-                <li key={receipt.paymentId} className="flex items-baseline justify-between gap-3 text-sm">
-                  <span className="text-ink">
-                    <span className="numeric">#{receipt.receiptNumber}</span>
-                    <span className="ms-2 text-ink-subtle">
-                      {t(`payment.method.${receipt.method}` as TranslationKey)}
-                    </span>
-                    <span className="numeric ms-2 text-ink-subtle">{receipt.receiptDate}</span>
-                  </span>
-                  <span className="flex items-baseline gap-3">
-                    <span className="numeric text-ink">{money(receipt.amountMinor)}</span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      data-testid={`print-${receipt.paymentId}`}
-                      onClick={() => setPrinting(receipt)}
-                    >
-                      {t("print.button")}
-                    </Button>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
+        <DeskPaymentCard
+          charge={charge}
+          currency={currency}
+          amountMinor={amountMinor}
+          onAmountMinor={setAmountMinor}
+          method={method}
+          onMethod={setMethod}
+          overBalance={overBalance}
+          busy={busy}
+          onPay={() => void onPay()}
+          onPrint={setPrinting}
+        />
       </div>
 
       {/* Credit at the desk: the balance, and spending it against this bill. Refunding is the
@@ -424,29 +244,5 @@ export function DeskPage({
         />
       )}
     </main>
-  );
-}
-
-function Row({
-  label,
-  value,
-  strong,
-  testId,
-}: {
-  label: string;
-  value: string;
-  strong?: boolean;
-  testId?: string;
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <dt className={strong === true ? "font-semibold text-ink" : "text-ink-muted"}>{label}</dt>
-      <dd
-        className={`numeric ${strong === true ? "font-semibold text-ink" : "text-ink"}`}
-        data-testid={testId}
-      >
-        {value}
-      </dd>
-    </div>
   );
 }

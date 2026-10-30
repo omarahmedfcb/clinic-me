@@ -10,6 +10,7 @@ import { assertTimezoneDataAvailable } from "./common/timezone-support.ts";
 import { assertBotSandboxAllowed } from "./modules/bot/sandbox-policy.ts";
 import { assertOperatorTotpAllowed } from "./modules/platform/totp-policy.ts";
 import { refusingValidationPipe } from "./common/validation-pipe.ts";
+import { deployedCommit } from "./config/deployed-commit.ts";
 
 /**
  * Reads a boolean-ish environment variable. Anything other than an explicit truthy value is false,
@@ -43,6 +44,9 @@ async function bootstrap(): Promise<void> {
   // And for the same reason: a sandbox prints a bot credential and points a clinic's webhook at a
   // logging receiver, which is fine on a laptop and is a data leak on a server.
   assertBotSandboxAllowed();
+
+  // A mistyped commit would have the console report a version that is not running.
+  deployedCommit();
 
   // `rawBody: true` keeps the exact bytes of every request body on `request.rawBody`, alongside
   // Nest's normal parsed `request.body`. Only one route reads it (whatsapp.controller.ts): Meta

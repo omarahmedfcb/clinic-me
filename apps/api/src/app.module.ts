@@ -3,6 +3,7 @@ import { ThrottlingModule } from "./common/throttling.module.ts";
 import { APP_INTERCEPTOR } from "@nestjs/core";
 import { ActorContextInterceptor } from "./common/actor-context.interceptor.ts";
 import { MembershipFreshnessInterceptor } from "./common/membership-freshness.interceptor.ts";
+import { BranchScopeInterceptor } from "./common/branch-scope.interceptor.ts";
 import { PasswordChangeInterceptor } from "./common/password-change.interceptor.ts";
 import { AuditModule } from "./modules/audit/audit.module.ts";
 import { AuthModule } from "./modules/auth/auth.module.ts";
@@ -76,6 +77,8 @@ import { PrismaModule } from "./prisma/prisma.module.ts";
     // 2026-09-13. Before the password check would be equally correct; what matters is that it runs
     // on every authenticated request, so a changed role or a suspension takes effect at once.
     { provide: APP_INTERCEPTOR, useClass: MembershipFreshnessInterceptor },
+    // After freshness: the branches a membership may act in are only worth resolving for a live one.
+    { provide: APP_INTERCEPTOR, useClass: BranchScopeInterceptor },
   ],
 })
 export class AppModule {}

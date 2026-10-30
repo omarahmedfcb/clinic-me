@@ -92,6 +92,7 @@ describe("«مرضاي» — the patients a doctor has treated", () => {
       await tx.appointment.create({
         data: injected({
           id: appointmentId,
+          branchId: clinic.branchId,
           patientId,
           doctorId,
           serviceId: clinic.serviceId,

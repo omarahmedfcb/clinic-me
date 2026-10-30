@@ -1,3 +1,4 @@
+import { branchContext } from "../common/branch-context.ts";
 import { prisma } from "./client.ts";
 import { tenantContext } from "./tenant-context.ts";
 
@@ -131,7 +132,8 @@ export async function withTenant<T>(
       SELECT set_config('app.current_tenant_id', ${tenantId}, true),
              set_config('app.current_actor_id', ${actor.userId}, true),
              set_config('app.current_ip', ${actor.ip}, true),
-             set_config('app.current_user_agent', ${actor.userAgent}, true)
+             set_config('app.current_user_agent', ${actor.userAgent}, true),
+             set_config('app.current_branch_id', ${branchContext.selectedSingle() ?? ""}, true)
     `;
 
     // The callback must be async and must await here, not just return the promise fn() produces.

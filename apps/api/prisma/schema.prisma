@@ -49,6 +49,30 @@ enum MembershipRole {
   AI_AGENT
 }
 
+// Branches (docs/BRANCHES-DESIGN.md §1). A branch is suspended, never deleted.
+enum BranchStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+/// ALL: every branch. SELECTED: the rows in membership_branches. SCHEDULED: wherever the doctor has a template.
+enum BranchScope {
+  ALL
+  SELECTED
+  SCHEDULED
+}
+
+enum BranchRequestKind {
+  CREATE
+}
+
+enum BranchRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
 enum MembershipStatus {
   INVITED
   ACTIVE
@@ -104,6 +128,18 @@ enum ScheduleExceptionType {
   BLOCKED
   HOLIDAY
   EXTRA_AVAILABILITY
+}
+
+enum ExceptionScope {
+  ONE_BRANCH
+  EVERY_BRANCH
+}
+
+/// An audit row's reach. BEFORE_BRANCHES is historical only: a trigger refuses it on insert.
+enum AuditScope {
+  ONE_BRANCH
+  UNSCOPED
+  BEFORE_BRANCHES
 }
 
 enum PatientStatus {
@@ -308,6 +344,9 @@ enum AuditAction {
   /// reason as the one above: a second-factor change on the console must be filterable by column,
   /// not found by reading a detail blob out of every row.
   OPERATOR_TOTP_REPLACED
+  /// A write refused because the row it would change lies outside the caller's branches. It changes
+  /// nothing, so no trigger records it; the application writes this row (BRANCHES-DESIGN §4.2).
+  BRANCH_SCOPE_REFUSED
 }
 
 /**
@@ -358,8 +397,12 @@ model Tenant {
   nameEn                   String?      @map("name_en")
   /// The next patient file number this clinic will hand out. Incremented under a row lock.
   nextPatientFileNumber    Int          @default(1) @map("next_patient_file_number")
-  /// The next receipt number. Gapless: incremented inside the transaction that writes the receipt.
+  /// Unused since branches: receipts number per branch (branches.next_receipt_number). Kept for the down migration.
   nextReceiptNumber        Int          @default(1) @map("next_receipt_number")
+  /// Retained, unused: nothing reads it since audit rows say BEFORE_BRANCHES. Multi-branch is a paid add-on
+  /// (ruled 2026-10-26, PRICING.md §1), so this may become when a clinic started paying
+  /// for it. Not a rule; do not drop.
+  branchesEnabledAt        DateTime?    @map("branches_enabled_at") @db.Timestamptz(6)
   /// Ruling 4: two settings and a LEAST, not one number. Null on either means that half is unset;
   /// null on both means this clinic has no ceiling. 5000 minor units is EGP-shaped by default and
   /// is a value someone can change, never a constant a constraint reads.
@@ -435,6 +478,9 @@ model Tenant {
   visitDocumentsLinkEnabled   Boolean @default(false) @map("visit_documents_link_enabled")
 
   memberships              Membership[]
+  branches                 Branch[]
+  membershipBranches       MembershipBranch[]
+  branchRequests           BranchRequest[]
   doctors                  Doctor[]
   services                 Service[]
   scheduleTemplates        ScheduleTemplate[]
@@ -530,6 +576,8 @@ model User {
   updatedAt          DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   memberships               Membership[]
+  branchRequestsMade        BranchRequest[]     @relation("BranchRequestRequestedBy")
+  branchRequestsDecided     BranchRequest[]     @relation("BranchRequestDecidedBy")
   refreshTokens             RefreshToken[]
   appointmentEventsActed    AppointmentEvent[]
   visitRevisionsActed       VisitRevision[]
@@ -659,11 +707,14 @@ model Membership {
   role                MembershipRole
   permissionsOverride Json?            @map("permissions_override")
   status              MembershipStatus
+  /// Set from the role by a trigger when not given: ADMIN, OWNER, AI_AGENT -> ALL; DOCTOR -> SCHEDULED; RECEPTIONIST -> SELECTED.
+  branchScope         BranchScope      @default(dbgenerated()) @map("branch_scope")
   createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   user               User               @relation(fields: [userId], references: [id])
   tenant             Tenant             @relation(fields: [tenantId], references: [id])
+  branches           MembershipBranch[]
   doctor             Doctor?
   refreshTokens      RefreshToken[]
   notificationReads  NotificationRead[]
@@ -767,11 +818,14 @@ model ScheduleTemplate {
   endTime   DateTime  @map("end_time") @db.Time(0)
   validFrom DateTime  @map("valid_from") @db.Date
   validTo   DateTime? @map("valid_to") @db.Date
+  /// INTERIM: filled with the clinic's only branch by a trigger until write paths set it (branches step 4).
+  branchId  String    @default(dbgenerated()) @map("branch_id") @db.Uuid
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant Tenant          @relation(fields: [tenantId], references: [id])
   doctor Doctor          @relation(fields: [doctorId], references: [id])
+  branch Branch          @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
   breaks ScheduleBreak[]
 
   @@index([tenantId])
@@ -811,10 +865,15 @@ model ScheduleException {
   startTime DateTime?             @map("start_time") @db.Time(0)
   endTime   DateTime?             @map("end_time") @db.Time(0)
   reason    String?
+  /// Null exactly when scope is EVERY_BRANCH, enforced by schedule_exceptions_branch_matches_scope.
+  branchId  String?               @map("branch_id") @db.Uuid
+  /// The exception's reach, explicit so a null branch has one meaning (BRANCHES-DESIGN §4.4).
+  scope     ExceptionScope
   createdAt DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant Tenant  @relation(fields: [tenantId], references: [id])
+  branch Branch? @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
   // onDelete spelled out because Prisma's default for an OPTIONAL relation is SetNull, while the
   // database has RESTRICT -- migration 14 made this column nullable without saying so, and the two
   // then disagreed. Restrict is also the right answer: a doctor with a one-off closure recorded
@@ -1099,10 +1158,13 @@ model Appointment {
   allowOverlap              Boolean           @default(false) @map("allow_overlap")
   overlapAuthorisedByUserId String?           @map("overlap_authorised_by_user_id") @db.Uuid
   overlapReason             String?           @map("overlap_reason")
+  /// INTERIM: filled with the clinic's only branch by a trigger until write paths set it (branches step 4).
+  branchId                  String            @default(dbgenerated()) @map("branch_id") @db.Uuid
   createdAt                 DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                 DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant                Tenant             @relation(fields: [tenantId], references: [id])
+  branch                Branch             @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
   patient               Patient            @relation(fields: [patientId], references: [id])
   doctor                Doctor             @relation(fields: [doctorId], references: [id])
   service               Service            @relation(fields: [serviceId], references: [id])
@@ -1186,10 +1248,13 @@ model Visit {
   priceAdjustedByUserId String?     @map("price_adjusted_by_user_id") @db.Uuid
   priceAdjustedAt       DateTime?   @map("price_adjusted_at") @db.Timestamptz(6)
   createdBy             String      @map("created_by") @db.Uuid
+  /// Copied from the appointment by a trigger; (appointment_id, branch_id) is a foreign key, so they cannot disagree.
+  branchId              String      @default(dbgenerated()) @map("branch_id") @db.Uuid
   createdAt             DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant                Tenant                 @relation(fields: [tenantId], references: [id])
+  branch                Branch                 @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
   patient               Patient                @relation(fields: [patientId], references: [id])
   doctor                Doctor                 @relation(fields: [doctorId], references: [id])
   appointment           Appointment            @relation(fields: [appointmentId], references: [id])
@@ -1352,7 +1417,9 @@ model Payment {
   /// Phase 5 PR 5: a receipt, not an invoice. Price, discount and amount-due moved to
   /// `visit_charges`; what is left is one money movement.
   amountMinor             Int                 @default(0) @map("amount_minor")
-  /// Sequential and gapless per clinic, allocated by a trigger inside the writing transaction.
+  /// ISO 4217, stamped from tenants.currency by a trigger: the row keeps the currency it was taken in.
+  currency                String              @default(dbgenerated()) @db.Char(3)
+  /// Sequential and gapless per branch, allocated by a trigger inside the writing transaction.
   receiptNumber           Int                 @default(dbgenerated()) @map("receipt_number")
   receiptDate             DateTime            @default(dbgenerated()) @map("receipt_date") @db.Date
   /// The charge this settles. NULLABLE by ruling: a payment can arrive before the invoice (Q19).
@@ -1367,10 +1434,14 @@ model Payment {
   patientClaimEvidenceUrl String?             @map("patient_claim_evidence_url")
   confirmedByUserId       String?             @map("confirmed_by_user_id") @db.Uuid
   confirmedAt             DateTime?           @map("confirmed_at") @db.Timestamptz(6)
+  /// From the charge, else the visit, else the appointment; with none of them (a top-up), INTERIM: the
+  /// clinic's only branch, until write paths set it (branches step 4).
+  branchId                String              @default(dbgenerated()) @map("branch_id") @db.Uuid
   createdAt               DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt               DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant          Tenant              @relation(fields: [tenantId], references: [id])
+  branch          Branch              @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
   patient         Patient             @relation(fields: [patientId], references: [id])
   charge          VisitCharge?        @relation(fields: [chargeId], references: [id])
   appointment     Appointment?        @relation(fields: [appointmentId], references: [id])
@@ -1392,6 +1463,7 @@ model PaymentAdjustment {
   paymentId      String         @map("payment_id") @db.Uuid
   adjustmentType AdjustmentType @map("adjustment_type")
   amountMinor    Int            @map("amount_minor")
+  currency       String         @default(dbgenerated()) @db.Char(3)
   reason         String
   actorUserId    String         @map("actor_user_id") @db.Uuid
   previousStatus PaymentStatus  @map("previous_status")
@@ -1435,7 +1507,13 @@ model AuditLog {
   // that writes" -- auditing every availability lookup would outnumber the appointments themselves,
   // for a read that discloses nothing a patient could not learn by phoning the clinic.
   messageId     String?     @map("message_id") @db.Uuid
-  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// Null only when `scope` is not ONE_BRANCH (CHECK). No foreign key: audit rows outlive what they describe.
+  branchId      String?     @map("branch_id") @db.Uuid
+  /// No Prisma default, so application code always states it; the database defaults its own writers to UNSCOPED.
+  scope         AuditScope
+  /// The database's now(), the transaction's instant, never Prisma's clock, so an app-written row
+  /// groups with the trigger rows of its transaction. Rows before 2026-10-29 kept Prisma's (D14a).
+  createdAt     DateTime    @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at") @db.Timestamptz(6)
 
   // onDelete: Restrict is explicit because Prisma's default for an optional relation is SetNull,
   // and SetNull is an UPDATE, which the D5 append-only trigger refuses unconditionally. Leaving
@@ -2207,10 +2285,16 @@ model VisitCharge {
   /// table, and raising the ceiling next year must not retroactively authorise an old discount.
   ceilingPercentSnapshot     Int?         @map("ceiling_percent_snapshot")
   ceilingMinorSnapshot       Int?         @map("ceiling_minor_snapshot")
+  /// Copied from the visit by a trigger; (visit_id, branch_id) is a foreign key.
+  branchId                   String       @default(dbgenerated()) @map("branch_id") @db.Uuid
+  /// The printed invoice number: gapless per branch, allocated by a trigger like the receipt number.
+  invoiceNumber              Int          @default(dbgenerated()) @map("invoice_number")
+  currency                   String       @default(dbgenerated()) @db.Char(3)
   createdAt                  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                  DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant               Tenant            @relation(fields: [tenantId], references: [id])
+  branch               Branch            @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
   visit                Visit             @relation(fields: [visitId], references: [id])
   patient              Patient           @relation(fields: [patientId], references: [id])
   discountAuthorisedBy User?             @relation("ChargeDiscountAuthorisedBy", fields: [discountAuthorisedByUserId], references: [id])
@@ -2231,6 +2315,7 @@ model VisitChargeLine {
   chargeId         String           @map("charge_id") @db.Uuid
   nameSnapshot     String           @map("name_snapshot")
   unitPriceMinor   Int              @map("unit_price_minor")
+  currency         String           @default(dbgenerated()) @db.Char(3)
   quantity         Int              @default(1)
   source           ChargeLineSource
   /// R1: set on an ADJUSTMENT line only — the doctor who moved the total. The reason and the
@@ -2281,6 +2366,7 @@ model PatientCredit {
   /// Always positive. The direction is the movement — a signed amount invites a sum that nets two
   /// different events, and "never forfeited" has to be readable from the rows.
   amountMinor     Int            @map("amount_minor")
+  currency        String         @default(dbgenerated()) @db.Char(3)
   /// Required for a refund, by CHECK: a refund nobody stated a reason for is one somebody has to
   /// explain a year later.
   reason          String?
@@ -2387,4 +2473,87 @@ model VisitDocumentLink {
 
   @@index([tenantId, visitId])
   @@map("visit_document_links")
+}
+
+/// A place the clinic works from (docs/BRANCHES-DESIGN.md §1.1). Every clinic has exactly one default
+/// branch; the partial unique indexes and CHECKs that say so live in the migration.
+model Branch {
+  id                  String       @id @db.Uuid
+  tenantId            String       @map("tenant_id") @db.Uuid
+  name                String
+  nameEn              String?      @map("name_en")
+  address             String
+  addressEn           String?      @map("address_en")
+  /// E.164, parsed with tenants.country as the hint.
+  phone               String
+  secondaryPhone      String?      @map("secondary_phone")
+  latitude            Decimal?     @db.Decimal(9, 6)
+  longitude           Decimal?     @db.Decimal(9, 6)
+  printedWorkingHours String?      @map("printed_working_hours")
+  /// Null prints the bare number. At most one branch per clinic is unprefixed, per sequence.
+  receiptPrefix       String?      @map("receipt_prefix")
+  invoicePrefix       String?      @map("invoice_prefix")
+  /// Gapless counters, incremented under this row's lock by the allocation triggers.
+  nextReceiptNumber   Int          @default(1) @map("next_receipt_number")
+  nextInvoiceNumber   Int          @default(1) @map("next_invoice_number")
+  isDefault           Boolean      @default(false) @map("is_default")
+  status              BranchStatus @default(ACTIVE)
+  suspensionReason    String?      @map("suspension_reason")
+  suspendedAt         DateTime?    @map("suspended_at") @db.Timestamptz(6)
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  memberships        MembershipBranch[]
+  scheduleTemplates  ScheduleTemplate[]
+  scheduleExceptions ScheduleException[]
+  appointments       Appointment[]
+  visits             Visit[]
+  charges            VisitCharge[]
+  payments           Payment[]
+  createdByRequests  BranchRequest[]
+
+  @@unique([tenantId, id])
+  @@map("branches")
+}
+
+/// The branches a SELECTED-scope membership may work in. Ignored for ALL and SCHEDULED.
+model MembershipBranch {
+  id           String   @id @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  membershipId String   @map("membership_id") @db.Uuid
+  branchId     String   @map("branch_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Restrict)
+  branch     Branch     @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([membershipId, branchId])
+  @@index([tenantId])
+  @@map("membership_branches")
+}
+
+/// A clinic asking the vendor for a new branch (§1.4). The payload is a proposal; approval copies it
+/// into a real branches row.
+model BranchRequest {
+  id              String              @id @db.Uuid
+  tenantId        String              @map("tenant_id") @db.Uuid
+  kind            BranchRequestKind
+  payload         Json
+  status          BranchRequestStatus @default(PENDING)
+  requestedBy     String              @map("requested_by") @db.Uuid
+  decidedBy       String?             @map("decided_by") @db.Uuid
+  decisionReason  String?             @map("decision_reason")
+  createdBranchId String?             @map("created_branch_id") @db.Uuid
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  decidedAt       DateTime?           @map("decided_at") @db.Timestamptz(6)
+
+  tenant        Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  requester     User    @relation("BranchRequestRequestedBy", fields: [requestedBy], references: [id])
+  decider       User?   @relation("BranchRequestDecidedBy", fields: [decidedBy], references: [id])
+  createdBranch Branch? @relation(fields: [tenantId, createdBranchId], references: [tenantId, id], onDelete: Restrict)
+
+  @@index([tenantId, status])
+  @@map("branch_requests")
 }

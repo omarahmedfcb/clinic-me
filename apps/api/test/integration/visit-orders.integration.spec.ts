@@ -61,6 +61,7 @@ describe("the visit's orders and its patient profile", () => {
       await tx.appointment.create({
         data: injected({
           id,
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
           serviceId: clinic.serviceId,

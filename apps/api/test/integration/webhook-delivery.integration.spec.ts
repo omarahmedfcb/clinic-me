@@ -53,6 +53,7 @@ describe("the webhook outbox", () => {
       await tx.appointment.create({
         data: injected({
           id,
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
           serviceId: clinic.serviceId,
@@ -379,6 +380,7 @@ describe("the webhook outbox", () => {
         await tx.appointment.create({
           data: injected({
             id: appointmentId,
+            branchId: other.branchId,
             patientId: other.patientId,
             doctorId: other.doctorId,
             serviceId: other.serviceId,

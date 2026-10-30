@@ -8,6 +8,7 @@ import { Select, TextInput } from "../../design-system/fields.tsx";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import type { TranslationKey } from "../../i18n/strings.ts";
 import { cx } from "../../lib/cx.ts";
+import { NEW_CLINIC_TIME_ZONE } from "../../lib/clinic-time-zone.ts";
 import type { NewClinicInput } from "./platform-api.ts";
 import { rangeIsAcceptable, todayIso } from "./subscription-days.ts";
 
@@ -18,7 +19,7 @@ export type NewClinicSubmit = { whatsapp: false } | { whatsapp: true; existingNu
 export const BLANK_CLINIC: NewClinicInput = {
   name: "",
   slug: "",
-  timezone: "Africa/Cairo",
+  timezone: NEW_CLINIC_TIME_ZONE,
   country: "EG",
   currency: "EGP",
   address: "",

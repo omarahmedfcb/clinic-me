@@ -74,6 +74,7 @@ function fakeStaff(clinic: ClinicBlueprint): SeededStaff {
     serviceDurations: clinic.services.map((service) => service.durationMinutes),
     servicePrices: clinic.services.map((service) => service.priceMinor),
     receptionUserId: "user-reception",
+    branchId: "branch-default",
   };
 }
 

@@ -1,7 +1,9 @@
 // The audit log viewer — Phase 5 PR 11. Read-only: who did what, when, to which record.
 // Field NAMES travel, values never do — `audit_logs` holds to_jsonb(NEW) of every clinical row.
 
+import { branchContext } from "../../common/branch-context.ts";
 import { withTenant, type ActorContext } from "../../prisma/with-tenant.ts";
+import { eventReach, type EventReach } from "./event-reach.ts";
 
 export interface AuditCaller {
   tenantId: string;
@@ -28,10 +30,25 @@ export interface AuditEntry {
    */
   changedFields: string[];
   ipAddress: string;
+  scope: "ONE_BRANCH" | "UNSCOPED" | "BEFORE_BRANCHES";
+}
+
+/** One transaction: rows sharing an actor and an instant. Its entries carry no order among themselves. */
+export interface AuditEvent {
+  at: Date;
+  actorUserId: string;
+  actorName: string | null;
+  actorRole: string;
+  /** Not tied to one branch, or written before branches: null in a single-branch clinic (§6). */
+  reach: EventReach;
+  /** Every entry the event holds; `entries` carries the first ENTRIES_PER_EVENT of them. */
+  entryCount: number;
+  entries: AuditEntry[];
 }
 
 export interface AuditPage {
-  entries: AuditEntry[];
+  events: AuditEvent[];
+  /** Events, not rows: pagination counts transactions. */
   total: number;
 }
 
@@ -55,9 +72,16 @@ export interface AuditFilterOptions {
 
 interface Row extends Omit<AuditEntry, "changedFields"> {
   changedFields: string[] | null;
+  event: number;
   total: number;
+  rn: number;
+  entryCount: number;
+  beforeBranches: boolean;
+  unscoped: boolean;
 }
 
+/** An event lists at most this many entries; `entryCount` says how many it holds, and a filter reaches the rest. */
+export const ENTRIES_PER_EVENT = 50;
 export async function listAuditLog(
   caller: AuditCaller,
   filters: AuditFilters = {},
@@ -72,7 +96,27 @@ export async function listAuditLog(
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
     // Tenant isolation is RLS's, not this predicate's: `audit_logs` carries the same policy every
     // other table does, so a second tenant's rows are not there to be filtered out.
+    // A transaction's rows share its actor and now(); grouped on both in one pass, paginated by
+    // event, and listed inside an event by entity then action: deterministic, claiming no sequence.
     const rows = await tx.$queryRaw<Row[]>`
+      WITH matching AS (
+        SELECT a.*
+          FROM audit_logs a
+         WHERE (${actorUserId}::uuid IS NULL OR a.actor_user_id = ${actorUserId}::uuid)
+           AND (${entityType}::text IS NULL OR a.entity_type = ${entityType}::text)
+           AND (${from}::date IS NULL OR a.created_at >= ${from}::date)
+           -- The "to" day is inclusive: a reader asking for "up to the 9th" means the whole of it.
+           AND (${to}::date IS NULL OR a.created_at < (${to}::date + INTERVAL '1 day'))
+      ), events AS (
+        SELECT actor_user_id, created_at,
+               row_number() OVER (ORDER BY created_at DESC, actor_user_id)::int AS event,
+               count(*) OVER ()::int AS total
+          FROM matching
+         GROUP BY actor_user_id, created_at
+         ORDER BY created_at DESC, actor_user_id
+         LIMIT ${limit} OFFSET ${offset}
+      )
+      SELECT * FROM (
       SELECT a.id,
              a.created_at     AS at,
              a.actor_user_id  AS "actorUserId",
@@ -91,25 +135,34 @@ export async function listAuditLog(
                   ORDER BY key
                )
              END              AS "changedFields",
-             count(*) OVER ()::int AS total
-        FROM audit_logs a
+             a.scope::text    AS scope,
+             e.event,
+             e.total,
+             row_number() OVER w AS rn,
+             count(*) OVER (PARTITION BY e.event)::int AS "entryCount",
+             bool_or(a.scope = 'BEFORE_BRANCHES') OVER (PARTITION BY e.event) AS "beforeBranches",
+             bool_or(a.scope = 'UNSCOPED') OVER (PARTITION BY e.event) AS unscoped
+        FROM matching a
+        JOIN events e ON e.actor_user_id = a.actor_user_id AND e.created_at = a.created_at
         LEFT JOIN users u ON u.id = a.actor_user_id
-       WHERE (${actorUserId}::uuid IS NULL OR a.actor_user_id = ${actorUserId}::uuid)
-         AND (${entityType}::text IS NULL OR a.entity_type = ${entityType}::text)
-         AND (${from}::date IS NULL OR a.created_at >= ${from}::date)
-         -- The "to" day is inclusive: a reader asking for "up to the 9th" means the whole of it,
-         -- and comparing against that date alone would cut the day off at midnight.
-         AND (${to}::date IS NULL OR a.created_at < (${to}::date + INTERVAL '1 day'))
-       ORDER BY a.created_at DESC, a.id DESC
-       LIMIT ${limit} OFFSET ${offset}`;
+      WINDOW w AS (PARTITION BY e.event ORDER BY a.entity_type, a.action::text, a.entity_id, a.id)
+      ) shown
+       WHERE rn <= ${ENTRIES_PER_EVENT}
+       ORDER BY event, rn`;
 
-    return {
-      entries: rows.map(({ total: _total, changedFields, ...row }) => ({
-        ...row,
-        changedFields: changedFields ?? [],
-      })),
-      total: rows[0]?.total ?? 0,
-    };
+    const multiBranch = branchContext.tryGet()?.isMultiBranch === true;
+    const events = new Map<number, AuditEvent>();
+    for (const { total: _total, rn: _rn, event, changedFields, entryCount, beforeBranches, unscoped, ...row } of rows) {
+      const entry = { ...row, changedFields: changedFields ?? [] };
+      const group = events.get(event);
+      if (group === undefined) {
+        const reach = eventReach(multiBranch, beforeBranches, unscoped);
+        events.set(event, { at: row.at, actorUserId: row.actorUserId, actorName: row.actorName, actorRole: row.actorRole, reach, entryCount, entries: [entry] });
+      } else {
+        group.entries.push(entry);
+      }
+    }
+    return { events: [...events.values()], total: rows[0]?.total ?? 0 };
   });
 }
 

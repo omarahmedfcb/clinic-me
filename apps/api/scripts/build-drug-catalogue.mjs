@@ -10,21 +10,15 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildRows } from "./drug-catalogue-rows.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const source = join(here, "egyptian-drugs.json");
 const target = join(here, "..", "src", "modules", "clinical", "drug-data.ts");
 
-const clean = (value) => String(value ?? "").replace(/[|\r\n]+/g, " ").replace(/\s+/g, " ").trim();
-
-const seen = new Set();
-const rows = [];
-for (const drug of JSON.parse(readFileSync(source, "utf8"))) {
-  const en = clean(drug.commercial_name_en);
-  if (en === "" || seen.has(en)) continue;
-  seen.add(en);
-  rows.push(`${en}|${clean(drug.commercial_name_ar)}|${clean(drug.scientific_name)}`);
-}
+const { rows, blanked, corrected } = buildRows(JSON.parse(readFileSync(source, "utf8")));
+for (const { drug, field } of blanked) console.log(`blanked ${field} of ${drug}: mangled in the source`);
+for (const { drug, field } of corrected) console.log(`corrected ${field} of ${drug}: reviewed repair`);
 
 writeFileSync(
   target,

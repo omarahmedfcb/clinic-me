@@ -7,6 +7,8 @@
 // JSON Schema before we ever see it, so a malformed or missing field is rejected before it reaches
 // this file at all, not caught here after the fact.
 
+import { branchContext, NO_MEMBERSHIP } from "../../common/branch-context.ts";
+import { resolveBranchContext } from "../../common/branch-scope.interceptor.ts";
 import { formatInClinicTime, parseFlexibleDate, todayInClinic } from "../../common/clinic-time.ts";
 import type { Capability } from "../../common/permissions.ts";
 import { permissionLevel } from "../../common/permissions.ts";
@@ -312,7 +314,16 @@ async function toolBookAppointment(session: WebchatSession, args: Record<string,
   return { ok: true, appointmentId: result.appointmentId, localTime: formatInClinicTime(result.start, timezone) };
 }
 
+// The public route has no membership, so its request runs under an empty branch scope; once a
+// clinic is chosen, tools act under the bot membership's own scope, resolved as for any request.
 export async function executeWebchatTool(session: WebchatSession, name: string, rawArguments: string): Promise<unknown> {
+  const caller = callerFor(session);
+  if (caller === null) return dispatchWebchatTool(session, name, rawArguments);
+  const scope = await resolveBranchContext(caller.tenantId, caller.membershipId, caller.actor, undefined);
+  return branchContext.run(scope ?? NO_MEMBERSHIP, () => dispatchWebchatTool(session, name, rawArguments));
+}
+
+async function dispatchWebchatTool(session: WebchatSession, name: string, rawArguments: string): Promise<unknown> {
   let args: Record<string, unknown> = {};
   try {
     args = JSON.parse(rawArguments) as Record<string, unknown>;

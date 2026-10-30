@@ -28,6 +28,7 @@ async function visitReadyToComplete(
     const appointment = await tx.appointment.create({
       data: injected({
         id: randomUUID(),
+        branchId: clinic.branchId,
         patientId: clinic.patientId,
         doctorId: clinic.doctorId,
         serviceId: clinic.serviceId,

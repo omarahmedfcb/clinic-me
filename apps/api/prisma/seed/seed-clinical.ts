@@ -201,6 +201,7 @@ export async function seedClinical(
       data: batch.map((appointment) =>
         injected({
           id: appointment.id,
+          branchId: staff.branchId,
           patientId: appointment.patientId,
           doctorId: appointment.doctorId,
           serviceId: appointment.serviceId,

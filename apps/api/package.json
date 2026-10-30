@@ -4,12 +4,13 @@
   "private": true,
   "engines": {
     "node": ">=24",
-    "npm": "11.19.0"
+    "npm": ">=11.19.0 <12"
   },
   "scripts": {
     "prisma:validate": "prisma validate",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
+    "migrate:down": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/migrate-down.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",

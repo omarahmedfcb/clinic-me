@@ -45,6 +45,7 @@ export interface ScheduleTemplateRow {
   endTime: WallClock;
   validFrom: CalendarDate;
   validTo: CalendarDate | null;
+  branchId: string;
 }
 
 /** A break inside one template's window. Subtracted from that template's session only. */
@@ -72,6 +73,8 @@ export interface ScheduleExceptionRow {
   type: "BLOCKED" | "HOLIDAY" | "EXTRA_AVAILABILITY";
   startTime: WallClock | null;
   endTime: WallClock | null;
+  /** `null` means every branch (BRANCHES-DESIGN §4.4). */
+  branchId: string | null;
 }
 
 /**
@@ -113,6 +116,8 @@ export interface Slot {
   end: Date;
   utcOffsetMinutes: number;
   sessionDate: CalendarDate;
+  /** The branch whose template (or extra availability) the slot was cut from. */
+  branchId: string;
 }
 
 /**

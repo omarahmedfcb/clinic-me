@@ -1,41 +1,48 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { LocaleProvider } from "../../i18n/locale-context.tsx";
 import { AuditLogPage } from "./AuditLogPage.tsx";
 
 /**
- * «سجل التدقيق» — Phase 5 PR 11.
+ * «سجل التدقيق» — Phase 5 PR 11, grouped by transaction 2026-10-29.
  *
  * The screen's own share of the rule is narrow and the tests are about that share: it must render
- * what the log says without inventing anything, and it must never render a value — the API sends
- * field names only, and this asserts the screen has no path that would show one if it did.
+ * what the log says without inventing anything — no value, and no order inside one transaction.
  */
 
+const entry = (id: string, action: string, entityType: string, changedFields: string[]) => ({
+  id,
+  at: "2026-09-13T08:15:00.000Z",
+  actorUserId: "u1",
+  actorName: "منى سيد فهمي",
+  actorRole: "ADMIN",
+  action,
+  entityType,
+  entityId: `${id}111111-1111-4111-8111-111111111111`,
+  changedFields,
+  ipAddress: "127.0.0.1",
+  scope: "ONE_BRANCH",
+});
+
 const PAGE = {
-  entries: [
+  events: [
     {
-      id: "a1",
       at: "2026-09-13T08:15:00.000Z",
       actorUserId: "u1",
       actorName: "منى سيد فهمي",
       actorRole: "ADMIN",
-      action: "UPDATE",
-      entityType: "users",
-      entityId: "11111111-1111-4111-8111-111111111111",
-      changedFields: ["role", "status"],
-      ipAddress: "127.0.0.1",
+      reach: null,
+      entryCount: 3,
+      entries: [entry("a1", "UPDATE", "users", ["role", "status"]), entry("a2", "CREATE", "memberships", []), entry("a3", "UPDATE", "doctors", ["title"])],
     },
     {
-      id: "a2",
       at: "2026-09-13T07:00:00.000Z",
       actorUserId: "u2",
       actorName: "شيماء طارق",
       actorRole: "RECEPTIONIST",
-      action: "CREATE",
-      entityType: "appointments",
-      entityId: "22222222-2222-4222-8222-222222222222",
-      changedFields: [],
-      ipAddress: "127.0.0.1",
+      reach: null,
+      entryCount: 1,
+      entries: [{ ...entry("b1", "CREATE", "appointments", []), actorUserId: "u2", actorName: "شيماء طارق" }],
     },
   ],
   total: 2,
@@ -67,21 +74,56 @@ function renderPage(handler?: (path: string) => Promise<Response>) {
 afterEach(cleanup);
 
 describe("the audit log viewer", () => {
-  test("shows who did what, when, and which fields changed", async () => {
+  test("one transaction is one collapsed row: who, when, and how many changes", async () => {
     renderPage();
-    const table = await screen.findByTestId("audit-table");
+    const events = await screen.findAllByTestId("audit-event");
+    expect(events).toHaveLength(2);
+    expect(events[0]!.textContent).toContain("منى سيد فهمي");
+    expect(within(events[0]!).getByTestId("audit-event-count").textContent).toBe("3 تغييرات");
+    expect(within(events[1]!).getByTestId("audit-event-count").textContent).toBe("تغيير واحد");
+    expect(screen.queryByTestId("audit-entry")).toBeNull();
+  });
 
-    expect(table.textContent).toContain("منى سيد فهمي");
-    expect(table.textContent).toContain("users");
-    expect(table.textContent).toContain("role");
-    // The «users» audit from #100 is what this screen was asked for; a CREATE has no previous
-    // state, so it shows an em dash rather than pretending every column changed.
-    expect(table.textContent).toContain("appointments");
+  test("expanded, the rows show entity, action and changed fields, with no ordinal", async () => {
+    renderPage();
+    const [first] = await screen.findAllByTestId("audit-event");
+    fireEvent.click(within(first!).getByRole("button"));
+    const list = within(first!).getByTestId("audit-event-entries");
+    expect(list.tagName).toBe("UL");
+    const rows = within(list).getAllByTestId("audit-entry");
+    expect(rows).toHaveLength(3);
+    expect(list.textContent).toContain("users");
+    expect(list.textContent).toContain("role");
+    for (const row of rows) expect(row.textContent).not.toMatch(/^\s*\d+[.)]/);
+  });
+
+  test("a large event counts all its changes, lists the first fifty, and says how many more there are", async () => {
+    const fifty = Array.from({ length: 50 }, (_, i) => entry(`c${String(i).padStart(2, "0")}`, "UPDATE", "appointments", ["branch_id"]));
+    renderPage(async (path) =>
+      json(path.includes("/filters") ? FILTERS : { ...PAGE, events: [{ ...PAGE.events[0]!, entryCount: 5772, entries: fifty }] }),
+    );
+    const [event] = await screen.findAllByTestId("audit-event");
+    expect(within(event!).getByTestId("audit-event-count").textContent).toBe("5772 تغييرًا");
+    fireEvent.click(within(event!).getByRole("button"));
+    expect(within(event!).getAllByTestId("audit-entry")).toHaveLength(50);
+    expect(within(event!).getByTestId("audit-event-more").textContent).toContain("و5722 غيرها");
+  });
+
+  test("a single-branch clinic sees no branch label; a labelled event reads as predating branches", async () => {
+    renderPage();
+    await screen.findAllByTestId("audit-event");
+    expect(screen.queryByTestId("audit-event-reach")).toBeNull();
+    cleanup();
+
+    renderPage(async (path) =>
+      json(path.includes("/filters") ? FILTERS : { ...PAGE, events: [{ ...PAGE.events[0]!, reach: "BEFORE_BRANCHES" }] }),
+    );
+    expect((await screen.findByTestId("audit-event-reach")).textContent).toBe("قبل الفروع");
   });
 
   test("filtering by person asks the server, and starts the list again", async () => {
     const authFetch = renderPage();
-    await screen.findByTestId("audit-table");
+    await screen.findByTestId("audit-events");
 
     fireEvent.change(screen.getByTestId("audit-filter-person"), { target: { value: "u1" } });
 
@@ -95,7 +137,7 @@ describe("the audit log viewer", () => {
 
   test("a date range travels as two calendar days", async () => {
     const authFetch = renderPage();
-    await screen.findByTestId("audit-table");
+    await screen.findByTestId("audit-events");
 
     fireEvent.change(screen.getByTestId("audit-filter-from"), { target: { value: "2026-09-01" } });
     fireEvent.change(screen.getByTestId("audit-filter-to"), { target: { value: "2026-09-13" } });
@@ -115,12 +157,12 @@ describe("the audit log viewer", () => {
       path.includes("/filters") ? json(FILTERS) : json({ code: "INTERNAL", params: {} }, 500),
     );
     expect(await screen.findByTestId("audit-failed")).toBeTruthy();
-    expect(screen.queryByTestId("audit-table")).toBeNull();
+    expect(screen.queryByTestId("audit-events")).toBeNull();
   });
 
   test("nothing on the screen writes: every request is a GET", async () => {
     const authFetch = renderPage();
-    await screen.findByTestId("audit-table");
+    await screen.findByTestId("audit-events");
     fireEvent.change(screen.getByTestId("audit-filter-record"), { target: { value: "users" } });
 
     await waitFor(() => expect(authFetch.mock.calls.length).toBeGreaterThan(2));

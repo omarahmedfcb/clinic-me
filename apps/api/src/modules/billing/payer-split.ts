@@ -2,6 +2,7 @@
 
 import type { RefusalParams } from "../../common/refusals.ts";
 import { withTenant, type TransactionClient } from "../../prisma/with-tenant.ts";
+import { refusedOutOfBranch } from "../../common/branch-refusal.ts";
 import { doctorIdForMembership } from "../clinical/clinical.access.ts";
 import type { DeskCaller } from "./desk.ts";
 
@@ -55,11 +56,15 @@ export async function setPayerShare(
         subtotalMinor: true,
         discountMinor: true,
         patientId: true,
+        branchId: true,
       },
     });
     // 404 rather than 403 for another clinic's charge: the tenant extension has already made a
     // cross-tenant id indistinguishable from a missing one.
-    if (charge === null) {
+    if (
+      charge === null ||
+      (await refusedOutOfBranch(tx, caller, { table: "visit_charges", id: charge.id, branchId: charge.branchId }))
+    ) {
       return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "visit" as const } };
     }
     if (charge.status === "VOID") {

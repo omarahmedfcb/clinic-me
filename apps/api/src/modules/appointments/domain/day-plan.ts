@@ -25,27 +25,73 @@ import { addDays, resolveBoundary, weekdayOf } from "./zoned-time.ts";
  * scattered through the whole function.
  */
 export function planDay(input: DayPlanInput): DayPlan {
-  const { timezone, date, doctorId } = input;
+  const perBranch = wallWindowsByBranch(input);
+  return finish(
+    input,
+    union(perBranch.flatMap((b) => b.open)),
+    union(perBranch.flatMap((b) => b.windows)),
+  );
+}
+
+/**
+ * The same plan, one per branch the doctor works in on `date` (BRANCHES-DESIGN §4.4). A block names
+ * its branch or none (every branch); the doctor's appointments occupy him in every branch.
+ */
+export function planDayByBranch(input: DayPlanInput): { branchId: string; plan: DayPlan }[] {
+  return wallWindowsByBranch(input).map(({ branchId, open, windows }) => ({
+    branchId,
+    plan: finish(input, open, windows),
+  }));
+}
+
+interface BranchWindows {
+  branchId: string;
+  open: Interval[];
+  windows: Interval[];
+}
+
+function wallWindowsByBranch(input: DayPlanInput): BranchWindows[] {
+  const { date, doctorId } = input;
 
   // Q27: sort every input before use. Prisma returns rows in whatever order Postgres gives, which
   // is stable in practice and guaranteed nowhere, and this claims to be deterministic.
   const templates = [...input.templates].sort(byId);
   const breaks = [...input.breaks].sort(byId);
   const exceptions = [...input.exceptions].sort(byId);
+  // Extra availability always names its branch (a CHECK since 20261029155000); one that did not would open nothing.
+  const extras = exceptions.filter((e): e is ScheduleExceptionRow & { branchId: string } => e.type === "EXTRA_AVAILABILITY" && e.branchId !== null);
+
+  const branches = [
+    ...new Set([
+      ...templates.filter((t) => templateAppliesOn(t, date, doctorId)).map((t) => t.branchId),
+      ...extras.map((e) => e.branchId),
+    ]),
+  ].sort();
+
+  const planned = branches.map((branchId) => {
+    const inBranch = templates.filter((t) => t.branchId === branchId);
+
+    // Steps 1-3. Only sessions anchored to `date` survive (step 6, Q8b) — which is what lets one
+    // BLOCKED row on Thursday close the whole Thursday night clinic, tail included. The previous
+    // day's templates still matter to the *service's fetch*, because a session anchored to `date`
+    // is found by looking at `date`'s weekday, while a session running into `date` from the day
+    // before belongs to that day and is returned when that day is queried.
+    const open = union([
+      ...expandTemplates(inBranch, date, doctorId),
+      ...expandExtraAvailability(extras.filter((e) => e.branchId === branchId), date, doctorId),
+    ]);
+
+    let windows = subtract(open, expandBreaks(inBranch, breaks, date, doctorId)); // step 4
+    const blocks = exceptions.filter((e) => e.branchId === null || e.branchId === branchId);
+    windows = subtract(windows, expandBlocks(blocks, date, doctorId)); // step 5
+    return { branchId, open, windows };
+  });
+  return planned.filter((b) => b.open.length > 0);
+}
+
+function finish(input: DayPlanInput, open: Interval[], windows: Interval[]): DayPlan {
+  const { timezone, date, doctorId } = input;
   const appointments = [...input.existingAppointments].sort(byId);
-
-  // Steps 1-3. Only sessions anchored to `date` survive (step 6, Q8b) — which is what lets one
-  // BLOCKED row on Thursday close the whole Thursday night clinic, tail included. The previous
-  // day's templates still matter to the *service's fetch*, because a session anchored to `date`
-  // is found by looking at `date`'s weekday, while a session running into `date` from the day
-  // before belongs to that day and is returned when that day is queried.
-  const open = union([
-    ...expandTemplates(templates, date, doctorId),
-    ...expandExtraAvailability(exceptions, date, doctorId),
-  ]);
-
-  let windows = subtract(open, expandBreaks(templates, breaks, date, doctorId)); // step 4
-  windows = subtract(windows, expandBlocks(exceptions, date, doctorId)); // step 5
 
   /**
    * The time the clinic is open but the doctor is not available: breaks and BLOCKED/HOLIDAY

@@ -3,6 +3,7 @@
 
 import type { RefusalParams } from "../../common/refusals.ts";
 import { withTenant, type TransactionClient } from "../../prisma/with-tenant.ts";
+import { refusedOutOfBranch } from "../../common/branch-refusal.ts";
 import type { CallerContext } from "../appointments/appointments.service.ts";
 import { doctorIdForMembership } from "./clinical.access.ts";
 import { reachVisitForOrders, type OrdersRefusal } from "./visit-orders.ts";
@@ -169,6 +170,14 @@ export async function saveVisitAdjustment(
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
     const reached = await reachVisitForOrders(tx, caller, appointmentId, visitId, now, true);
     if (!reached.ok) return { ok: false as const, refusal: reached.refusal };
+
+    const visit = await tx.visit.findFirst({ where: { id: visitId }, select: { branchId: true } });
+    if (visit === null || (await refusedOutOfBranch(tx, caller, { table: "visits", id: visitId, branchId: visit.branchId }))) {
+      return {
+        ok: false as const,
+        refusal: { code: "NOT_FOUND" as const, params: { resource: "visit" as const } },
+      };
+    }
 
     const permission = await pricingPermission(tx, caller);
     if (!permission.allowed) {

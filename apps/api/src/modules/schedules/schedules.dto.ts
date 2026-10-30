@@ -46,6 +46,12 @@ export class TemplateDto {
  * it per-row would either forbid legitimate rearrangements or allow an overlap to exist between
  * two requests.
  */
+export class ReplaceTemplatesQueryDto {
+  /** The branch whose set is replaced. Required once the clinic has a second branch. */
+  @IsOptional() @IsUUID()
+  branchId?: string;
+}
+
 export class ReplaceTemplatesDto {
   @IsArray() @ArrayMaxSize(30) @ValidateNested({ each: true }) @Type(() => TemplateDto)
   templates!: TemplateDto[];
@@ -70,4 +76,12 @@ export class CreateExceptionDto {
 
   @IsOptional() @IsString() @MaxLength(200)
   reason?: string | null;
+
+  /** The one branch it applies to. Required for EXTRA_AVAILABILITY once the clinic has a second branch. */
+  @IsOptional() @IsUUID()
+  branchId?: string | null;
+
+  /** EVERY_BRANCH states every branch; omitted, the type's default applies (exception-scope.ts). */
+  @IsOptional() @IsEnum(["ONE_BRANCH", "EVERY_BRANCH"])
+  scope?: "ONE_BRANCH" | "EVERY_BRANCH";
 }

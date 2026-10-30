@@ -1,11 +1,11 @@
-import { BadRequestException, Body, Controller, Delete, Get, ForbiddenException, NotFoundException, Param, ParseUUIDPipe, Post, Put, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, ForbiddenException, NotFoundException, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
 import { actorContext } from "../../common/actor-context.ts";
 import { AuthGuard, type AuthenticatedRequest } from "../../common/auth.guard.ts";
 import { PermissionGuard } from "../../common/permission.guard.ts";
 import { RequirePermission } from "../../common/require-permission.decorator.ts";
 import { refusal } from "../../common/refusals.ts";
 import { TenantGuard } from "../../common/tenant.guard.ts";
-import { CreateExceptionDto, ReplaceTemplatesDto } from "./schedules.dto.ts";
+import { CreateExceptionDto, ReplaceTemplatesDto, ReplaceTemplatesQueryDto } from "./schedules.dto.ts";
 import {
   addException,
   getDoctorSchedule,
@@ -54,11 +54,13 @@ export class SchedulesController {
     @Req() request: AuthenticatedRequest,
     @Param("doctorId", ParseUUIDPipe) doctorId: string,
     @Body() body: ReplaceTemplatesDto,
+    @Query() query: ReplaceTemplatesQueryDto,
   ) {
     const result = await replaceTemplates(
       this.caller(request),
       doctorId,
       body.templates.map((t) => ({ ...t, validTo: t.validTo ?? null })),
+      query.branchId,
     );
     if (result.ok) return { ok: true };
     const refused = refusal(result.code, result.params);
@@ -87,6 +89,8 @@ export class SchedulesController {
       startTime: body.startTime ?? null,
       endTime: body.endTime ?? null,
       reason: body.reason ?? null,
+      branchId: body.branchId ?? null,
+      scope: body.scope ?? null,
     });
     if (result.ok) return { ok: true };
     const refused = refusal(result.code, result.params);
@@ -118,6 +122,8 @@ export class SchedulesController {
   ) {
     const result = await removeException(this.caller(request), exceptionId);
     if (result.ok) return { ok: true };
-    throw new NotFoundException(refusal(result.code, result.params));
+    const refused = refusal(result.code, result.params);
+    if (result.code === "SCOPE_TOO_NARROW") throw new ForbiddenException(refused);
+    throw new NotFoundException(refused);
   }
 }

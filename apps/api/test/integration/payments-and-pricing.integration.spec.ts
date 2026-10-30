@@ -78,6 +78,7 @@ describe("doctor pricing and the payments screen", () => {
       await tx.appointment.create({
         data: injected({
           id,
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId,
           serviceId: clinic.serviceId,
@@ -181,6 +182,7 @@ describe("doctor pricing and the payments screen", () => {
       await tx.appointment.create({
         data: injected({
           id: appointmentId,
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId,
           serviceId: clinic.serviceId,

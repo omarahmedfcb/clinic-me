@@ -41,6 +41,7 @@ const template = (over: Partial<ScheduleTemplateRow> = {}): ScheduleTemplateRow 
   endTime: "12:00",
   validFrom: "2026-01-01",
   validTo: null,
+  branchId: "b1",
   ...over,
 });
 
@@ -147,6 +148,7 @@ describe("slot engine boundaries", () => {
       type: "BLOCKED",
       startTime: null,
       endTime: null,
+      branchId: null,
       ...over,
     });
 
@@ -179,6 +181,7 @@ describe("slot engine boundaries", () => {
         type: "EXTRA_AVAILABILITY",
         startTime: "18:00",
         endTime: "19:00",
+        branchId: "b1",
       };
       const partial = blocked({ startTime: "18:00", endTime: "18:30" });
       // No template, so the only availability is the exception pair — which is what makes this a
@@ -195,6 +198,7 @@ describe("slot engine boundaries", () => {
         type: "EXTRA_AVAILABILITY",
         startTime: "18:00",
         endTime: "19:00",
+        branchId: null,
       };
       expect(slots({ exceptions: [blocked(), extra] })).toEqual([]);
     });
@@ -258,6 +262,7 @@ describe("slot engine boundaries", () => {
         doctorId: "d1",
         date: TUESDAY,
         type: "BLOCKED",
+        branchId: null,
         startTime: null,
         endTime: null,
       };
@@ -375,6 +380,7 @@ describe("slot engine boundaries", () => {
             doctorId: "d1",
             date: TUESDAY,
             type: "BLOCKED",
+            branchId: null,
             startTime: "12:00",
             endTime: "13:00",
           },

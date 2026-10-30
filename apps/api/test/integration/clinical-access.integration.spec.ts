@@ -83,6 +83,7 @@ describe("clinical access", () => {
     await withTenant(clinic.tenantId, actorFor(clinic.userId), async (tx) => {
       await tx.scheduleTemplate.create({
         data: injected({
+          branchId: clinic.branchId,
           doctorId: clinic.doctorId,
           weekday: 2,
           startTime: new Date(Date.UTC(1970, 0, 1, 9, 0, 0)),

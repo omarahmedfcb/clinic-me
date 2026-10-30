@@ -2,16 +2,16 @@
 // No control on this screen writes anything: the log is append-only and this is a window onto it.
 
 import { useCallback, useEffect, useState } from "react";
-import { Card, DataTable, EmptyState, type Column } from "../../design-system/display.tsx";
+import { Card, EmptyState } from "../../design-system/display.tsx";
 import { Select, TextInput } from "../../design-system/fields.tsx";
 import { Spinner } from "../../design-system/Spinner.tsx";
 import { intlLocale } from "../../i18n/format.ts";
 import { useLocale } from "../../i18n/locale-context.tsx";
-import type { TranslationKey } from "../../i18n/strings.ts";
+import { AuditEventRow } from "./AuditEventRow.tsx";
 import {
   loadAuditFilters,
   loadAuditLog,
-  type AuditEntry,
+  type AuditEvent,
   type AuditFilterOptions,
   type AuditQuery,
 } from "./audit-api.ts";
@@ -24,7 +24,7 @@ export function AuditLogPage({ authFetch }: { authFetch: AuthFetch }) {
   const { t, locale } = useLocale();
   const [query, setQuery] = useState<AuditQuery>({});
   const [offset, setOffset] = useState(0);
-  const [entries, setEntries] = useState<AuditEntry[] | null>(null);
+  const [events, setEvents] = useState<AuditEvent[] | null>(null);
   const [total, setTotal] = useState(0);
   const [options, setOptions] = useState<AuditFilterOptions>({ actors: [], entityTypes: [] });
   const [failed, setFailed] = useState(false);
@@ -38,11 +38,11 @@ export function AuditLogPage({ authFetch }: { authFetch: AuthFetch }) {
   const load = useCallback(async () => {
     try {
       const page = await loadAuditLog(authFetch, { ...query, limit: PAGE_SIZE, offset });
-      setEntries(page.entries);
+      setEvents(page.events);
       setTotal(page.total);
       setFailed(false);
     } catch {
-      setEntries(null);
+      setEvents(null);
       setFailed(true);
     }
   }, [authFetch, query, offset]);
@@ -65,46 +65,6 @@ export function AuditLogPage({ authFetch }: { authFetch: AuthFetch }) {
     hour: "2-digit",
     minute: "2-digit",
   });
-
-  const columns: Column<AuditEntry>[] = [
-    {
-      key: "at",
-      header: t("audit.when"),
-      render: (row) => <span className="numeric">{stamp.format(new Date(row.at))}</span>,
-    },
-    {
-      key: "who",
-      header: t("audit.who"),
-      render: (row) => (
-        <span>
-          {row.actorName ?? "—"}
-          <span className="ms-2 text-xs text-ink-subtle">{row.actorRole}</span>
-        </span>
-      ),
-    },
-    {
-      key: "action",
-      header: t("audit.action"),
-      render: (row) => t(`audit.action.${row.action}` as TranslationKey),
-    },
-    { key: "entityType", header: t("audit.record"), render: (row) => row.entityType },
-    {
-      key: "changed",
-      header: t("audit.changed"),
-      // Names, never values. The screen cannot show a value because the API never sends one.
-      render: (row) =>
-        row.changedFields.length === 0 ? (
-          <span className="text-ink-subtle">—</span>
-        ) : (
-          <span className="text-xs text-ink-muted">{row.changedFields.join("، ")}</span>
-        ),
-    },
-    {
-      key: "entityId",
-      header: t("audit.recordId"),
-      render: (row) => <span className="numeric text-xs text-ink-subtle">{row.entityId.slice(0, 8)}</span>,
-    },
-  ];
 
   return (
     <main className="mx-auto max-w-5xl">
@@ -156,25 +116,25 @@ export function AuditLogPage({ authFetch }: { authFetch: AuthFetch }) {
           <p role="alert" className="text-sm text-danger" data-testid="audit-failed">
             {t("audit.loadFailed")}
           </p>
-        ) : entries === null ? (
+        ) : events === null ? (
           <Spinner />
         ) : (
           <Card
             title={t("audit.entries")}
             subtitle={t("audit.showing")
-              .replace("{shown}", String(entries.length))
+              .replace("{shown}", String(events.length))
               .replace("{total}", String(total))}
             padded={false}
           >
-            <div data-testid="audit-table">
-              <DataTable
-                columns={columns}
-                rows={entries}
-                rowKey={(row) => row.id}
-                caption={t("audit.title")}
-                empty={<EmptyState title={t("audit.empty")} message="" />}
-              />
-            </div>
+            {events.length === 0 ? (
+              <EmptyState title={t("audit.empty")} message="" />
+            ) : (
+              <ul className="list-none" aria-label={t("audit.title")} data-testid="audit-events">
+                {events.map((event) => (
+                  <AuditEventRow key={`${event.actorUserId}:${event.at}`} event={event} stamp={stamp} />
+                ))}
+              </ul>
+            )}
           </Card>
         )}
       </div>

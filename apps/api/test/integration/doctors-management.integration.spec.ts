@@ -100,6 +100,7 @@ describe("doctors management", () => {
       await tx.appointment.create({
         data: injected({
           id,
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
           serviceId: clinic.serviceId,

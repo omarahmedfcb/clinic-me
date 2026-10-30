@@ -7,6 +7,7 @@ import { useSession } from "../auth/session.tsx";
 import { setSoundEnabled, soundEnabled } from "./sound-preference.ts";
 import { notificationSound } from "./sound.ts";
 import { NOTIFICATION_POLL_MS } from "../../lib/polling.ts";
+import { DISPLAY_TIME_ZONE } from "../../lib/clinic-time-zone.ts";
 import { Bell, Volume2, VolumeX } from "lucide-react";
 
 /**
@@ -209,14 +210,14 @@ export function NotificationBell() {
   }
 
   const time = new Intl.DateTimeFormat(intlLocale(locale), {
-    timeZone: "Africa/Cairo",
+    timeZone: DISPLAY_TIME_ZONE,
     dateStyle: "short",
     timeStyle: "short",
     hour12: false,
   });
 
   const clock = new Intl.DateTimeFormat(intlLocale(locale), {
-    timeZone: "Africa/Cairo",
+    timeZone: DISPLAY_TIME_ZONE,
     timeStyle: "short",
     hour12: false,
   });

@@ -30,18 +30,23 @@ class AuditTestModule {}
 
 const SENTINEL = "SENTINEL-DIAGNOSIS-audit-viewer-must-not-carry-this";
 
+interface Entry {
+  id: string;
+  actorUserId: string;
+  actorName: string | null;
+  action: string;
+  entityType: string;
+  entityId: string;
+  changedFields: string[];
+}
+
 interface Page {
-  entries: {
-    id: string;
-    actorUserId: string;
-    actorName: string | null;
-    action: string;
-    entityType: string;
-    entityId: string;
-    changedFields: string[];
-  }[];
+  events: { actorUserId: string; entries: Entry[] }[];
   total: number;
 }
+
+/** Every row on the page, across its events: most assertions here are about rows, not grouping. */
+const rowsOf = (page: Page): Entry[] => page.events.flatMap((event) => event.entries);
 
 describe("the audit log viewer", () => {
   let app: NestExpressApplication;
@@ -85,6 +90,7 @@ describe("the audit log viewer", () => {
       await tx.appointment.create({
         data: injected({
           id: appointmentId,
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
           serviceId: clinic.serviceId,
@@ -154,7 +160,7 @@ describe("the audit log viewer", () => {
     const page = JSON.parse(text) as Page;
 
     expect(page.total).toBeGreaterThan(0);
-    const renamed = page.entries.find(
+    const renamed = rowsOf(page).find(
       (entry) => entry.entityType === "patients" && entry.action === "UPDATE",
     );
     expect(renamed?.entityId).toBe(renamedPatientId);
@@ -177,9 +183,9 @@ describe("the audit log viewer", () => {
     const filtered = JSON.parse(
       (await get("/audit-log?entityType=users&limit=50", adminToken)).text,
     ) as Page;
-    expect(filtered.entries.length).toBeGreaterThan(0);
-    expect(filtered.entries.every((entry) => entry.entityType === "users")).toBe(true);
-    expect(filtered.entries.some((entry) => entry.changedFields.includes("full_name"))).toBe(true);
+    expect(rowsOf(filtered).length).toBeGreaterThan(0);
+    expect(rowsOf(filtered).every((entry) => entry.entityType === "users")).toBe(true);
+    expect(rowsOf(filtered).some((entry) => entry.changedFields.includes("full_name"))).toBe(true);
 
     const options = JSON.parse((await get("/audit-log/filters", adminToken)).text) as {
       actors: { userId: string }[];
@@ -194,33 +200,33 @@ describe("the audit log viewer", () => {
     const byPerson = JSON.parse(
       (await get(`/audit-log?actorUserId=${clinic.userId}&limit=200`, adminToken)).text,
     ) as Page;
-    expect(byPerson.entries.every((entry) => entry.actorUserId === clinic.userId)).toBe(true);
+    expect(rowsOf(byPerson).every((entry) => entry.actorUserId === clinic.userId)).toBe(true);
 
     // A window that ends before anything happened returns nothing rather than everything — the
     // failure a filter built with the wrong comparison produces.
     const longAgo = JSON.parse(
       (await get(`/audit-log?from=2020-01-01&to=2020-01-02&limit=50`, adminToken)).text,
     ) as Page;
-    expect(longAgo.entries).toEqual([]);
+    expect(longAgo.events).toEqual([]);
 
     // And today is inclusive of the whole day, not cut off at its first instant.
     const includingToday = JSON.parse(
       (await get(`/audit-log?from=${today}&to=${today}&limit=200`, adminToken)).text,
     ) as Page;
-    expect(includingToday.entries.length).toBeGreaterThan(0);
+    expect(rowsOf(includingToday).length).toBeGreaterThan(0);
   });
 
   /** **Guard: the viewer cannot read another tenant's rows** — nothing, never a 403. */
   test("a second tenant's admin sees none of this clinic's rows, and does see their own", async () => {
     const { status, text } = await get(`/audit-log?actorUserId=${clinic.userId}&limit=200`, otherAdminToken);
     expect(status).toBe(200);
-    expect((JSON.parse(text) as Page).entries).toEqual([]);
+    expect((JSON.parse(text) as Page).events).toEqual([]);
 
     // Not vacuous: the same token reading its own clinic gets rows, so the empty answer above is
     // isolation rather than a viewer that returns nothing to anybody.
     const own = JSON.parse((await get("/audit-log?limit=200", otherAdminToken)).text) as Page;
-    expect(own.entries.length).toBeGreaterThan(0);
-    expect(own.entries.every((entry) => entry.actorUserId !== clinic.userId)).toBe(true);
+    expect(rowsOf(own).length).toBeGreaterThan(0);
+    expect(rowsOf(own).every((entry) => entry.actorUserId !== clinic.userId)).toBe(true);
   });
 
   /**

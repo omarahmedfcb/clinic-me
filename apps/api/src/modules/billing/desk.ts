@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { PaymentMethod } from "../../generated/prisma/enums.ts";
 import type { RefusalParams } from "../../common/refusals.ts";
 import { injected } from "../../prisma/injected.ts";
+import { refusedOutOfBranch } from "../../common/branch-refusal.ts";
 import { withTenant, type ActorContext, type TransactionClient } from "../../prisma/with-tenant.ts";
 import { doctorIdForMembership } from "../clinical/clinical.access.ts";
 
@@ -225,9 +226,13 @@ export async function applyDiscount(
         status: true,
         ceilingPercentSnapshot: true,
         ceilingMinorSnapshot: true,
+        branchId: true,
       },
     });
-    if (charge === null) {
+    if (
+      charge === null ||
+      (await refusedOutOfBranch(tx, caller, { table: "visit_charges", id: charge.id, branchId: charge.branchId }))
+    ) {
       return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "visit" as const } };
     }
     if (charge.status === "VOID") {
@@ -310,13 +315,27 @@ export async function recordPayment(
       return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "visit" as const } };
     }
 
+    // The receipt's branch is derived by trigger from what it pays for; the caller must be able to act there.
+    if (input.chargeId === null && input.appointmentId !== null) {
+      const paidFor = await tx.appointment.findFirst({ where: { id: input.appointmentId }, select: { id: true, branchId: true } });
+      if (
+        paidFor === null ||
+        (await refusedOutOfBranch(tx, caller, { table: "appointments", id: paidFor.id, branchId: paidFor.branchId }))
+      ) {
+        return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "appointment" as const } };
+      }
+    }
+
     let visitId: string | null = null;
     if (input.chargeId !== null) {
       const charge = await tx.visitCharge.findFirst({
         where: doctorId === null ? { id: input.chargeId } : { id: input.chargeId, visit: { doctorId } },
-        select: { visitId: true },
+        select: { visitId: true, branchId: true },
       });
-      if (charge === null) {
+      if (
+        charge === null ||
+        (await refusedOutOfBranch(tx, caller, { table: "visit_charges", id: input.chargeId, branchId: charge.branchId }))
+      ) {
         return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "visit" as const } };
       }
       visitId = charge.visitId;

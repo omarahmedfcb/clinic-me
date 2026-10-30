@@ -21,6 +21,9 @@ import { lapseOpenRequests } from "../transfers/transfers.service.ts";
 import { creditAbandonedPrePayments } from "../billing/patient-credit.ts";
 import { mintSlotToken, verifySlotToken, type SlotTokenResult } from "./slot-token.ts";
 import { lockDoctorDay } from "./slot-day-lock.ts";
+import { resolveSlotBranch } from "./slot-branch.ts";
+import { forReadBranches } from "./read-scope.ts";
+import { refusedOutOfBranch } from "../../common/branch-refusal.ts";
 
 /**
  * Appointments: availability, booking, rescheduling, cancellation.
@@ -190,7 +193,7 @@ export async function findAvailableSlots(
       };
     }
 
-    const dayInput = await loadDayInput(tx, query.doctorId, query.date, context.timezone);
+    const dayInput = forReadBranches(await loadDayInput(tx, query.doctorId, query.date, context.timezone));
     const leadMinutes =
       query.channel === "STAFF"
         ? context.tenant.bookingLeadMinutesStaff
@@ -210,11 +213,13 @@ export async function findAvailableSlots(
         start: slot.start,
         end: slot.end,
         utcOffsetMinutes: slot.utcOffsetMinutes,
+        branchId: slot.branchId,
         token: mintSlotToken(
           {
             tenantId: caller.tenantId,
             doctorId: slot.doctorId,
             serviceId: query.serviceId,
+            branchId: slot.branchId,
             startMs: slot.start.getTime(),
             endMs: slot.end.getTime(),
           },
@@ -247,7 +252,7 @@ export async function describeDoctorDay(
     if (tenant === null) return null;
     const timezone = tenant.timezone;
 
-    return describeDay(await loadDayInput(tx, scopedId, date, timezone));
+    return describeDay(forReadBranches(await loadDayInput(tx, scopedId, date, timezone)));
   });
 }
 
@@ -330,7 +335,7 @@ export async function describeDoctorWeek(
     const days: (DayDescription & { date: string })[] = [];
     for (let i = 0; i < span; i += 1) {
       const date = addDays(from, i);
-      days.push({ ...describeDay(inputFor(date)), date });
+      days.push({ ...describeDay(forReadBranches(inputFor(date))), date });
     }
     return { ok: true as const, days };
   });
@@ -393,10 +398,9 @@ export async function bookAppointment(
     // retry" rule does not reach this error shape. `23P01` is never retried: it is an answer.
     return await retryOnDeadlock(() =>
       withTenant(caller.tenantId, caller.actor, async (tx) => {
-        const t0 = Date.now();
-        const lap = (step: string) => console.log(`[book-timing] +${Date.now() - t0}ms ${step}`);
+        const branch = resolveSlotBranch(claims.branchId);
+        if (!branch.ok) return branch;
         const patient = await tx.patient.findFirst({ where: { id: input.patientId } });
-        lap("patient read");
         if (patient === null) {
           return {
             ok: false as const,
@@ -417,7 +421,6 @@ export async function bookAppointment(
           where: { id: claims.serviceId },
           select: { priceMinor: true },
         });
-        lap("service read");
         if (quotedService === null) {
           return {
             ok: false as const,
@@ -435,10 +438,10 @@ export async function bookAppointment(
           doctorId: claims.doctorId,
           at: new Date(claims.startMs),
         });
-        lap("day lock acquired");
 
         const created = await tx.appointment.create({
           data: injected({
+            branchId: branch.branchId,
             patientId: input.patientId,
             doctorId: claims.doctorId,
             serviceId: claims.serviceId,
@@ -453,7 +456,6 @@ export async function bookAppointment(
             updatedBy: caller.actor.userId,
           }),
         });
-        lap("appointment inserted");
 
         await tx.appointmentEvent.create({
           data: injected({
@@ -465,7 +467,6 @@ export async function bookAppointment(
             actorUserId: caller.actor.userId,
           }),
         });
-        lap("event inserted");
 
         // In this transaction, not after it: a booking that rolls back must not leave a
         // notification claiming it happened (PHASE-2.md §16).
@@ -560,13 +561,18 @@ export async function rescheduleAppointment(
     return await retryOnDeadlock(() =>
       withTenant(caller.tenantId, caller.actor, async (tx) => {
         const existing = await tx.appointment.findFirst({ where: { id: appointmentId } });
-        if (existing === null) {
+        if (
+          existing === null ||
+          (await refusedOutOfBranch(tx, caller, { table: "appointments", id: existing.id, branchId: existing.branchId }))
+        ) {
           return {
             ok: false as const,
             code: "NOT_FOUND" as const,
             params: { resource: "appointment" } as const,
           };
         }
+        const branch = resolveSlotBranch(claims.branchId);
+        if (!branch.ok) return branch;
 
         // Reschedule is not an event, so `transition()` never saw it and this check did not exist:
         // a COMPLETED appointment could be moved to a future slot, and COMPLETED still occupies
@@ -623,6 +629,7 @@ export async function rescheduleAppointment(
             scheduledEnd: new Date(claims.endMs),
             doctorId: claims.doctorId,
             serviceId: claims.serviceId,
+            branchId: branch.branchId,
             quotedPriceMinor: quotedService.priceMinor,
             rescheduleCount: { increment: 1 },
             updatedBy: caller.actor.userId,
@@ -705,7 +712,10 @@ export async function changeAppointmentStatus(
 ): Promise<StatusChangeResult> {
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
     const appointment = await tx.appointment.findFirst({ where: { id: appointmentId } });
-    if (appointment === null) {
+    if (
+      appointment === null ||
+      (await refusedOutOfBranch(tx, caller, { table: "appointments", id: appointment.id, branchId: appointment.branchId }))
+    ) {
       return {
         ok: false as const,
         code: "NOT_FOUND" as const,

@@ -111,6 +111,7 @@ describe("own scoping for every doctorId reader", () => {
         await tx.appointment.create({
           data: injected({
             id: randomUUID(),
+            branchId: fixture.branchId,
             patientId: fixture.patientId,
             doctorId,
             serviceId: fixture.serviceId,
@@ -135,6 +136,7 @@ describe("own scoping for every doctorId reader", () => {
         await tx.appointment.create({
           data: injected({
             id: randomUUID(),
+            branchId: fixture.branchId,
             patientId: fixture.patientId,
             doctorId,
             serviceId: fixture.serviceId,

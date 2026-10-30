@@ -7,11 +7,10 @@ import type { RefusalParams } from "../../common/refusals.ts";
 import { injected } from "../../prisma/injected.ts";
 import { withTenant, type TransactionClient } from "../../prisma/with-tenant.ts";
 import type { CallerContext } from "../appointments/appointments.service.ts";
-import { loadContext, loadDayInput } from "../appointments/appointments.fetch.ts";
-import { generateSlots } from "../appointments/domain/generate-slots.ts";
 import { addDays, calendarDayIn } from "../appointments/domain/zoned-time.ts";
 import { completeAppointmentInTx } from "../queue/queue.moves.ts";
-import { recordNotification } from "../notifications/notifications.service.ts";
+import { branchContext } from "../../common/branch-context.ts";
+import { bookFollowUp, type FollowUpBooking } from "./follow-up-booking.ts";
 import {
   isPresentWithDoctor,
   resolveAccess,
@@ -48,12 +47,16 @@ export interface CompletedVisit {
    * an answer the screen must show — reception books it — never a silent failure.
    */
   followUpAppointmentId: string | null;
+  /** Where the follow-up was booked, or which branch had no slot within the booking horizon. */
+  followUpBooking: FollowUpBooking | null;
 }
 
 export interface CompleteInput {
   expectedRevision: number;
   followUpDate?: string;
   followUpIntervalDays?: number;
+  /** Another branch for the follow-up, named explicitly; without it, the visit's own branch. */
+  followUpBranchId?: string;
 }
 
 const INDEX = "visits_one_completed_per_appointment";
@@ -87,12 +90,21 @@ export async function completeVisit(
 
       const appointment = await tx.appointment.findFirst({
         where: { id: appointmentId },
-        select: { doctorId: true, serviceId: true, patientId: true },
+        select: { doctorId: true, serviceId: true, patientId: true, branchId: true },
       });
       if (appointment === null) {
         return {
           ok: false as const,
           refusal: { code: "NOT_FOUND" as const, params: { resource: "appointment" as const } },
+        };
+      }
+
+      // A branch the caller names must be one they may act in, checked before anything is written.
+      const named = input.followUpBranchId;
+      if (named !== undefined && (!branchContext.allows(named) || (await tx.branch.count({ where: { id: named, status: "ACTIVE" } })) === 0)) {
+        return {
+          ok: false as const,
+          refusal: { code: "NOT_FOUND" as const, params: { resource: "branch" as const } },
         };
       }
 
@@ -155,7 +167,8 @@ export async function completeVisit(
               patientId: appointment.patientId,
               doctorId: appointment.doctorId,
               serviceId: appointment.serviceId,
-              date: followUp,
+              from: followUp,
+              branchId: named ?? appointment.branchId,
               now,
             });
 
@@ -172,7 +185,8 @@ export async function completeVisit(
           completedAt: saved?.completedAt ?? now,
           appointmentStatus: appointmentDone.status,
           followUpDate: followUp,
-          followUpAppointmentId: booked,
+          followUpAppointmentId: booked?.booked === true ? booked.appointmentId : null,
+          followUpBooking: booked,
         },
       };
     });
@@ -198,83 +212,6 @@ async function resolveFollowUpDate(
   const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
   if (tenant === null) return null;
   return addDays(calendarDayIn(now, tenant.timezone), input.followUpIntervalDays);
-}
-
-/**
- * Book the follow-up into the first free slot on the requested day, or report that there was none.
- *
- * Availability comes from the same engine every other booking path uses (ARCHITECTURE.md §12), so
- * there is no second notion of what is free. When the day is full the visit still completes and
- * this returns null: a doctor mid-consultation cannot be made to negotiate a diary.
- */
-async function bookFollowUp(
-  tx: TransactionClient,
-  caller: CallerContext,
-  input: { patientId: string; doctorId: string; serviceId: string; date: string; now: Date },
-): Promise<string | null> {
-  const context = await loadContext(tx, caller.tenantId, input.doctorId, input.serviceId);
-  if (!context.ok) return null;
-
-  const slots = generateSlots({
-    ...(await loadDayInput(tx, input.doctorId, input.date, context.timezone)),
-    service: { durationMinutes: context.durationMinutes, bufferMinutes: context.bufferMinutes },
-    granularityMinutes: context.tenant.slotGranularityMinutes,
-    leadMinutes: context.tenant.bookingLeadMinutesStaff,
-    now: input.now,
-  });
-  const slot = slots[0];
-  if (slot === undefined) return null;
-
-  const service = await tx.service.findFirst({
-    where: { id: input.serviceId },
-    select: { priceMinor: true },
-  });
-
-  const created = await tx.appointment.create({
-    data: injected({
-      id: uuidv7(),
-      patientId: input.patientId,
-      doctorId: input.doctorId,
-      serviceId: input.serviceId,
-      quotedPriceMinor: service?.priceMinor ?? null,
-      scheduledStart: slot.start,
-      scheduledEnd: slot.end,
-      status: "BOOKED",
-      source: "DOCTOR",
-      createdBy: caller.actor.userId,
-      updatedBy: caller.actor.userId,
-    }),
-  });
-
-  await tx.appointmentEvent.create({
-    data: injected({
-      id: uuidv7(),
-      appointmentId: created.id,
-      eventType: "CREATED",
-      fromStatus: null,
-      toStatus: "BOOKED",
-      toScheduledStart: created.scheduledStart,
-      actorUserId: caller.actor.userId,
-    }),
-  });
-
-  const patient = await tx.patient.findFirst({
-    where: { id: input.patientId },
-    select: { fullNameAr: true },
-  });
-  await recordNotification(tx, caller.actor.userId, {
-    kind: "APPOINTMENT_BOOKED",
-    appointmentId: created.id,
-    patientId: input.patientId,
-    source: "DOCTOR",
-    occurredAt: input.now,
-    payload: {
-      patientName: patient?.fullNameAr ?? "",
-      start: created.scheduledStart.toISOString(),
-    },
-  });
-
-  return created.id;
 }
 
 /**

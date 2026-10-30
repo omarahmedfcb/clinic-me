@@ -63,6 +63,7 @@ describe("the queue's visit status", () => {
       await tx.appointment.create({
         data: injected({
           id,
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
           serviceId: clinic.serviceId,

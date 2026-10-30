@@ -16,7 +16,7 @@ import {
 import { actorContext } from "../../common/actor-context.ts";
 import { AuthGuard, type AuthenticatedRequest } from "../../common/auth.guard.ts";
 import { PermissionGuard } from "../../common/permission.guard.ts";
-import { RequirePermission } from "../../common/require-permission.decorator.ts";
+import { RequirePermission } from "../../common/require-permission.decorator.ts";
 import { refusal } from "../../common/refusals.ts";
 import { TenantGuard } from "../../common/tenant.guard.ts";
 import type { CallerContext } from "../appointments/appointments.service.ts";

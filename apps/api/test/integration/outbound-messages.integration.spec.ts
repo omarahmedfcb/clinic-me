@@ -70,6 +70,7 @@ describe("the WhatsApp outbox", () => {
       tx.appointment.create({
         data: injected({
           id,
+          branchId: clinic.branchId,
           patientId,
           doctorId: clinic.doctorId,
           serviceId: clinic.serviceId,

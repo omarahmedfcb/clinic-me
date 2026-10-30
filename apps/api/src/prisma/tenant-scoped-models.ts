@@ -90,6 +90,9 @@ const TENANT_POLICY = {
   VisitChargeLine: "scoped",
   ChargeableMaterial: "scoped",
   PatientCredit: "scoped",
+  Branch: "scoped",
+  MembershipBranch: "scoped",
+  BranchRequest: "scoped",
   // The vendor's file on a clinic, not the clinic's own data. See "platform" above.
   PlatformClinicFile: "platform",
   PlatformClinicContact: "platform",

@@ -53,7 +53,7 @@ import path from "node:path";
 const WEB_SRC = path.resolve(__dirname, "..", "..", "..", "web", "src");
 const THEME_FILE = path.join(WEB_SRC, "index.css");
 const BADGE_FILE = path.join(WEB_SRC, "design-system", "display.tsx");
-const TIMELINE_FILE = path.join(WEB_SRC, "features", "day-view", "DayViewPage.tsx");
+const TIMELINE_FILE = path.join(WEB_SRC, "features", "day-view", "timeline-tones.ts");
 
 /** On-screen separation. Below this two fills read as the same colour on a chip. */
 const MIN_DELTA_E = 25;

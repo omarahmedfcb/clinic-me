@@ -32,6 +32,8 @@ export interface ClinicFixture {
   doctorId: string;
   serviceId: string;
   patientId: string;
+  /** The clinic's default branch, created with it by trigger. */
+  branchId: string;
 }
 
 function shortDigits(id: string): string {
@@ -154,7 +156,7 @@ export async function seedClinic(): Promise<ClinicFixture> {
   const tenantId = await createTestTenant();
   const userId = await createTestUser();
 
-  const { membershipId, doctorId, serviceId, patientId } = await withTenant(tenantId, actorFor(userId), async (tx) => {
+  const { membershipId, doctorId, serviceId, patientId, branchId } = await withTenant(tenantId, actorFor(userId), async (tx) => {
     const membershipId = randomUUID();
     await tx.membership.create({
       data: injected({ id: membershipId, userId, role: "DOCTOR", status: "ACTIVE" }),
@@ -194,10 +196,11 @@ export async function seedClinic(): Promise<ClinicFixture> {
       }),
     });
 
-    return { membershipId, doctorId, serviceId, patientId };
+    const branchId = (await tx.branch.findFirstOrThrow({ where: { isDefault: true }, select: { id: true } })).id;
+    return { membershipId, doctorId, serviceId, patientId, branchId };
   });
 
-  return { tenantId, userId, membershipId, doctorId, serviceId, patientId };
+  return { tenantId, userId, membershipId, doctorId, serviceId, patientId, branchId };
 }
 
 export async function teardownClinic(fixture: ClinicFixture): Promise<void> {

@@ -130,6 +130,7 @@ export type FieldName = (typeof FIELD_NAMES)[number];
 export const RESOURCE_NAMES = [
   "appointment",
   "attachment",
+  "branch",
   // A clinic, as the platform console names one. Distinct from "tenant", which is the schema's word
   // for it: the operator's screen says clinic, and so should the sentence they read.
   "clinic",
@@ -193,6 +194,8 @@ export const REFUSAL_CODES = [
   "NOT_PERMITTED",
   "NOT_PRESENT",
   "SCOPE_TOO_NARROW",
+  // The write belongs to one branch and none was named. Different action: choose the branch.
+  "BRANCH_REQUIRED",
   // ---- attachments -----------------------------------------------------------------------
   // No file part at all, as opposed to EMPTY_FILE which is a file of zero bytes. Different
   // action: attach one.

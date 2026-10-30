@@ -44,9 +44,9 @@ function shuffled<T>(items: readonly T[], prng: Prng): T[] {
  * anywhere in the pipeline would surface.
  */
 const TEMPLATES: ScheduleTemplateRow[] = [
-  { id: "t-b", doctorId: DOCTOR, weekday: 2, startTime: "12:00", endTime: "17:00", validFrom: "2025-01-01", validTo: null },
-  { id: "t-a", doctorId: DOCTOR, weekday: 2, startTime: "09:00", endTime: "13:00", validFrom: "2025-01-01", validTo: null },
-  { id: "t-x", doctorId: "doctor-2", weekday: 2, startTime: "08:00", endTime: "18:00", validFrom: "2025-01-01", validTo: null },
+  { id: "t-b", doctorId: DOCTOR, weekday: 2, startTime: "12:00", endTime: "17:00", validFrom: "2025-01-01", validTo: null, branchId: "b1" },
+  { id: "t-a", doctorId: DOCTOR, weekday: 2, startTime: "09:00", endTime: "13:00", validFrom: "2025-01-01", validTo: null, branchId: "b1" },
+  { id: "t-x", doctorId: "doctor-2", weekday: 2, startTime: "08:00", endTime: "18:00", validFrom: "2025-01-01", validTo: null, branchId: "b1" },
 ];
 
 const BREAKS: ScheduleBreakRow[] = [
@@ -55,9 +55,9 @@ const BREAKS: ScheduleBreakRow[] = [
 ];
 
 const EXCEPTIONS: ScheduleExceptionRow[] = [
-  { id: "e-3", doctorId: null, date: "2026-09-03", type: "HOLIDAY", startTime: null, endTime: null },
-  { id: "e-1", doctorId: DOCTOR, date: "2026-09-01", type: "EXTRA_AVAILABILITY", startTime: "17:00", endTime: "18:30" },
-  { id: "e-2", doctorId: DOCTOR, date: "2026-09-01", type: "BLOCKED", startTime: "09:30", endTime: "10:00" },
+  { id: "e-3", doctorId: null, date: "2026-09-03", type: "HOLIDAY", startTime: null, endTime: null, branchId: null },
+  { id: "e-1", doctorId: DOCTOR, date: "2026-09-01", type: "EXTRA_AVAILABILITY", startTime: "17:00", endTime: "18:30", branchId: null },
+  { id: "e-2", doctorId: DOCTOR, date: "2026-09-01", type: "BLOCKED", startTime: "09:30", endTime: "10:00", branchId: null },
 ];
 
 const appointment = (

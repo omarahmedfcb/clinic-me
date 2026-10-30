@@ -20,13 +20,13 @@ export function formatInClinicTime(instant: Date, timeZone: string): string {
 }
 
 /** Today's date, in the clinic's own calendar rather than the server's. */
-export function todayInClinic(timeZone: string): string {
+export function todayInClinic(timeZone: string, at: Date = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).formatToParts(new Date());
+  }).formatToParts(at);
   const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
   return `${get("year")}-${get("month")}-${get("day")}`;
 }

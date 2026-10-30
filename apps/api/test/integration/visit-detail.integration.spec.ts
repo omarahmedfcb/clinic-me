@@ -139,6 +139,7 @@ describe("GET /appointments/:id/visit", () => {
       await tx.appointment.create({
         data: injected({
           id,
+          branchId: clinic.branchId,
           patientId: input.patientId ?? clinic.patientId,
           doctorId: input.doctorId,
           serviceId: clinic.serviceId,

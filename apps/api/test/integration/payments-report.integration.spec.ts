@@ -81,6 +81,7 @@ describe("the payments report", () => {
       await tx.appointment.create({
         data: injected({
           id: appointmentId,
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId,
           serviceId: clinic.serviceId,

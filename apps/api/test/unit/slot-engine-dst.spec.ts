@@ -38,6 +38,7 @@ const NIGHT_CLINIC: ScheduleTemplateRow = {
   endTime: "02:00", // < startTime: crosses midnight, and is valid (PHASE-2.md Q8)
   validFrom: "2025-01-01",
   validTo: null,
+  branchId: "branch-1",
 };
 
 function input(date: string): GenerateSlotsInput {

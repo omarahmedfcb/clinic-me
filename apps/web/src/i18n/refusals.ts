@@ -34,6 +34,7 @@ export interface Refusal {
 const RESOURCE_KEY: Record<string, TranslationKey> = {
   appointment: "resource.appointment",
   attachment: "resource.attachment",
+  branch: "resource.branch",
   coverage: "resource.coverage",
   doctor: "resource.doctor",
   exception: "resource.exception",

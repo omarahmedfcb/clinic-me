@@ -6,6 +6,7 @@ import { type ActorContext, withTenant } from "../../src/prisma/with-tenant.ts";
 import { newTenantData } from "../../src/modules/platform/new-clinic.ts";
 import { type ClinicBlueprint, SEED_PASSWORD, WORKING_WEEKDAYS } from "./blueprint.ts";
 import { dateOnly, timeOnly } from "./zoned-time.ts";
+import { resolveExceptionScope } from "../../src/modules/schedules/exception-scope.ts";
 
 /**
  * Staff-side seeding: the tenant, its people, and the fixed configuration a clinic needs before
@@ -31,6 +32,8 @@ export interface SeededStaff {
   serviceDurations: number[];
   servicePrices: number[];
   receptionUserId: string;
+  /** The clinic's default branch, created with it by trigger. Every seeded row is written into it. */
+  branchId: string;
 }
 
 /**
@@ -100,8 +103,10 @@ export async function seedStaff(
   const serviceIds: string[] = [];
   const serviceDurations: number[] = [];
   const servicePrices: number[] = [];
+  let branchId = "";
 
   await withTenant(tenantId, actor, async (tx) => {
+    branchId = (await tx.branch.findFirstOrThrow({ where: { isDefault: true }, select: { id: true } })).id;
     for (const member of clinic.staff) {
       const userId = userIdByKey.get(member.key);
       if (userId === undefined) throw new Error(`seedStaff: no user seeded for "${member.key}".`);
@@ -135,6 +140,7 @@ export async function seedStaff(
         await tx.scheduleTemplate.create({
           data: injected({
             id: templateId,
+            branchId,
             doctorId,
             weekday,
             startTime: timeOnly(member.doctor.shift.startHour, member.doctor.shift.startMinute),
@@ -196,8 +202,13 @@ export async function seedStaff(
       }
 
       const when = new Date(referenceDate.getTime() + exception.dayOffset * 86_400_000);
+      // The same rules the API applies, so a seeded row is one a clinic could have written.
+      const reach = resolveExceptionScope({ type: exception.type, doctorId, branchId: null, scope: null }, [branchId]);
+      if (!reach.ok) throw new Error(`seedStaff: exception in "${clinic.slug}" has no reach: ${reach.code}`);
       await tx.scheduleException.create({
         data: injected({
+          scope: reach.scope,
+          branchId: reach.branchId,
           doctorId,
           date: dateOnly(when.getUTCFullYear(), when.getUTCMonth() + 1, when.getUTCDate()),
           type: exception.type,
@@ -227,5 +238,6 @@ export async function seedStaff(
     serviceDurations,
     servicePrices,
     receptionUserId,
+    branchId,
   };
 }

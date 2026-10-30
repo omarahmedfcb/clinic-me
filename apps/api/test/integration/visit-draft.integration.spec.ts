@@ -51,6 +51,7 @@ describe("the visit draft write path", () => {
       await tx.appointment.create({
         data: injected({
           id,
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId,
           serviceId: clinic.serviceId,

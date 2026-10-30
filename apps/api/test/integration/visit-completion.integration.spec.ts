@@ -71,6 +71,7 @@ describe("finishing a visit", () => {
       await tx.appointment.create({
         data: injected({
           id,
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
           serviceId: clinic.serviceId,
@@ -105,6 +106,7 @@ describe("finishing a visit", () => {
       for (let weekday = 0; weekday < 7; weekday += 1) {
         await tx.scheduleTemplate.create({
           data: injected({
+            branchId: clinic.branchId,
             doctorId: clinic.doctorId,
             weekday,
             startTime: new Date(Date.UTC(1970, 0, 1, 0, 0, 0)),
@@ -240,19 +242,23 @@ describe("finishing a visit", () => {
     });
   });
 
-  test("a follow-up on a day the doctor does not work still completes the visit, and says so", async () => {
+  test("a follow-up with no slot to book still completes the visit, and says so", async () => {
     const appointmentId = await appointmentFor(10000);
     const draft = await openDraft(appointmentId);
 
-    // Beyond every template's validity, so the engine offers nothing rather than the fixture
-    // pretending the doctor is busy.
+    // Past the booking horizon, so there is nothing to book. A day the doctor merely does not work
+    // is not this case: the search moves on to the next day he does (ruled 2026-10-29).
     const response = await call("POST", `/appointments/${appointmentId}/visit/${draft.id}/complete`, {
       expectedRevision: draft.revision,
-      followUpDate: "2025-01-01",
+      followUpDate: "2099-01-01",
     });
     expect(response.status).toBe(201);
-    const completed = (await response.json()) as { followUpAppointmentId: string | null };
+    const completed = (await response.json()) as {
+      followUpAppointmentId: string | null;
+      followUpBooking: { booked: boolean; branchId: string };
+    };
     expect(completed.followUpAppointmentId).toBeNull();
+    expect(completed.followUpBooking).toMatchObject({ booked: false, branchId: clinic.branchId });
 
     await withTenant(clinic.tenantId, actorFor(clinic.userId), async (tx) => {
       expect((await tx.visit.findFirstOrThrow({ where: { id: draft.id } })).status).toBe("COMPLETED");
@@ -283,6 +289,7 @@ describe("what was done at the visit", () => {
       await tx.appointment.create({
         data: injected({
           id,
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
           serviceId: clinic.serviceId,
@@ -458,6 +465,7 @@ describe("what was done at the visit", () => {
       const start = nextFixtureSlot();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
           serviceId: clinic.serviceId,
@@ -503,6 +511,7 @@ describe("correcting a finished visit", () => {
       await tx.appointment.create({
         data: injected({
           id: appointmentId,
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
           serviceId: clinic.serviceId,
@@ -677,6 +686,7 @@ describe("correcting a finished visit", () => {
       await tx.appointment.create({
         data: injected({
           id: appointmentId,
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
           serviceId: clinic.serviceId,

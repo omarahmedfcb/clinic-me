@@ -71,6 +71,7 @@ describe("insurance on the queue row", () => {
       await tx.appointment.create({
         data: injected({
           id: randomUUID(),
+          branchId: clinic.branchId,
           patientId,
           doctorId: clinic.doctorId,
           serviceId: clinic.serviceId,

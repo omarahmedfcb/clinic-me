@@ -1,4 +1,4 @@
-import { planDay } from "./day-plan.ts";
+import { planDayByBranch } from "./day-plan.ts";
 import type { GenerateSlotsInput, Slot } from "./types.ts";
 import { offsetMinutesAt } from "./zoned-time.ts";
 
@@ -21,7 +21,6 @@ export function generateSlots(input: GenerateSlotsInput): Slot[] {
   // write path rejects these (services_buffer_minutes_sane, tenants_slot_granularity_sane).
   if (granularityMinutes <= 0 || service.durationMinutes <= 0) return [];
 
-  const { free } = planDay(input);
   const durationMs = service.durationMinutes * 60_000;
   const stepMs = granularityMinutes * 60_000;
 
@@ -30,20 +29,23 @@ export function generateSlots(input: GenerateSlotsInput): Slot[] {
   const earliest = now.getTime() + leadMinutes * 60_000;
 
   const slots: Slot[] = [];
-  for (const window of free) {
-    // Q19: the grid anchors to the window start, not to the hour. A window opening at 09:07
-    // offers 09:07; hour-anchoring silently discards the first fragment of every odd window.
-    for (let start = window.start; start + durationMs <= window.end; start += stepMs) {
-      if (start <= earliest) continue;
-      const at = new Date(start);
-      slots.push({
-        doctorId,
-        start: at,
-        end: new Date(start + durationMs),
-        utcOffsetMinutes: offsetMinutesAt(at, timezone),
-        sessionDate: date,
-      });
+  for (const { branchId, plan } of planDayByBranch(input)) {
+    for (const window of plan.free) {
+      // Q19: the grid anchors to the window start, not to the hour. A window opening at 09:07
+      // offers 09:07; hour-anchoring silently discards the first fragment of every odd window.
+      for (let start = window.start; start + durationMs <= window.end; start += stepMs) {
+        if (start <= earliest) continue;
+        const at = new Date(start);
+        slots.push({
+          doctorId,
+          start: at,
+          end: new Date(start + durationMs),
+          utcOffsetMinutes: offsetMinutesAt(at, timezone),
+          sessionDate: date,
+          branchId,
+        });
+      }
     }
   }
-  return slots.sort((a, b) => a.start.getTime() - b.start.getTime());
+  return slots.sort((a, b) => a.start.getTime() - b.start.getTime() || (a.branchId < b.branchId ? -1 : 1));
 }

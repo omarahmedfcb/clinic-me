@@ -19,6 +19,7 @@ import { actorFor, seedClinic, teardownClinic, type ClinicFixture } from "./fixt
 
 const receipt = (clinic: ClinicFixture, n: number) => ({
   id: randomUUID(),
+  branchId: clinic.branchId,
   patientId: clinic.patientId,
   amountMinor: 1_000 + n,
   method: "CASH" as const,
@@ -100,11 +101,9 @@ describe("receipt numbering", () => {
   test("a failed transaction never burns a number", async () => {
     // **The gapless half.** A `SEQUENCE` passes every test above and fails this one: `nextval` is
     // not rolled back, so the number the failed receipt took is gone for good.
+    // The counter lives on the branch since docs/BRANCHES-DESIGN.md §2; this clinic has only its default.
     const before = await withTenant(clinic.tenantId, actorFor(clinic.userId), async (tx) =>
-      tx.tenant.findUniqueOrThrow({
-        where: { id: clinic.tenantId },
-        select: { nextReceiptNumber: true },
-      }),
+      tx.branch.findFirstOrThrow({ where: { isDefault: true }, select: { nextReceiptNumber: true } }),
     );
 
     await expect(
@@ -116,10 +115,7 @@ describe("receipt numbering", () => {
     ).rejects.toThrow("abandoned");
 
     const after = await withTenant(clinic.tenantId, actorFor(clinic.userId), async (tx) =>
-      tx.tenant.findUniqueOrThrow({
-        where: { id: clinic.tenantId },
-        select: { nextReceiptNumber: true },
-      }),
+      tx.branch.findFirstOrThrow({ where: { isDefault: true }, select: { nextReceiptNumber: true } }),
     );
     expect(after.nextReceiptNumber).toBe(before.nextReceiptNumber);
 

@@ -37,6 +37,7 @@ import {
 import { hasExpiredSubscription, subscriptionEndFor } from "../platform/subscription-reads.ts";
 import { daysLeft, SUBSCRIPTION_NOTICE_DAYS } from "../platform/subscription-dates.ts";
 import { listActiveMemberships, verifyCredentials } from "./user-lookup.ts";
+import { branchContext } from "../../common/branch-context.ts";
 
 /**
  * The auth endpoints (PHASE-1 §3).
@@ -364,6 +365,9 @@ export class AuthController {
       subscriptionNotice,
       role: claims.role,
       memberships: await listActiveMemberships(claims.sub),
+      // The branches this membership may select with X-Branch-Id; the API enforces it per request.
+      branches: branchContext.tryGet()?.branches ?? [],
+      isMultiBranch: branchContext.tryGet()?.isMultiBranch ?? false,
 
       // DISPLAY HINT ONLY -- for hiding controls the user cannot use. It is derived server-side
       // from `role` on every request, so it cannot disagree with enforcement at the moment it is

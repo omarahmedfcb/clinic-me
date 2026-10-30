@@ -143,10 +143,8 @@ export async function listNotifications(
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
     const rows = await tx.notification.findMany({
       where: await visibleTo(tx, caller),
-      // Two notifications can share an instant -- a cancellation recorded at the same `now` as the
-      // booking it cancels, which is exactly what a test does. `id` breaks the tie deterministically
-      // because ids are UUIDv7 (D6) and therefore time-ordered; without it Postgres is free to
-      // return ties in any order and the newest item is whichever the planner felt like.
+      // `id` makes ties stable, not chronological: UUIDv7 orders only to the millisecond, and the Node
+      // counter below that is per process, so a second API process or worker makes same-ms order random.
       orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
       take: Math.min(Math.max(limit, 1), 50),
       include: { reads: { where: { membershipId: caller.membershipId }, select: { id: true } } },

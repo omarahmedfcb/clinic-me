@@ -7,6 +7,7 @@ import { clinicDayBounds } from "./queue.day.ts";
 import { doctorFreeAt } from "./queue.readiness.ts";
 import { standingOf } from "../insurance/domain/policy-window.ts";
 import { appointmentDoctorScope } from "../clinical/visit-scope.ts";
+import { readBranchWhere } from "../../common/branch-read.ts";
 import {
   ON_QUEUE,
   type NoShowCandidate,
@@ -183,6 +184,7 @@ export async function describeQueue(
         scheduledStart: { gte: query.dayStart, lt: query.dayEnd },
         status: { in: [...ON_QUEUE] },
         ...(query.doctorId === undefined ? {} : { doctorId: query.doctorId }),
+        ...readBranchWhere(),
       },
       select: {
         id: true,
@@ -304,6 +306,7 @@ export async function pendingNoShows(
         scheduledStart: { gte: query.dayStart, lt: query.dayEnd },
         status: { in: ["BOOKED", "CONFIRMED"] },
         ...(query.doctorId === undefined ? {} : { doctorId: query.doctorId }),
+        ...readBranchWhere(),
       },
       select: {
         id: true,

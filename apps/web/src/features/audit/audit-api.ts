@@ -17,8 +17,22 @@ export interface AuditEntry {
   ipAddress: string;
 }
 
-export interface AuditPage {
+/** One transaction. Its entries happened at one instant: they carry no order, and none is shown. */
+export interface AuditEvent {
+  at: string;
+  actorUserId: string;
+  actorName: string | null;
+  actorRole: string;
+  /** Set only in a multi-branch clinic; null keeps a single-branch clinic free of branch strings. */
+  reach: "UNSCOPED" | "BEFORE_BRANCHES" | null;
+  /** Every entry the event holds; `entries` carries at most the first fifty. */
+  entryCount: number;
   entries: AuditEntry[];
+}
+
+export interface AuditPage {
+  events: AuditEvent[];
+  /** Events, not rows. */
   total: number;
 }
 
@@ -50,8 +64,8 @@ export async function loadAuditLog(authFetch: AuthFetch, query: AuditQuery = {})
   const response = await authFetch(`/api/audit-log?${params.toString()}`);
   if (!response.ok) throw new Error(`GET /audit-log -> ${response.status}`);
   const body = (await response.json()) as Partial<AuditPage>;
-  if (!Array.isArray(body.entries)) throw new Error("GET /audit-log -> unreadable payload");
-  return { entries: body.entries, total: body.total ?? body.entries.length };
+  if (!Array.isArray(body.events)) throw new Error("GET /audit-log -> unreadable payload");
+  return { events: body.events, total: body.total ?? body.events.length };
 }
 
 export async function loadAuditFilters(authFetch: AuthFetch): Promise<AuditFilterOptions> {

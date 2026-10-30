@@ -45,6 +45,8 @@ export async function recordOperatorAction(
         // roles here would make the trail claim they were a member of it.
         actorRole: "PLATFORM_ADMIN",
         action: input.action,
+        // The vendor's trail, not a branch's (ruled 2026-10-29).
+        scope: "UNSCOPED",
         entityType: input.entityType,
         entityId: input.entityId,
         newState: input.detail,

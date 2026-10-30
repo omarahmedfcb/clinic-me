@@ -3,6 +3,7 @@ import type { RefusalParams } from "../../common/refusals.ts";
 import { injectedIdOnly } from "../../prisma/injected.ts";
 import type { TransactionClient } from "../../prisma/with-tenant.ts";
 import type { CallerContext } from "../appointments/appointments.service.ts";
+import { requestAuditReach } from "../../common/audit-reach.ts";
 import { hasActiveTransferGrant } from "../transfers/transfer-access.ts";
 import { visitScope, type VisitScopeCaller } from "./visit-scope.ts";
 
@@ -297,6 +298,7 @@ export async function recordSensitiveRead(
       actorUserId: caller.actor.userId,
       actorRole,
       action: "READ_SENSITIVE",
+      ...requestAuditReach(),
       entityType: "patients",
       entityId: access.patientId,
       // previousState is omitted rather than set: a read has no prior state, and Prisma writes

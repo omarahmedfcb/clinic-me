@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { STORAGE_PROVIDER, type StorageProvider } from "../attachments/storage/storage-provider.ts";
 import { createStorageProvider } from "../attachments/storage/storage.factory.ts";
+import { PlatformBuildController } from "./platform-build.controller.ts";
 import { PlatformClientFileController } from "./platform-client-file.controller.ts";
 import { PlatformClinicWhatsAppController } from "./platform-clinic-whatsapp.controller.ts";
 import { PlatformClinicWhatsAppAttachController } from "./platform-clinic-whatsapp-attach.controller.ts";
@@ -22,6 +23,7 @@ import { PlatformController } from "./platform.controller.ts";
     PlatformClinicWhatsAppAttachController,
     PlatformOperatorsController,
     PlatformClientFileController,
+    PlatformBuildController,
   ],
   providers: [
     {

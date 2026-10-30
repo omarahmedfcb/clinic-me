@@ -39,6 +39,7 @@ describe("SQL guarantees", () => {
       await withTenant(fixture.tenantId, actorFor(fixture.userId), async (tx) =>
         tx.appointment.create({
           data: injected({
+            branchId: fixture.branchId,
             patientId: fixture.patientId,
             doctorId: fixture.doctorId,
             serviceId: fixture.serviceId,
@@ -56,6 +57,7 @@ describe("SQL guarantees", () => {
         withTenant(fixture.tenantId, actorFor(fixture.userId), async (tx) =>
           tx.appointment.create({
             data: injected({
+              branchId: fixture.branchId,
               patientId: fixture.patientId,
               doctorId: fixture.doctorId,
               serviceId: fixture.serviceId,
@@ -75,6 +77,7 @@ describe("SQL guarantees", () => {
       await withTenant(fixture.tenantId, actorFor(fixture.userId), async (tx) =>
         tx.appointment.create({
           data: injected({
+            branchId: fixture.branchId,
             patientId: fixture.patientId,
             doctorId: fixture.doctorId,
             serviceId: fixture.serviceId,
@@ -91,6 +94,7 @@ describe("SQL guarantees", () => {
       const authorised = await withTenant(fixture.tenantId, actorFor(fixture.userId), async (tx) =>
         tx.appointment.create({
           data: injected({
+            branchId: fixture.branchId,
             patientId: fixture.patientId,
             doctorId: fixture.doctorId,
             serviceId: fixture.serviceId,
@@ -113,6 +117,7 @@ describe("SQL guarantees", () => {
       await withTenant(fixture.tenantId, actorFor(fixture.userId), async (tx) =>
         tx.appointment.create({
           data: injected({
+            branchId: fixture.branchId,
             patientId: fixture.patientId,
             doctorId: fixture.doctorId,
             serviceId: fixture.serviceId,
@@ -129,6 +134,7 @@ describe("SQL guarantees", () => {
       const cancelled = await withTenant(fixture.tenantId, actorFor(fixture.userId), async (tx) =>
         tx.appointment.create({
           data: injected({
+            branchId: fixture.branchId,
             patientId: fixture.patientId,
             doctorId: fixture.doctorId,
             serviceId: fixture.serviceId,
@@ -163,6 +169,7 @@ describe("SQL guarantees", () => {
             actorUserId: fixture.userId,
             actorRole: "OWNER",
             action: "CREATE",
+            scope: "UNSCOPED",
             entityType: "patient",
             entityId: fixture.patientId,
             ipAddress: "127.0.0.1",
@@ -190,6 +197,7 @@ describe("SQL guarantees", () => {
       const appointment = await withTenant(fixture.tenantId, actorFor(fixture.userId), async (tx) =>
         tx.appointment.create({
           data: injected({
+            branchId: fixture.branchId,
             patientId: fixture.patientId,
             doctorId: fixture.doctorId,
             serviceId: fixture.serviceId,
@@ -227,6 +235,7 @@ describe("SQL guarantees", () => {
       const appointment = await withTenant(fixture.tenantId, actorFor(fixture.userId), async (tx) =>
         tx.appointment.create({
           data: injected({
+            branchId: fixture.branchId,
             patientId: fixture.patientId,
             doctorId: fixture.doctorId,
             serviceId: fixture.serviceId,
@@ -276,6 +285,7 @@ describe("SQL guarantees", () => {
       const payment = await withTenant(fixture.tenantId, actorFor(fixture.userId), async (tx) =>
         tx.payment.create({
           data: injected({
+            branchId: fixture.branchId,
             patientId: fixture.patientId,
             amountMinor: 0,
             method: "CASH",
@@ -392,6 +402,7 @@ describe("SQL guarantees", () => {
       const appointment = await withTenant(fixture.tenantId, actorFor(fixture.userId), async (tx) =>
         tx.appointment.create({
           data: injected({
+            branchId: fixture.branchId,
             patientId: fixture.patientId,
             doctorId: fixture.doctorId,
             serviceId: fixture.serviceId,
@@ -560,6 +571,7 @@ describe("SQL guarantees", () => {
       const appointment = await withTenant(fixture.tenantId, actorFor(fixture.userId), async (tx) =>
         tx.appointment.create({
           data: injected({
+            branchId: fixture.branchId,
             patientId: fixture.patientId,
             doctorId: fixture.doctorId,
             serviceId: fixture.serviceId,

@@ -259,6 +259,8 @@ describe("the manifest itself is legible", () => {
        * They are listed here rather than exempted by a pattern, so that a *third* `/platform/*`
        * route cannot become ungoverned without somebody adding a line to this list.
        */
+      // 2026-10-29: the running commit, behind PlatformAuthGuard like the rest.
+      "GET /platform/build",
       "GET /platform/clinics",
       // 2026-09-15, the back office. Same reasoning, one line each so a new one is a visible edit.
       "GET /platform/clinics/:tenantId/contracts/:contractId/content",

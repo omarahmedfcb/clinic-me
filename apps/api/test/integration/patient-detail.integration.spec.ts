@@ -103,6 +103,7 @@ describe("patient detail — Q18", () => {
       await tx.appointment.create({
         data: injected({
           id: appointmentId,
+          branchId: clinic.branchId,
           patientId,
           doctorId: clinic.doctorId,
           serviceId: clinic.serviceId,
@@ -512,6 +513,7 @@ describe("patient detail — Q18", () => {
         const appointment = await tx.appointment.create({
           data: injected({
             id: randomUUID(),
+            branchId: clinic.branchId,
             patientId,
             doctorId: clinic.doctorId,
             serviceId: clinic.serviceId,
@@ -633,6 +635,7 @@ describe("patient detail — Q18", () => {
         tx.appointment.create({
           data: injected({
             id: cancelledId,
+            branchId: clinic.branchId,
             patientId,
             doctorId: clinic.doctorId,
             serviceId: clinic.serviceId,

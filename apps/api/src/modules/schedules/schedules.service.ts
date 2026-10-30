@@ -1,9 +1,14 @@
-import type { MembershipRole, ScheduleExceptionType } from "../../generated/prisma/client.ts";
-import { permissionLevel } from "../../common/permissions.ts";
+import type { ExceptionScope, MembershipRole, ScheduleExceptionType } from "../../generated/prisma/client.ts";
+import { permissionLevel } from "../../common/permissions.ts";
 import type { RefusalParams } from "../../common/refusals.ts";
 import { injected } from "../../prisma/injected.ts";
 import { withTenant, type ActorContext, type TransactionClient } from "../../prisma/with-tenant.ts";
 import { findEmptyWindow, findOverlap } from "./template-rules.ts";
+import { activeBranchIds, refuseExceptionReach } from "./exception-branch.ts";
+import { resolveExceptionScope } from "./exception-scope.ts";
+import { refusedOutOfBranch } from "../../common/branch-refusal.ts";
+import { branchContext } from "../../common/branch-context.ts";
+import { overlapWithOtherBranches, resolveTemplateBranch } from "./template-branch.ts";
 
 /**
  * Doctor schedules: recurring templates, breaks inside them, and one-off exceptions.
@@ -52,12 +57,19 @@ export interface ExceptionInput {
   startTime: string | null;
   endTime: string | null;
   reason: string | null;
+  /** The one branch, when the exception has one. */
+  branchId: string | null;
+  /** Stated by the caller, or `null` to take the default its type has (exception-scope.ts). */
+  scope: ExceptionScope | null;
 }
 
 export interface DoctorSchedule {
   doctorId: string;
+  /** Every branch's hours, each labelled; `editable` says whether this caller may change it (ruled 2026-10-30). */
   templates: {
     id: string;
+    branchId: string;
+    editable: boolean;
     weekday: number;
     startTime: string;
     endTime: string;
@@ -68,6 +80,9 @@ export interface DoctorSchedule {
   exceptions: {
     id: string;
     doctorId: string | null;
+    scope: ExceptionScope;
+    branchId: string | null;
+    editable: boolean;
     date: string;
     type: ScheduleExceptionType;
     startTime: string | null;
@@ -80,7 +95,7 @@ export type ScheduleWriteResult =
   | { ok: true }
   | {
       ok: false;
-      code: "NOT_FOUND" | "SCOPE_TOO_NARROW" | "OVERLAPPING_TEMPLATE" | "INVALID_WINDOW";
+      code: "NOT_FOUND" | "SCOPE_TOO_NARROW" | "OVERLAPPING_TEMPLATE" | "INVALID_WINDOW" | "BRANCH_REQUIRED" | "INVALID_FIELD";
       params: RefusalParams;
     };
 
@@ -135,11 +150,15 @@ export async function getDoctorSchedule(
       where: { OR: [{ doctorId }, { doctorId: null }] },
       orderBy: { date: "asc" },
     });
+    const active = await activeBranchIds(tx);
+    const coversEveryBranch = active.length <= 1 || active.every((id) => branchContext.allows(id));
 
     return {
       doctorId,
       templates: templates.map((t) => ({
         id: t.id,
+        branchId: t.branchId,
+        editable: branchContext.allows(t.branchId),
         weekday: t.weekday,
         startTime: wall(t.startTime),
         endTime: wall(t.endTime),
@@ -155,6 +174,9 @@ export async function getDoctorSchedule(
       exceptions: exceptions.map((e) => ({
         id: e.id,
         doctorId: e.doctorId,
+        scope: e.scope,
+        branchId: e.branchId,
+        editable: e.scope === "ONE_BRANCH" ? e.branchId !== null && branchContext.allows(e.branchId) : coversEveryBranch,
         date: day(e.date),
         type: e.type,
         startTime: e.startTime === null ? null : wall(e.startTime),
@@ -181,6 +203,7 @@ export async function replaceTemplates(
   caller: ScheduleCaller,
   doctorId: string,
   templates: TemplateInput[],
+  requestedBranchId?: string,
 ): Promise<ScheduleWriteResult> {
   const overlap = findOverlap(templates);
   if (overlap !== null) return { ok: false, code: "OVERLAPPING_TEMPLATE", params: overlap };
@@ -198,15 +221,23 @@ export async function replaceTemplates(
       };
     }
 
-    const existing = await tx.scheduleTemplate.findMany({ where: { doctorId }, select: { id: true } });
+    const branch = await resolveTemplateBranch(tx, requestedBranchId);
+    if (!branch.ok) return branch;
+    const { branchId } = branch;
+    const across = await overlapWithOtherBranches(tx, doctorId, branchId, templates);
+    if (across !== null) return across;
+
+    // Replaces this branch's set only: another branch's templates are not this request's to delete.
+    const existing = await tx.scheduleTemplate.findMany({ where: { doctorId, branchId }, select: { id: true } });
     await tx.scheduleBreak.deleteMany({
       where: { scheduleTemplateId: { in: existing.map((t) => t.id) } },
     });
-    await tx.scheduleTemplate.deleteMany({ where: { doctorId } });
+    await tx.scheduleTemplate.deleteMany({ where: { doctorId, branchId } });
 
     for (const template of templates) {
       const created = await tx.scheduleTemplate.create({
         data: injected({
+          branchId,
           doctorId,
           weekday: template.weekday,
           startTime: time(template.startTime),
@@ -259,8 +290,15 @@ export async function addException(
       };
     }
 
+    const decided = resolveExceptionScope(input, await activeBranchIds(tx));
+    if (!decided.ok) return { ok: false as const, code: decided.code, params: {} };
+    const outOfScope = await refuseExceptionReach(tx, decided.scope, decided.branchId);
+    if (outOfScope !== null) return outOfScope;
+
     await tx.scheduleException.create({
       data: injected({
+        scope: decided.scope,
+        branchId: decided.branchId,
         doctorId: input.doctorId,
         date: dateOnly(input.date),
         type: input.type,
@@ -303,6 +341,17 @@ export async function removeException(
         code: "NOT_FOUND" as const,
         params: { resource: "exception" } as const,
       };
+    }
+
+    if (existing.scope === "ONE_BRANCH" && existing.branchId !== null
+      && (await refusedOutOfBranch(tx, caller, { table: "schedule_exceptions", id: existing.id, branchId: existing.branchId }))) {
+      return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "exception" } as const };
+    }
+    const outOfScope = await refuseExceptionReach(tx, existing.scope, existing.branchId);
+    if (outOfScope !== null) {
+      return outOfScope.code === "NOT_FOUND"
+        ? { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "exception" } as const }
+        : outOfScope;
     }
 
     await tx.scheduleException.delete({ where: { id: exceptionId } });
