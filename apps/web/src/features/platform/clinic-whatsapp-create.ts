@@ -23,8 +23,8 @@ export async function createClinicThroughMeta(
   try {
     // Renewed alongside the config fetch (no extra wait before the popup). If it fails the session is
     // already over, and opening Meta's popup would only spend its one-time code on a request that 401s.
-    const [config, sessionOk] = await Promise.all([fetchSignupConfig(), refreshPlatformSession()]);
-    if (!sessionOk) return { ok: false, messageKey: "signup.error.SESSION_EXPIRED" };
+    const [config, session] = await Promise.all([fetchSignupConfig(), refreshPlatformSession()]);
+    if (session === "expired") return { ok: false, messageKey: "signup.error.SESSION_EXPIRED" };
     if (config === null) return { ok: false, messageKey: "signup.error.notConfigured" };
     stopKeepAlive = keepPlatformSessionAlive();
 

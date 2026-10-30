@@ -139,19 +139,22 @@ async function send(path: string, init?: RequestInit): Promise<Response> {
 }
 
 /**
- * Swaps the operator's token for a fresh one. False when the session is already over (401) or the
- * server could not be reached; the caller then tells the operator to sign in again.
+ * Swaps the operator's token for a fresh one.
+ *
+ * "expired" only when the server answers 401: the session really is over. Anything else (a server
+ * without this route yet, a network blip) is "unavailable", and the caller carries on with the token it has.
  */
-export async function refreshPlatformSession(): Promise<boolean> {
+export async function refreshPlatformSession(): Promise<"ok" | "expired" | "unavailable"> {
   try {
     const response = await send("/platform/session/refresh", { method: "POST" });
-    if (!response.ok) return false;
+    if (response.status === 401) return "expired";
+    if (!response.ok) return "unavailable";
     const body = (await response.json()) as { accessToken?: string };
-    if (typeof body.accessToken !== "string") return false;
+    if (typeof body.accessToken !== "string") return "unavailable";
     token = body.accessToken;
-    return true;
+    return "ok";
   } catch {
-    return false;
+    return "unavailable";
   }
 }
 

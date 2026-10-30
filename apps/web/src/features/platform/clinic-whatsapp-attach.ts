@@ -24,8 +24,8 @@ export async function attachWhatsAppThroughMeta(tenantId: string, existingNumber
   let stopKeepAlive: (() => void) | undefined;
   try {
     // See clinic-whatsapp-create.ts: renew the operator's token now and keep it alive while Meta's popup is open.
-    const [config, sessionOk] = await Promise.all([fetchSignupConfig(), refreshPlatformSession()]);
-    if (!sessionOk) return { ok: false, messageKey: "signup.error.SESSION_EXPIRED" };
+    const [config, session] = await Promise.all([fetchSignupConfig(), refreshPlatformSession()]);
+    if (session === "expired") return { ok: false, messageKey: "signup.error.SESSION_EXPIRED" };
     if (config === null) return { ok: false, messageKey: "signup.error.notConfigured" };
     stopKeepAlive = keepPlatformSessionAlive();
 
