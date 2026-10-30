@@ -3,6 +3,7 @@
 // this is the one lookup the webhook handler is allowed to trust a clinic's identity from.
 
 import { prisma } from "../../prisma/client.ts";
+import { isSubscriptionExempt } from "../platform/subscription-exemption.ts";
 import { resolveBotActor, type BotActor } from "../webchat/webchat-clinics.ts";
 import type { BotApiClient } from "./bot-api-client.ts";
 import { resolveWhatsAppAccess, type NumberMode } from "./whatsapp-connections.ts";
@@ -44,12 +45,13 @@ export interface ResolvedWhatsAppTenant extends WhatsAppTenant {
  */
 export async function resolveTenantByPhoneNumberId(phoneNumberId: string): Promise<ResolvedWhatsAppTenant | null> {
   const tenant = await prisma.tenant.findFirst({
-    // `botPaused`: the clinic has no subscription range yet, or its range has not started. The bot says
-    // nothing -- the webhook, the reminders and the documents links all resolve the clinic here.
-    where: { whatsappPhoneNumberId: phoneNumberId, status: "ACTIVE", botPaused: false },
-    select: { id: true, timezone: true, whatsappPhoneNumberId: true, name: true, nameEn: true },
+    where: { whatsappPhoneNumberId: phoneNumberId, status: "ACTIVE" },
+    select: { id: true, timezone: true, whatsappPhoneNumberId: true, name: true, nameEn: true, botPaused: true },
   });
   if (tenant === null || tenant.whatsappPhoneNumberId === null) return null;
+  // `botPaused`: no subscription range yet, or it has not started -- the bot says nothing. A number listed
+  // in SUBSCRIPTION_EXEMPT_PHONE_NUMBER_IDS (the env-wired test clinic) is never paused.
+  if (tenant.botPaused && !isSubscriptionExempt(tenant.whatsappPhoneNumberId)) return null;
 
   const bot = await resolveBotActor(tenant.id);
   if (bot === null) return null;

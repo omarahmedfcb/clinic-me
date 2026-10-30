@@ -10,6 +10,7 @@ import { LanguageToggle } from "../auth/LanguageToggle.tsx";
 import { formatMinor, intlLocale } from "../../i18n/format.ts";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import type { TranslationKey } from "../../i18n/strings.ts";
+import { AdminsDialog } from "./AdminsDialog.tsx";
 import { ClientFilePanel } from "./ClientFilePanel.tsx";
 import { ConnectWhatsAppPanel } from "./ConnectWhatsAppPanel.tsx";
 import { RenewPanel } from "./RenewPanel.tsx";
@@ -27,7 +28,6 @@ import {
   loadMe,
   loadOperators,
   renewClinic,
-  resetAdminPassword,
   setSuspension,
   type Clinic,
   type NewClinicInput,
@@ -41,7 +41,7 @@ const SUBSCRIPTION_EXPIRED_REASON = "SUBSCRIPTION_EXPIRED";
 
 /** A password shown once. Held in state only until the operator dismisses it. */
 interface Issued {
-  what: "clinic" | "reset" | "operator";
+  what: "clinic" | "operator";
   who: string;
   password: string;
 }
@@ -65,6 +65,8 @@ export function PlatformConsole() {
   /** The clinic whose WhatsApp panel / renewal panel is open. One at a time, like the client file. */
   const [connecting, setConnecting] = useState<string | null>(null);
   const [renewing, setRenewing] = useState<string | null>(null);
+  /** The clinic whose admins dialog is open. */
+  const [adminsOf, setAdminsOf] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   // The three panels open below the table, out of sight on a long list. Each scrolls itself into view
@@ -145,18 +147,6 @@ export function PlatformConsole() {
     }
     await refresh();
     return true;
-  }
-
-  async function onReset(row: Clinic, admin: { userId: string; fullName: string }): Promise<void> {
-    setBusy(true);
-    setRefusal(null);
-    const result = await resetAdminPassword(row.tenantId, admin.userId);
-    setBusy(false);
-    if (!result.ok) {
-      setRefusal(refusalText(t, result.code, result.params));
-      return;
-    }
-    setIssued({ what: "reset", who: result.fullName, password: result.temporaryPassword });
   }
 
   async function onConnect(row: Clinic, existingNumber: boolean): Promise<void> {
@@ -335,20 +325,16 @@ export function PlatformConsole() {
               {t((row.whatsapp?.state ?? "NONE") === "NONE" ? "platform.whatsapp.connect" : "platform.whatsapp.reconnect")}
             </Button>
           )}
-          {/* Only for an admin the server would accept: a doctor is not in `admins` at all, so
-              there is no button here to be refused. */}
-          {row.admins.map((admin) => (
+          {row.admins.length > 0 && (
             <Button
-              key={admin.userId}
               size="sm"
               variant="ghost"
-              loading={busy}
-              data-testid={`reset-${admin.userId}`}
-              onClick={() => void onReset(row, admin)}
+              data-testid={`admins-${row.tenantId}`}
+              onClick={() => setAdminsOf(row.tenantId)}
             >
-              {t("platform.resetPassword")}
+              {t("platform.admins.open")}
             </Button>
-          ))}
+          )}
         </span>
       ),
     },
@@ -357,6 +343,7 @@ export function PlatformConsole() {
   const selected = clinics?.find((row) => row.tenantId === openFile) ?? null;
   const connectingClinic = clinics?.find((row) => row.tenantId === connecting) ?? null;
   const renewingClinic = clinics?.find((row) => row.tenantId === renewing) ?? null;
+  const adminsClinic = clinics?.find((row) => row.tenantId === adminsOf) ?? null;
 
   return (
     <main className="mx-auto max-w-6xl p-6" data-testid="platform-console">
@@ -397,6 +384,8 @@ export function PlatformConsole() {
           {refusal}
         </p>
       )}
+
+      <AdminsDialog clinic={adminsClinic} onClose={() => setAdminsOf(null)} />
 
       {issued !== null && (
         <div className="mb-4">

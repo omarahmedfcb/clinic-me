@@ -355,6 +355,45 @@ describe("doctors management", () => {
     });
   });
 
+  describe("creating a doctor", () => {
+    // An Egyptian mobile (010 + 8 digits), unique per run: `users.phone_e164` is unique platform-wide.
+    const freshPhone = (): string => `+2010${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`;
+    const body = (phone: string) =>
+      JSON.stringify({ fullName: "Dr New", phone, title: "Dr", specialty: "Cardiology", licenseNumber: "L-1" });
+
+    it("makes the person, the membership and the doctor record from one form", async () => {
+      const response = await request("/doctors", adminToken, { method: "POST", body: body(freshPhone()) });
+      expect(response.status).toBe(201);
+      const created = response.body as { doctor: DoctorRow; temporaryPassword: string };
+      expect(created.doctor.fullName).toBe("Dr New");
+      expect(created.temporaryPassword).not.toBe("");
+      expect((await listAs(adminToken)).some((row) => row.id === created.doctor.id)).toBe(true);
+    });
+
+    it("refuses a number that already belongs to somebody in this clinic", async () => {
+      const phone = freshPhone();
+      expect((await request("/doctors", adminToken, { method: "POST", body: body(phone) })).status).toBe(201);
+      expect((await request("/doctors", adminToken, { method: "POST", body: body(phone) })).status).toBe(409);
+    });
+
+    it("refuses a number that does not parse", async () => {
+      expect((await request("/doctors", adminToken, { method: "POST", body: body("123") })).status).toBe(400);
+    });
+
+    it("no longer takes a membership id", async () => {
+      const response = await request("/doctors", adminToken, {
+        method: "POST",
+        body: JSON.stringify({ membershipId: randomUUID(), title: "Dr", specialty: "x", licenseNumber: "1" }),
+      });
+      expect(response.status).toBe(400);
+    });
+
+    it("is refused to reception at the guard", async () => {
+      const response = await request("/doctors", receptionToken, { method: "POST", body: body(freshPhone()) });
+      expect(response.status).toBe(403);
+    });
+  });
+
   describe("who may act", () => {
     test("reception can read the list — it is booking information", async () => {
       // `appointments.write` guards the read: reception picks a doctor when booking.

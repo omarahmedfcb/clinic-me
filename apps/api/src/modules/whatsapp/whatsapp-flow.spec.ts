@@ -146,6 +146,14 @@ describe("opening a session", () => {
     expect(result.outgoing?.kind).toBe("text");
   });
 
+  test.each([".", "تمام", "ok"])("a new session opening with %j is welcomed, not signed off", async (text) => {
+    freezeNow(MORNING);
+    const client = fakeClient({});
+    const result = await runFlow(ctxFor(client, null, { kind: "text", text }, { isNewSession: true }));
+    expect(result.nextState?.step).toBe("PHONE_CHOICE");
+    expect(result.outgoing?.kind === "buttons" && result.outgoing.body).toContain(TENANT.clinicName);
+  });
+
   test("a state left by the old complaint flow is dropped and a fresh booking starts", async () => {
     const client = fakeClient({});
     const legacy = { step: "COMPLAINT_TEXT", lang: "ar", patientId: "pat-1", patientName: "سارة" } as unknown as FlowState;

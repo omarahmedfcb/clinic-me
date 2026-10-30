@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Avatar } from "../../design-system/Avatar.tsx";
 import { Button } from "../../design-system/Button.tsx";
 import { Card, DataTable, EmptyState, type Column } from "../../design-system/display.tsx";
+import { Modal } from "../../design-system/overlays.tsx";
 import { Spinner } from "../../design-system/Spinner.tsx";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import { useSession } from "../auth/session.tsx";
@@ -64,6 +65,8 @@ export function DoctorsPage({ openDoctorId }: { openDoctorId?: string } = {}) {
   const [toggling, setToggling] = useState<Doctor | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  /** A password shown once, then forgotten: the server keeps only its hash. */
+  const [shown, setShown] = useState<{ name: string; password: string } | null>(null);
   /**
    * Which doctor the drawer is showing, held as an id rather than the row.
    *
@@ -247,29 +250,40 @@ export function DoctorsPage({ openDoctorId }: { openDoctorId?: string } = {}) {
           caption={t("doctors.title")}
           empty={<EmptyState title={t("doctors.empty.title")} message={t("doctors.empty.message")} />}
         />
-        {/*
-          Was a note saying the add button did not exist and why. The button exists now, so the note
-          became the narrower true statement: this screen links people who already have a login, and
-          nothing in the product creates one.
-        */}
-        {canManage && (
-          <p className="border-t border-border px-4 py-3 text-xs text-ink-subtle">
-            {t("doctors.add.noAccountNote")}
-          </p>
-        )}
       </Card>
 
       <AddDoctorDialog
         open={adding}
         onOpenChange={setAdding}
-        onCreated={(doctor) => {
-          // Refetch and open the new row. Create cannot set room number or licence expiry -- those
-          // are on the PATCH route only -- so landing in the drawer is how the admin finishes the
-          // job rather than being returned to a list with two blank columns.
+        onCreated={(doctor, temporaryPassword) => {
+          // Refetch and open the new row: room number and licence expiry are set from the drawer.
           void refresh();
           setOpenId(doctor.id);
+          // A person who already had an account elsewhere keeps their password, so there is nothing to show.
+          if (temporaryPassword !== "") setShown({ name: doctor.fullName, password: temporaryPassword });
         }}
       />
+
+      <Modal
+        open={shown !== null}
+        onOpenChange={(open) => {
+          if (!open) setShown(null);
+        }}
+        title={t("staff.temporaryPassword")}
+        footer={<Button onClick={() => setShown(null)}>{t("staff.done")}</Button>}
+      >
+        <div className="grid gap-2">
+          <p className="text-sm text-ink">{shown?.name}</p>
+          <p
+            dir="ltr"
+            className="numeric select-all rounded-lg bg-surface-sunken px-3 py-2 text-center text-lg font-semibold tracking-widest text-ink"
+            data-testid="shown-doctor-password"
+          >
+            {shown?.password}
+          </p>
+          <p className="text-xs text-warning">{t("staff.shownOnce")}</p>
+        </div>
+      </Modal>
 
       <DoctorDetailDrawer
         doctor={doctors?.find((row) => row.id === openId) ?? null}

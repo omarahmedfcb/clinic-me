@@ -1,5 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { LIVE_STATUSES } from "../appointments/domain/transition.ts";
+import { prisma } from "../../prisma/client.ts";
 import { injected } from "../../prisma/injected.ts";
+import { hashPassword } from "../auth/password.ts";
+import { normalisePhone } from "../auth/phone.ts";
+import { generateTemporaryPassword } from "../memberships/staff.service.ts";
 import type { RefusalCode, RefusalParams } from "../../common/refusals.ts";
 import { withTenant, type ActorContext, type TransactionClient } from "../../prisma/with-tenant.ts";
 
@@ -67,7 +72,9 @@ export interface DoctorSummary {
 }
 
 export interface CreateDoctorInput {
-  membershipId: string;
+  fullName: string;
+  /** Any notation a human types; parsed with the clinic's country as the hint. */
+  phone: string;
   specialty: string;
   licenseNumber: string;
   title: string;
@@ -97,7 +104,7 @@ export interface UpdateDoctorInput {
 }
 
 export type CreateDoctorResult =
-  | { ok: true; doctor: DoctorSummary }
+  | { ok: true; doctor: DoctorSummary; temporaryPassword: string }
   | { ok: false; code: RefusalCode; params: RefusalParams };
 
 /**
@@ -207,54 +214,67 @@ export async function getDoctor(
   });
 }
 
+/**
+ * Creates the person, their membership here and the doctor record in one go.
+ *
+ * A phone number that already belongs to somebody becomes a second membership (a doctor working at two
+ * clinics) and keeps their own password, so `temporaryPassword` is empty; a second membership in *this*
+ * clinic is refused. The membership and the doctor row share one transaction, so a doctor account never
+ * exists without its record.
+ */
 export async function createDoctor(
   caller: CallerContext,
   input: CreateDoctorInput,
+  country: "EG" | "SA" | "AE",
 ): Promise<CreateDoctorResult> {
-  return withTenant(caller.tenantId, caller.actor, async (tx) => {
-    // The membership must exist *in this tenant*. RLS makes another clinic's membership invisible
-    // here, so a cross-tenant id is indistinguishable from one that never existed — which is what
-    // lets the controller answer 404 without an ownership check.
-    const membership = await tx.membership.findFirst({ where: { id: input.membershipId } });
-    if (membership === null) {
-      // NOT_FOUND with a resource, not a code of its own: "no such membership" asks the caller
-      // for the same next action as "no such doctor" -- look again at what you chose.
-      return {
-        ok: false as const,
-        code: "NOT_FOUND" as const,
-        params: { resource: "membership" } as const,
-      };
-    }
+  const phoneE164 = normalisePhone(input.phone, country);
+  if (phoneE164 === null) return { ok: false, code: "INVALID_PHONE", params: {} };
 
-    const existing = await tx.doctor.findFirst({ where: { membershipId: input.membershipId } });
-    if (existing !== null) {
-      // Its own code, because it asks for something different: pick somebody else.
-      return { ok: false as const, code: "ALREADY_A_DOCTOR" as const, params: {} };
-    }
+  // `users` is not tenant-scoped, so the lookup and the create go through the base client.
+  const existing = await prisma.user.findFirst({ where: { phoneE164 }, select: { id: true } });
+  if (existing !== null) {
+    const clash = await withTenant(caller.tenantId, caller.actor, (tx) =>
+      tx.membership.findFirst({ where: { userId: existing.id }, select: { id: true } }),
+    );
+    if (clash !== null) return { ok: false, code: "ALREADY_A_MEMBER", params: { name: input.fullName } };
+  }
 
+  const temporaryPassword = generateTemporaryPassword();
+  const userId =
+    existing?.id ??
+    (
+      await prisma.user.create({
+        data: {
+          id: randomUUID(),
+          phoneE164,
+          fullName: input.fullName,
+          passwordHash: await hashPassword(temporaryPassword),
+          status: "ACTIVE",
+          mustChangePassword: true,
+        },
+        select: { id: true },
+      })
+    ).id;
+
+  const doctor = await withTenant(caller.tenantId, caller.actor, async (tx) => {
+    const membershipId = randomUUID();
+    await tx.membership.create({ data: injected({ id: membershipId, userId, role: "DOCTOR", status: "ACTIVE" }) });
     const created = await tx.doctor.create({
       data: injected({
-        membershipId: input.membershipId,
+        membershipId,
         specialty: input.specialty,
         licenseNumber: input.licenseNumber,
         title: input.title,
       }),
     });
-
-    // Read back rather than using `include` on the create. `injected<T>()` erases the literal
-    // create-input type that Prisma's conditional return type needs in order to narrow an
-    // `include`, so the created row types as the bare model and `membership` is missing. Fighting
-    // that with a cast would reintroduce exactly the unchecked-write hole `injected()` exists to
-    // close (see its doc comment on `as never`). One extra read inside the same transaction is a
-    // better trade than an assertion.
+    // Read back rather than `include` on the create: `injected<T>()` erases the literal input type Prisma
+    // needs to narrow an `include`, and a cast would reopen the hole `injected()` closes.
     const withName = await tx.doctor.findFirst({ where: { id: created.id }, include: WITH_NAME });
-    if (withName === null) {
-      throw new Error("Doctor vanished between insert and read inside one transaction.");
-    }
-    // A doctor created a moment ago has no appointments, so 0 here is a fact rather than an
-    // unqueried default -- nothing can reference the row until it exists.
-    return { ok: true as const, doctor: toSummary(withName, 0) };
+    if (withName === null) throw new Error("Doctor vanished between insert and read inside one transaction.");
+    return toSummary(withName, 0);
   });
+
+  return { ok: true, doctor, temporaryPassword: existing === null ? temporaryPassword : "" };
 }
 
 /**

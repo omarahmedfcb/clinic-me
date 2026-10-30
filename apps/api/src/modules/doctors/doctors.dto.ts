@@ -4,7 +4,6 @@ import {
   IsISO8601,
   IsOptional,
   IsString,
-  IsUUID,
   Max,
   MaxLength,
   Min,
@@ -13,8 +12,11 @@ import {
 } from "class-validator";
 
 export class CreateDoctorDto {
-  @IsUUID()
-  membershipId!: string;
+  @IsString() @MinLength(1) @MaxLength(120)
+  fullName!: string;
+
+  @IsString() @MinLength(1) @MaxLength(40)
+  phone!: string;
 
   @IsString() @MinLength(1) @MaxLength(120)
   specialty!: string;

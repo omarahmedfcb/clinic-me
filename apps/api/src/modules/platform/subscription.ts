@@ -16,6 +16,7 @@ import { withPlatformActor } from "../../prisma/with-tenant.ts";
 import { systemActor } from "../audit/system-actor.ts";
 import { setClinicSuspension } from "./platform-clinics.ts";
 import { botIsPausedIn, subscriptionPhase, SUBSCRIPTION_EXPIRED_REASON } from "./subscription-dates.ts";
+import { isSubscriptionExempt } from "./subscription-exemption.ts";
 
 /**
  * Brings every ACTIVE clinic in line with its range. Idempotent and safe to run often: a clinic
@@ -36,7 +37,7 @@ export async function runExpiryPass(now: Date = new Date()): Promise<{ suspended
     `,
     tenants: await tx.tenant.findMany({
       where: { status: "ACTIVE" },
-      select: { id: true, timezone: true, botPaused: true },
+      select: { id: true, timezone: true, botPaused: true, whatsappPhoneNumberId: true },
     }),
   }));
 
@@ -46,6 +47,15 @@ export async function runExpiryPass(now: Date = new Date()): Promise<{ suspended
 
   for (const tenant of tenants) {
     try {
+      // An env-wired test clinic is never paused or suspended; if it was paused before being listed, it is resumed.
+      if (isSubscriptionExempt(tenant.whatsappPhoneNumberId)) {
+        if (tenant.botPaused) {
+          await withPlatformActor(system, (tx) => tx.tenant.update({ where: { id: tenant.id }, data: { botPaused: false } }));
+          botChanged += 1;
+        }
+        continue;
+      }
+
       const range = rangeOf.get(tenant.id);
       const startsOn = range?.starts_on ?? null;
       const endsOn = range?.ends_on ?? null;

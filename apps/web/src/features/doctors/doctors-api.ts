@@ -13,18 +13,10 @@
  * a stronger reason. A service nobody can book still gets performed; a doctor taken off the board
  * has appointments with no one to see them.
  *
- * ## `createDoctor` exists now, and what unblocked it
+ * ## `createDoctor` creates the person too
  *
- * It was absent because `POST /doctors` takes a `membershipId` and nothing in the API listed
- * memberships, so a create form could only have offered a field for a raw UUID — a control that
- * looks finished and cannot be used without opening a database. `GET /memberships` shipped on
- * 2026-09-05 under `users.manage` and the form is built on it.
- *
- * **Create takes four fields; room number and licence expiry are not among them.** That is the
- * shape of `CreateDoctorDto`, not an oversight on this side: those two columns arrived later, only
- * `UpdateDoctorDto` carries them, and widening the create route is API surface nobody has asked
- * for. So a new doctor is added and then opened, which is one extra step on an action a clinic
- * performs a handful of times a year. Flagged rather than absorbed.
+ * It takes a name and a phone number, so a doctor no longer has to be picked from existing staff.
+ * Room number and licence expiry are not on the create route; a new doctor is opened afterwards for them.
  */
 
 export interface Doctor {
@@ -94,30 +86,35 @@ export async function setDoctorActive(
 }
 
 /**
- * Adding a doctor is linking an existing membership, never creating a person.
- *
- * The distinction is the whole design: a `Doctor` row hangs off a `Membership`, which is what lets
- * the same person work at two clinics without either seeing the other's row. So this takes a
- * `membershipId` chosen from `GET /memberships` and cannot invent one — the API has no route that
- * writes a `users` row, and the form says so rather than pretending otherwise.
- *
- * Two refusals are worth distinguishing to the admin and both come back as messages rather than
- * exceptions: 404 when the membership is not in this clinic (a cross-tenant id is indistinguishable
- * from one that never existed, by the 404-not-403 rule), and 422 when that membership already has a
- * doctor record.
+ * Adding a doctor creates the person, their login and the record in one call. The temporary password
+ * comes back **here and nowhere else**; it is empty when the phone already had an account elsewhere.
+ * A refusal carries the server's `code` and `params` so the dialog can say it in the clinic's language.
  */
+export type CreateResult =
+  | { ok: true; doctor: Doctor; temporaryPassword: string }
+  | { ok: false; message: string; code: string | null; params: Record<string, unknown> };
+
 export async function createDoctor(
   authFetch: AuthFetch,
-  input: { membershipId: string; title: string; specialty: string; licenseNumber: string },
-): Promise<WriteResult> {
+  input: { fullName: string; phone: string; title: string; specialty: string; licenseNumber: string },
+): Promise<CreateResult> {
   const response = await authFetch("/api/doctors", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   });
 
-  if (response.ok) return { ok: true, doctor: (await response.json()) as Doctor };
-  return { ok: false, message: await refusalMessage(response, "POST /doctors") };
+  if (response.ok) {
+    const body = (await response.json()) as { doctor: Doctor; temporaryPassword: string };
+    return { ok: true, doctor: body.doctor, temporaryPassword: body.temporaryPassword };
+  }
+  const body = (await response.clone().json().catch(() => null)) as { code?: unknown; params?: unknown } | null;
+  return {
+    ok: false,
+    message: await refusalMessage(response, "POST /doctors"),
+    code: typeof body?.code === "string" ? body.code : null,
+    params: typeof body?.params === "object" && body.params !== null ? (body.params as Record<string, unknown>) : {},
+  };
 }
 
 /**

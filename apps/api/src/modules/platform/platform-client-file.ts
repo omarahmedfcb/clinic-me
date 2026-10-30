@@ -9,6 +9,7 @@ import { normalisePhone } from "../auth/phone.ts";
 import { contractKeyFor } from "./contract-key.ts";
 import type { SupportedCountry } from "./new-clinic.ts";
 import { botIsPausedIn, subscriptionPhase } from "./subscription-dates.ts";
+import { isSubscriptionExempt } from "./subscription-exemption.ts";
 
 /** TRIAL | ACTIVE | OVERDUE | SUSPENDED, mirroring the CHECK. A fifth is a migration. */
 export const ACCOUNT_STATUSES = ["TRIAL", "ACTIVE", "OVERDUE", "SUSPENDED"] as const;
@@ -240,7 +241,7 @@ export async function saveClientFile(
   }
 
   return withPlatformActor<ClientFileResult<{ tenantId: string }>>(actor, async (tx) => {
-    const tenant = await tx.tenant.findFirst({ where: { id: tenantId }, select: { id: true, timezone: true } });
+    const tenant = await tx.tenant.findFirst({ where: { id: tenantId }, select: { id: true, timezone: true, whatsappPhoneNumberId: true } });
     if (tenant === null) {
       return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "clinic" as const } };
     }
@@ -296,7 +297,7 @@ export async function saveClientFile(
     // The bot follows the range at once, rather than waiting for the worker's next pass.
     if (rangeTouched) {
       const phase = subscriptionPhase(asDay(finalStart), asDay(finalEnd), now, tenant.timezone);
-      await tx.tenant.update({ where: { id: tenantId }, data: { botPaused: botIsPausedIn(phase) } });
+      await tx.tenant.update({ where: { id: tenantId }, data: { botPaused: !isSubscriptionExempt(tenant.whatsappPhoneNumberId) && botIsPausedIn(phase) } });
     }
 
     return { ok: true as const, value: { tenantId } };

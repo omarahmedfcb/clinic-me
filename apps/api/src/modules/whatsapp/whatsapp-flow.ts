@@ -495,10 +495,9 @@ export async function runFlow(ctx: FlowContext): Promise<FlowResult> {
  *  there is no menu to show: the welcome line (new sessions only) and the first booking question go
  *  out together. `openingText` is the patient's own words if this turn is free text. */
 async function beginTurn(ctx: FlowContext, lang: Lang, openingText: string | null): Promise<FlowResult> {
-  // A closing remark ("شكرا", "تمام", "thanks") is very often the very next message after this file
-  // itself just said "تم الحجز ... لو محتاج حاجة تانية أنا موجود" (bookingSuccess), and starting a
-  // brand-new booking in reply to "thanks" reads as not having listened.
-  if (openingText !== null && (await isClosing(ctx, openingText))) {
+  // A closing remark mid-session ("thanks") is answered with a sign-off. Never on a new session: that turn
+  // must carry the welcome, or the next message finds the session already open and is never welcomed.
+  if (!ctx.isNewSession && openingText !== null && (await isClosing(ctx, openingText))) {
     return { handled: true, nextState: null, outgoing: { kind: "text", text: T.closingAcknowledge(lang) } };
   }
 

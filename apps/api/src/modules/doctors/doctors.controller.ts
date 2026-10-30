@@ -1,4 +1,4 @@
-import { Body, Controller, Get, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Req, UnprocessableEntityException, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, ConflictException, Controller, Get, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from "@nestjs/common";
 import { actorContext } from "../../common/actor-context.ts";
 import { AuthGuard, type AuthenticatedRequest } from "../../common/auth.guard.ts";
 import { PermissionGuard } from "../../common/permission.guard.ts";
@@ -14,6 +14,12 @@ import { createDoctor, getDoctor, listDoctors, updateDoctor, type CallerContext 
 export class DoctorsController {
   private caller(request: AuthenticatedRequest): CallerContext {
     return { tenantId: request.authClaims.tenantId, actor: actorContext.getOrThrow() };
+  }
+
+  /** The clinic's own country, for parsing a typed number. Never assumed to be Egypt (CLAUDE.md). */
+  private country(): "EG" | "SA" | "AE" {
+    const configured = process.env["DEFAULT_PHONE_COUNTRY"];
+    return configured === "SA" || configured === "AE" ? configured : "EG";
   }
 
   /**
@@ -37,12 +43,12 @@ export class DoctorsController {
   @Post()
   @RequirePermission("users.manage")
   async create(@Req() request: AuthenticatedRequest, @Body() body: CreateDoctorDto) {
-    const result = await createDoctor(this.caller(request), body);
-    if (result.ok) return result.doctor;
-    if (result.code === "NOT_FOUND") throw new NotFoundException(refusal(result.code, result.params));
-    // The membership exists and already has a doctor record: a well-formed request that conflicts
-    // with the world's current state rather than a malformed one.
-    throw new UnprocessableEntityException(refusal(result.code, result.params));
+    const result = await createDoctor(this.caller(request), body, this.country());
+    // The temporary password is returned here and nowhere else: it is hashed on the way in.
+    if (result.ok) return { doctor: result.doctor, temporaryPassword: result.temporaryPassword };
+    // Taken by somebody already in this clinic: a well-formed request that conflicts with current state.
+    if (result.code === "ALREADY_A_MEMBER") throw new ConflictException(refusal(result.code, result.params));
+    throw new BadRequestException(refusal(result.code, result.params));
   }
 
   @Patch(":id")

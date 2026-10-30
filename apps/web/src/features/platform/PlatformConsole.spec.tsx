@@ -318,15 +318,19 @@ describe("the platform console", () => {
     ).toBe(false);
   });
 
-  /** **A reset is offered only for an admin the server would accept.** */
-  test("there is a reset button for the admin and none for anybody else", async () => {
+  /** **A reset is offered only for an admin the server would accept**, and only inside the admins dialog. */
+  test("resets live in one dialog per clinic, one button per admin", async () => {
     renderConsole(async () => json({ clinics: [CLINIC] }));
     await signIn();
     await screen.findByTestId("clinic-list");
 
-    expect(screen.getByTestId(`reset-${CLINIC.admins[0]?.userId ?? ""}`)).toBeTruthy();
+    // Nothing per admin on the row itself.
+    expect(screen.queryByTestId(`reset-${CLINIC.admins[0]?.userId ?? ""}`)).toBeNull();
+
+    fireEvent.click(screen.getByTestId(`admins-${CLINIC.tenantId}`));
+    expect(await screen.findByTestId(`reset-${CLINIC.admins[0]?.userId ?? ""}`)).toBeTruthy();
     // One admin on the fixture, so exactly one button — a doctor is not in `admins` at all.
-    expect(screen.getAllByText("كلمة مرور مؤقتة للمدير")).toHaveLength(1);
+    expect(screen.getAllByText("إعادة تعيين كلمة المرور")).toHaveLength(1);
   });
 
   test("suspending asks for a reason and sends it", async () => {
