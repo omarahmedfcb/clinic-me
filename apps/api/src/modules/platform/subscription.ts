@@ -17,8 +17,6 @@ import { systemActor } from "../audit/system-actor.ts";
 import { setClinicSuspension } from "./platform-clinics.ts";
 import { botIsPausedIn, subscriptionPhase, SUBSCRIPTION_EXPIRED_REASON } from "./subscription-dates.ts";
 
-const asDay = (value: Date): string => value.toISOString().slice(0, 10);
-
 /**
  * Brings every ACTIVE clinic in line with its range. Idempotent and safe to run often: a clinic
  * already suspended is not touched, and a pass that overlaps another cannot suspend twice (the second
@@ -30,39 +28,27 @@ const asDay = (value: Date): string => value.toISOString().slice(0, 10);
 export async function runExpiryPass(now: Date = new Date()): Promise<{ suspended: number; botChanged: number }> {
   const system = await systemActor();
 
-  const { files, tenants } = await withPlatformActor(system, async (tx) => ({
-    files: await tx.platformClinicFile.findMany({
-      select: { tenantId: true, subscriptionStartsOn: true, renewalOn: true },
-    }),
+  // The client file is operator-only under row-level security, so the worker cannot read the table: it
+  // reads the ranges through a function that answers the system actor alone (see the migration).
+  const { ranges, tenants } = await withPlatformActor(system, async (tx) => ({
+    ranges: await tx.$queryRaw<{ tenant_id: string; starts_on: string; ends_on: string }[]>`
+      SELECT tenant_id, starts_on, ends_on FROM subscription_ranges_for_worker()
+    `,
     tenants: await tx.tenant.findMany({
       where: { status: "ACTIVE" },
-      select: { id: true, timezone: true, botPaused: true, createdAt: true },
+      select: { id: true, timezone: true, botPaused: true },
     }),
   }));
 
-  const fileOf = new Map(files.map((file) => [file.tenantId, file]));
+  const rangeOf = new Map(ranges.map((range) => [range.tenant_id, range]));
   let suspended = 0;
   let botChanged = 0;
 
   for (const tenant of tenants) {
     try {
-      const file = fileOf.get(tenant.id);
-      const endsOn = file?.renewalOn ? asDay(file.renewalOn) : null;
-      let startsOn = file?.subscriptionStartsOn ? asDay(file.subscriptionStartsOn) : null;
-
-      // A file written before the range existed has an end day and no start day. Its start is the day
-      // the clinic was created (or the end day if that is later), so it keeps working exactly as it did.
-      if (file !== undefined && endsOn !== null && startsOn === null) {
-        const created = asDay(tenant.createdAt);
-        startsOn = created < endsOn ? created : endsOn;
-        const backfilled = startsOn;
-        await withPlatformActor(system, (tx) =>
-          tx.platformClinicFile.update({
-            where: { tenantId: tenant.id },
-            data: { subscriptionStartsOn: new Date(`${backfilled}T00:00:00.000Z`) },
-          }),
-        );
-      }
+      const range = rangeOf.get(tenant.id);
+      const startsOn = range?.starts_on ?? null;
+      const endsOn = range?.ends_on ?? null;
 
       const phase = subscriptionPhase(startsOn, endsOn, now, tenant.timezone);
 
