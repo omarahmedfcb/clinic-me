@@ -46,6 +46,8 @@ export interface DoctorSummary {
    * existence, never the bytes: the images are streamed from their own capability-gated routes.
    */
   printedName: string | null;
+  /** What the English print sheet shows under the signature. */
+  printedNameEn: string | null;
   syndicateNumber: string | null;
   /** R1 and R2: whether this doctor may move a visit total, and whether they take payment. */
   mayAdjustPrices: boolean;
@@ -94,6 +96,7 @@ export interface UpdateDoctorInput {
   roomNumber?: string | null;
   /** Q28's print fields. Same null-clears-it reading as the two above. */
   printedName?: string | null;
+  printedNameEn?: string | null;
   syndicateNumber?: string | null;
   /** R1 and R2, set by an admin on the doctor form. Booleans, so there is nothing to clear. */
   mayAdjustPrices?: boolean;
@@ -124,6 +127,8 @@ interface DoctorRow {
   licenseExpiry: Date | null;
   roomNumber: string | null;
   printedName: string | null;
+  /** What the English print sheet shows under the signature. */
+  printedNameEn: string | null;
   syndicateNumber: string | null;
   mayAdjustPrices: boolean;
   priceAdjustmentCapPercent: number | null;
@@ -147,6 +152,7 @@ const toSummary = (row: DoctorRow, futureAppointmentCount: number): DoctorSummar
   licenseExpiry: row.licenseExpiry === null ? null : row.licenseExpiry.toISOString().slice(0, 10),
   roomNumber: row.roomNumber,
   printedName: row.printedName,
+  printedNameEn: row.printedNameEn,
   syndicateNumber: row.syndicateNumber,
   mayAdjustPrices: row.mayAdjustPrices,
   priceAdjustmentCapPercent: row.priceAdjustmentCapPercent,

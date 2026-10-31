@@ -63,6 +63,10 @@ export class UpdateDoctorDto {
   @IsOptional() @IsString() @MaxLength(120)
   printedName?: string | null;
 
+  /** What the English print sheet shows under the signature. `null` clears it (IsOptional lets null through). */
+  @IsOptional() @IsString() @MaxLength(120)
+  printedNameEn?: string | null;
+
   @IsOptional() @IsString() @MaxLength(60)
   syndicateNumber?: string | null;
 
