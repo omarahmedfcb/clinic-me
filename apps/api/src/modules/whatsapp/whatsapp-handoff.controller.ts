@@ -4,7 +4,7 @@ import { AuthGuard, type AuthenticatedRequest } from "../../common/auth.guard.ts
 import { PermissionGuard } from "../../common/permission.guard.ts";
 import { RequirePermission } from "../../common/require-permission.decorator.ts";
 import { TenantGuard } from "../../common/tenant.guard.ts";
-import { listPausedChats, resumeBot } from "./whatsapp-handoff.ts";
+import { listPausedChats, resumeAllBots, resumeBot } from "./whatsapp-handoff.ts";
 
 /**
  * The desk's view of human handoff: which WhatsApp chats the bot is paused on, and the button that
@@ -19,6 +19,13 @@ export class WhatsAppHandoffController {
   async list(@Req() request: AuthenticatedRequest) {
     const items = await listPausedChats(request.authClaims.tenantId, actorContext.getOrThrow());
     return { items };
+  }
+
+  @Post("resume-all")
+  @RequirePermission("appointments.read")
+  async resumeAll(@Req() request: AuthenticatedRequest) {
+    const count = await resumeAllBots(request.authClaims.tenantId, actorContext.getOrThrow());
+    return { resumed: count };
   }
 
   @Post(":conversationId/resume")

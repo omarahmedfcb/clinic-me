@@ -37,6 +37,7 @@ import { SidebarFoot, SidebarNav } from "./SidebarNav.tsx";
 import { Drawer } from "../../design-system/overlays.tsx";
 import { Menu } from "lucide-react";
 import { ConnectionBanner } from "./ConnectionBanner.tsx";
+import { HandoffBanner } from "./HandoffBanner.tsx";
 
 /**
  * The authenticated shell: sidebar, header, tenant switcher, logout.
@@ -277,6 +278,7 @@ export function AppShell() {
         </header>
 
         <ConnectionBanner />
+        <HandoffBanner />
 
         {/* Only for an ADMIN or OWNER inside the final fortnight: the server sends null for everyone else.
             Renewal is arranged with the vendor outside the app, so this only says when it ends. */}

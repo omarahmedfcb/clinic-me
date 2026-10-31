@@ -273,3 +273,14 @@ export async function resumeBot(tenantId: string, actor: ActorContext, conversat
   });
 }
 
+/** Hands every paused chat of this clinic back to the bot at once. Returns how many were paused. */
+export async function resumeAllBots(tenantId: string, actor: ActorContext): Promise<number> {
+  const now = new Date();
+  return withTenant(tenantId, actor, async (tx) => {
+    const result = await tx.conversation.updateMany({
+      where: { botPausedUntil: { gt: now } },
+      data: { botPausedUntil: null, botPausedReason: null },
+    });
+    return result.count;
+  });
+}
