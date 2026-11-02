@@ -125,9 +125,9 @@ export async function listClinics(actor: ActorContext, today: Date = new Date())
           connection === undefined
             ? { state: "NONE" as const, displayPhoneNumber: null }
             : {
-                state: connection.status === "ACTIVE" ? ("CONNECTED" as const) : ("NEEDS_ATTENTION" as const),
-                displayPhoneNumber: connection.display_phone_number,
-              },
+              state: connection.status === "ACTIVE" ? ("CONNECTED" as const) : ("NEEDS_ATTENTION" as const),
+              displayPhoneNumber: connection.display_phone_number,
+            },
         tenantId: tenant.id,
         name: tenant.name,
         slug: tenant.slug,

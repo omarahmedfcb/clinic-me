@@ -7,6 +7,7 @@ import type { CallerContext } from "../appointments/appointments.service.ts";
 import { doctorIdForMembership } from "./clinical.access.ts";
 import { reachVisitForOrders, type OrdersRefusal } from "./visit-orders.ts";
 import { visitScope } from "./visit-scope.ts";
+import { readBranchWhere } from "../../common/branch-read.ts";
 
 export type PricingRefusal =
   | OrdersRefusal
@@ -148,6 +149,10 @@ export async function getVisitPricing(
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
     const reached = await reachVisitForOrders(tx, caller, appointmentId, visitId, now, false);
     if (!reached.ok) return { ok: false as const, refusal: reached.refusal };
+    // Outside the caller's branches it is not found, and nothing is recorded: a read miss is not a refusal.
+    if ((await tx.visit.count({ where: { AND: [{ id: visitId }, visitScope(caller), readBranchWhere("createdAt")] } })) === 0) {
+      return { ok: false as const, refusal: { code: "NOT_FOUND" as const, params: { resource: "visit" as const } } };
+    }
     return { ok: true as const, value: await view(tx, caller, visitId) };
   });
 }

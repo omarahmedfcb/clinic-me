@@ -13,6 +13,7 @@ import { AppShell } from "./features/shell/AppShell.tsx";
 import { WebchatPage } from "./features/webchat/WebchatPage.tsx";
 import { isDocumentsPath, VisitDocumentsPage } from "./features/documents/VisitDocumentsPage.tsx";
 import { refreshAccessToken } from "./features/auth/refresh-session.ts";
+import { HOME_PATH } from "./features/shell/navigation.ts";
 
 /**
  * Which screen is on: the login page, or the authenticated shell.
@@ -58,7 +59,9 @@ export function App() {
     setScreen({ kind: "password", token });
   }, []);
 
+  // Logout forgets the screen: the next login, whoever it is, lands on home, never on the last person's page.
   const signedOut = useCallback(() => {
+    window.history.replaceState(null, "", HOME_PATH);
     setScreen({ kind: "login" });
   }, []);
 

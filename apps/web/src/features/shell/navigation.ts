@@ -131,5 +131,21 @@ export const NAV_ITEMS: readonly NavItem[] = [
 
 /** Which sections this permission summary makes visible. `none` hides; `own` and `full` show. */
 export function visibleNavItems(permissions: Record<string, string>): NavItem[] {
-  return NAV_ITEMS.filter((item) => item.capability === undefined || permissions[item.capability] !== "none");
+  return NAV_ITEMS.filter((item) => mayOpenItem(item, permissions));
+}
+
+const mayOpenItem = (item: NavItem, permissions: Record<string, string>): boolean =>
+  item.capability === undefined || permissions[item.capability] !== "none";
+
+/** Where a screen the caller may not open sends them, and where a fresh login lands. */
+export const HOME_PATH = "/day";
+
+/**
+ * The route guard: a path is open when the section that owns it (same match as `activeNavKey`) is one the caller may see.
+ * One rule for links and screens, so a visible link never redirects and a hidden one never renders.
+ */
+export function canOpen(path: string, permissions: Record<string, string>): boolean {
+  const key = activeNavKey(path);
+  const item = NAV_ITEMS.find((candidate) => candidate.key === key);
+  return item === undefined || mayOpenItem(item, permissions);
 }

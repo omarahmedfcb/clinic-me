@@ -31,7 +31,7 @@ import { AuditLogPage } from "../audit/AuditLogPage.tsx";
 import { ClinicSettingsPage } from "../settings/ClinicSettingsPage.tsx";
 import { MyDetailsPage } from "../settings/MyDetailsPage.tsx";
 import { useSession } from "../auth/session.tsx";
-import { activeNavKey, visibleNavItems } from "./navigation.ts";
+import { activeNavKey, canOpen, HOME_PATH, visibleNavItems } from "./navigation.ts";
 import { roleLabel } from "../memberships/role-label.ts";
 import { SidebarFoot, SidebarNav } from "./SidebarNav.tsx";
 import { Drawer } from "../../design-system/overlays.tsx";
@@ -79,8 +79,13 @@ function useCurrentPath(): [string, (path: string) => void] {
 
 export function AppShell() {
   const { t } = useLocale();
-  const [path, navigate] = useCurrentPath();
+  const [requested, navigate] = useCurrentPath();
   const { me, logout, switchTenant, authFetch } = useSession();
+  // The route guard: a screen whose section the caller may not see is never rendered; home is, and the URL says so.
+  const path = canOpen(requested, me.permissions) ? requested : HOME_PATH;
+  useEffect(() => {
+    if (path !== requested) window.history.replaceState(null, "", path);
+  }, [path, requested]);
 
   /**
    * The first route with a parameter, which is what the note above anticipated: *"when a second and

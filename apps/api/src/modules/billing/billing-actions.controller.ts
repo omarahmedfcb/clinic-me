@@ -25,6 +25,7 @@ import { refusal } from "../../common/refusals.ts";
 import { TenantGuard } from "../../common/tenant.guard.ts";
 import { RecordPaymentDto } from "./billing.controller.ts";
 import { recordPayment } from "./desk.ts";
+import { getBranchesReport } from "./branches-report.ts";
 import {
   applyCreditToCharge,
   getCreditLedger,
@@ -94,6 +95,14 @@ export class BillingActionsController {
       new Date(),
     );
     // Well formed and refusable on content: a month that is not a month.
+    if (!result.ok) throw new UnprocessableEntityException(refusal("INVALID_PERIOD", {}));
+    return result.value;
+  }
+
+  @Get("reports/branches")
+  @RequirePermission("reports.financial")
+  async branchesReport(@Req() request: AuthenticatedRequest, @Query() query: PaymentsReportDto) {
+    const result = await getBranchesReport(this.caller(request), { period: query.period ?? "MONTH", on: query.on }, new Date());
     if (!result.ok) throw new UnprocessableEntityException(refusal("INVALID_PERIOD", {}));
     return result.value;
   }

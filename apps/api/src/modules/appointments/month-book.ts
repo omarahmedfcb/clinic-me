@@ -6,6 +6,7 @@ import { LIVE_STATUSES, TERMINAL_STATUSES } from "./domain/transition.ts";
 import { instantsForLocal } from "./domain/zoned-time.ts";
 import { isPinnedToOwnDoctor, resolveReadableDoctorId } from "../../common/doctor-scope.ts";
 import { withTenant } from "../../prisma/with-tenant.ts";
+import { readBranchWhere, readSet } from "../../common/branch-read.ts";
 import type { CallerContext } from "./appointments.service.ts";
 
 export interface MonthDay {
@@ -87,6 +88,13 @@ export async function describeMonth(
     const doctorId = resolved ?? null;
     const onlyOneDoctor =
       doctorId === null ? Prisma.empty : Prisma.sql`AND a.doctor_id = ${doctorId}::uuid`;
+    const set = readSet();
+    const inReadBranches = set === null
+      ? Prisma.empty
+      : Prisma.sql`AND (a.branch_id = ANY(${[...set.active]}::uuid[])${set.suspended.length === 0
+          ? Prisma.empty
+          : Prisma.join(set.suspended.map((b) => Prisma.sql` OR (a.branch_id = ${b.id}::uuid AND a.scheduled_start < ${b.suspendedAt})`), "")
+        })`;
 
     // One pass, two conditional aggregates: a second query for the finished half could disagree with
     // the first about which day a 22:00 appointment belongs to.
@@ -195,6 +203,7 @@ export async function listDayBookings(
       where: {
         scheduledStart: { gte: bounds, lt: end },
         ...(doctorId === null ? {} : { doctorId }),
+        ...readBranchWhere("scheduledStart"),
       },
       select: {
         id: true,

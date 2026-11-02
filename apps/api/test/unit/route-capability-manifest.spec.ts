@@ -259,12 +259,18 @@ describe("the manifest itself is legible", () => {
        * They are listed here rather than exempted by a pattern, so that a *third* `/platform/*`
        * route cannot become ungoverned without somebody adding a line to this list.
        */
+      // 2026-10-29: the running commit, behind PlatformAuthGuard like the rest.
+      "GET /platform/branch-limit-graces",
+      "GET /platform/branch-requests",
+      "GET /platform/build",
       "GET /platform/clinics",
       // 2026-09-15, the back office. Same reasoning, one line each so a new one is a visible edit.
       "GET /platform/clinics/:tenantId/contracts/:contractId/content",
       "GET /platform/clinics/:tenantId/file",
       "GET /platform/me",
+      "GET /platform/messages",
       "GET /platform/operators",
+      "GET /platform/support-sessions",
       /**
        * **The public surface: no login, so no membership, so no capability to ask.** Each is
        * governed by something other than the matrix, and is listed one by one (not by a
@@ -290,15 +296,19 @@ describe("the manifest itself is legible", () => {
       // token here, so there is no membership yet to ask a capability of. Throttled on the
       // credential id instead (bot-throttle.ts), and it grants nothing but an AI_AGENT token.
       "POST /bot/auth/token",
+      "POST /platform/branch-requests/:requestId/decision",
       "POST /platform/clinics",
       "POST /platform/clinics/:tenantId/admins/:userId/password",
+      "POST /platform/clinics/:tenantId/branch-limit",
       "POST /platform/clinics/:tenantId/contacts",
       "POST /platform/clinics/:tenantId/contacts/:contactId/remove",
       "POST /platform/clinics/:tenantId/contracts",
       "POST /platform/clinics/:tenantId/file",
+      "POST /platform/clinics/:tenantId/support-access",
       "POST /platform/clinics/:tenantId/suspension",
       "POST /platform/clinics/whatsapp",
       "POST /platform/login",
+      "POST /platform/messages",
       "POST /platform/operators",
       "POST /platform/operators/:userId/role",
       "POST /platform/operators/:userId/totp/reset",
@@ -309,7 +319,9 @@ describe("the manifest itself is legible", () => {
       // password and a live code again; `recovery` is behind `PendingPlatformGuard` and is the
       // lost-authenticator path. Both act only on the account in the token.
       "POST /platform/recovery-codes/regenerate",
-      "POST /platform/session/refresh",
+      "POST /platform/support-sessions/clinics/:tenantId",
+      "POST /platform/support-sessions/clinics/:tenantId/:sessionId/token",
+      "POST /platform/support-sessions/clinics/:tenantId/:sessionId/withdraw",
       "POST /platform/totp/confirm",
       "POST /platform/totp/enrol",
       "POST /platform/totp/recovery",

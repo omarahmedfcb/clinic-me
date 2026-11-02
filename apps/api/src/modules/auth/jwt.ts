@@ -6,6 +6,8 @@ export interface AccessTokenClaims {
   membershipId: string;
   tenantId: string;
   role: MembershipRole;
+  /** Present only on a support token: `sub` is the operator, `membershipId` the approving admin's (support access PR 3). */
+  supportSessionId?: string;
 }
 
 /**
@@ -82,6 +84,15 @@ export async function verifyAccessToken(token: string): Promise<AccessTokenClaim
       throw new AccessTokenInvalidError("Access token is invalid.");
     }
 
+    // A support token carries the same four claims, so it is told apart by audience and session: it is checked against its
+    // live session on every request (support access PR 3), never accepted as an ordinary clinic login.
+    const supportSessionId = payload["supportSessionId"];
+    if (payload.aud === SUPPORT_AUDIENCE) {
+      if (typeof supportSessionId !== "string") throw new AccessTokenInvalidError("Access token is invalid.");
+      return { sub, membershipId, tenantId, role: role as MembershipRole, supportSessionId };
+    }
+    if (payload.aud !== undefined || supportSessionId !== undefined) throw new AccessTokenInvalidError("Access token is invalid.");
+
     return { sub, membershipId, tenantId, role: role as MembershipRole };
   } catch (err) {
     if (err instanceof joseErrors.JWTExpired) {
@@ -89,4 +100,19 @@ export async function verifyAccessToken(token: string): Promise<AccessTokenClaim
     }
     throw new AccessTokenInvalidError("Access token is invalid.");
   }
+}
+
+const SUPPORT_AUDIENCE = "clinic-os:support";
+const SUPPORT_TOKEN_MAX_SECONDS = 10 * 60;
+
+/** The operator's own id, the approver's membership, the session: at most ten minutes, never past the session's end. */
+export async function issueSupportToken(claims: Required<AccessTokenClaims>, sessionExpiresAt: Date, now: Date): Promise<string> {
+  const exp = Math.min(Math.floor(now.getTime() / 1000) + SUPPORT_TOKEN_MAX_SECONDS, Math.floor(sessionExpiresAt.getTime() / 1000));
+  return new SignJWT({ membershipId: claims.membershipId, tenantId: claims.tenantId, role: claims.role, supportSessionId: claims.supportSessionId })
+    .setProtectedHeader({ alg: ALGORITHM })
+    .setSubject(claims.sub)
+    .setAudience(SUPPORT_AUDIENCE)
+    .setIssuedAt(Math.floor(now.getTime() / 1000))
+    .setExpirationTime(exp)
+    .sign(getSecretKey());
 }

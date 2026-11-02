@@ -2,6 +2,9 @@
 // Field NAMES travel, values never do — `audit_logs` holds to_jsonb(NEW) of every clinical row.
 
 import { withTenant, type ActorContext } from "../../prisma/with-tenant.ts";
+import { Prisma } from "../../generated/prisma/client.ts";
+import { eventVisible } from "./event-branch-filter.ts";
+import { eventReach, type EventReach } from "./event-reach.ts";
 
 export interface AuditCaller {
   tenantId: string;
@@ -69,10 +72,30 @@ export async function listAuditLog(
   const from = filters.from ?? null;
   const to = filters.to ?? null;
 
+  const visible = eventVisible();
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
     // Tenant isolation is RLS's, not this predicate's: `audit_logs` carries the same policy every
     // other table does, so a second tenant's rows are not there to be filtered out.
     const rows = await tx.$queryRaw<Row[]>`
+      WITH matching AS (
+        SELECT a.*
+          FROM audit_logs a
+         WHERE (${actorUserId}::uuid IS NULL OR a.actor_user_id = ${actorUserId}::uuid)
+           AND (${entityType}::text IS NULL OR a.entity_type = ${entityType}::text)
+           AND (${from}::date IS NULL OR a.created_at >= ${from}::date)
+           -- The "to" day is inclusive: a reader asking for "up to the 9th" means the whole of it.
+           AND (${to}::date IS NULL OR a.created_at < (${to}::date + INTERVAL '1 day'))
+      ), events AS (
+        SELECT a.actor_user_id, a.created_at,
+               row_number() OVER (ORDER BY a.created_at DESC, a.actor_user_id)::int AS event,
+               count(*) OVER ()::int AS total
+          FROM matching a
+         GROUP BY a.tenant_id, a.actor_user_id, a.created_at
+         ${visible === null ? Prisma.empty : Prisma.sql`HAVING ${visible}`}
+         ORDER BY a.created_at DESC, a.actor_user_id
+         LIMIT ${limit} OFFSET ${offset}
+      )
+      SELECT * FROM (
       SELECT a.id,
              a.created_at     AS at,
              a.actor_user_id  AS "actorUserId",
@@ -114,6 +137,8 @@ export async function listAuditLog(
 }
 
 export async function auditFilterOptions(caller: AuditCaller): Promise<AuditFilterOptions> {
+  const visible = eventVisible();
+  const where = visible === null ? Prisma.empty : Prisma.sql`WHERE ${visible}`;
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
     const [actors, types] = await Promise.all([
       tx.$queryRaw<{ userId: string; fullName: string; role: string }[]>`
@@ -122,9 +147,10 @@ export async function auditFilterOptions(caller: AuditCaller): Promise<AuditFilt
                a.actor_role AS role
           FROM audit_logs a
           LEFT JOIN users u ON u.id = a.actor_user_id
+         ${where}
          ORDER BY "fullName" ASC`,
       tx.$queryRaw<{ entityType: string }[]>`
-        SELECT DISTINCT entity_type AS "entityType" FROM audit_logs ORDER BY "entityType" ASC`,
+        SELECT DISTINCT a.entity_type AS "entityType" FROM audit_logs a ${where} ORDER BY "entityType" ASC`,
     ]);
     return { actors, entityTypes: types.map((row) => row.entityType) };
   });

@@ -43,10 +43,12 @@ export class ActorContextInterceptor implements NestInterceptor {
       return next.handle();
     }
 
+    const supportSessionId = request.authClaims?.supportSessionId;
     const actor = {
       userId,
       ip: request.ip ?? "unknown",
       userAgent: request.headers["user-agent"] ?? "unknown",
+      ...(supportSessionId === undefined ? {} : { supportSessionId }),
     };
 
     // Constructed manually rather than as next.handle().pipe(...) so that the subscribe() call --

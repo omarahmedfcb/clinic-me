@@ -4,6 +4,7 @@ import type { RefusalParams } from "../../common/refusals.ts";
 import { withTenant, type TransactionClient } from "../../prisma/with-tenant.ts";
 import { doctorIdForMembership } from "../clinical/clinical.access.ts";
 import type { DeskCaller } from "./desk.ts";
+import { readBranchWhere } from "../../common/branch-read.ts";
 
 /** A doctor reads and sets the split only on their own patients' charges (R2). */
 async function ownCharge(tx: TransactionClient, caller: DeskCaller, chargeId: string) {
@@ -92,7 +93,7 @@ export async function getPayerSplit(
 ): Promise<SplitResult<ChargeSplit>> {
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
     const charge = await tx.visitCharge.findFirst({
-      where: await ownCharge(tx, caller, chargeId),
+      where: { AND: [await ownCharge(tx, caller, chargeId), readBranchWhere("createdAt")] },
       select: { id: true, patientId: true },
     });
     if (charge === null) {

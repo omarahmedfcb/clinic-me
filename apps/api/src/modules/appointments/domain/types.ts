@@ -89,6 +89,8 @@ export interface OccupancyRow {
   status: string;
   allowOverlap: boolean;
   serviceBufferMinutes: number;
+  /** Where the appointment is. The engine ignores it: a doctor is in one place, whatever the branch. */
+  branchId?: string;
 }
 
 export interface SlotEngineService {

@@ -4,6 +4,10 @@ import { createStorageProvider } from "../attachments/storage/storage.factory.ts
 import { PlatformClientFileController } from "./platform-client-file.controller.ts";
 import { PlatformClinicWhatsAppController } from "./platform-clinic-whatsapp.controller.ts";
 import { PlatformClinicWhatsAppAttachController } from "./platform-clinic-whatsapp-attach.controller.ts";
+import { PlatformBranchGracesController } from "./platform-branch-graces.controller.ts";
+import { PlatformBranchRequestsController } from "./platform-branch-requests.controller.ts";
+import { PlatformMessagesController } from "./platform-messages.controller.ts";
+import { PlatformSupportSessionsController } from "./platform-support-sessions.controller.ts";
 import { PlatformClinicsController } from "./platform-clinics.controller.ts";
 import { PlatformOperatorsController } from "./platform-operators.controller.ts";
 import { PlatformController } from "./platform.controller.ts";
@@ -18,6 +22,10 @@ import { PlatformController } from "./platform.controller.ts";
   controllers: [
     PlatformController,
     PlatformClinicsController,
+    PlatformBranchRequestsController,
+    PlatformBranchGracesController,
+    PlatformMessagesController,
+    PlatformSupportSessionsController,
     PlatformClinicWhatsAppController,
     PlatformClinicWhatsAppAttachController,
     PlatformOperatorsController,
@@ -30,4 +38,4 @@ import { PlatformController } from "./platform.controller.ts";
     },
   ],
 })
-export class PlatformModule {}
+export class PlatformModule { }

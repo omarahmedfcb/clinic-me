@@ -26,7 +26,8 @@ const pool = new Pool({
   max: 10,
 });
 
-const adapter = new PrismaPg(pool);
+// Without disposeExternalPool, $disconnect() leaves this pool's sockets open until pg's idle timeout.
+const adapter = new PrismaPg(pool, { disposeExternalPool: true });
 
 export const prisma = withTenantScoping(
   new PrismaClient({

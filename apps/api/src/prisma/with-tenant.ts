@@ -27,7 +27,15 @@ export interface ActorContext {
   userId: string;
   ip: string;
   userAgent: string;
+  /** Set when the actor is an operator inside a clinic by consent (support access PR 3); every transaction re-checks it. */
+  supportSessionId?: string;
 }
+
+/** A transaction refused because the support session it runs under is no longer live with time to spare. */
+export class SupportSessionEndedError extends Error {}
+
+/** No support transaction starts with less left than the client's own transaction cap (30 s), so none can outlive the hour. */
+const SUPPORT_TRANSACTION_MARGIN_MS = 30_000;
 
 /**
  * Rejects a value that is not a UUID before it is bound as a Postgres session variable.
@@ -133,6 +141,20 @@ export async function withTenant<T>(
              set_config('app.current_ip', ${actor.ip}, true),
              set_config('app.current_user_agent', ${actor.userAgent}, true)
     `;
+
+    if (actor.supportSessionId !== undefined) {
+      // Support access PR 3, per transaction: the session is live with the margin to spare, the trigger sees its id on every
+      // write, and no statement may run past the session's end.
+      assertUuidShape(actor.supportSessionId, "actor.supportSessionId");
+      const left = await tx.$queryRaw<{ ms: number }[]>`
+        SELECT floor(extract(epoch FROM (expires_at - clock_timestamp())) * 1000)::int AS ms FROM support_sessions
+         WHERE id = ${actor.supportSessionId}::uuid AND status = 'ACTIVE' AND tenant_id = ${tenantId}::uuid`;
+      const ms = left[0]?.ms ?? 0;
+      if (ms < SUPPORT_TRANSACTION_MARGIN_MS) throw new SupportSessionEndedError("The support session has ended.");
+      await tx.$queryRaw`
+        SELECT set_config('app.current_support_session_id', ${actor.supportSessionId}, true),
+               set_config('statement_timeout', ${String(ms)}, true)`;
+    }
 
     // The callback must be async and must await here, not just return the promise fn() produces.
     // AsyncLocalStorage only reliably tracks continuations that were awaited from inside the

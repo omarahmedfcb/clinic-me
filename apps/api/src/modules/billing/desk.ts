@@ -6,6 +6,7 @@ import type { RefusalParams } from "../../common/refusals.ts";
 import { injected } from "../../prisma/injected.ts";
 import { withTenant, type ActorContext, type TransactionClient } from "../../prisma/with-tenant.ts";
 import { doctorIdForMembership } from "../clinical/clinical.access.ts";
+import { readBranchWhere } from "../../common/branch-read.ts";
 
 export type DeskRefusalReason =
   | "NOT_FOUND"
@@ -90,9 +91,12 @@ export async function getDeskCharge(
   caller: DeskCaller,
   chargeId: string,
 ): Promise<DeskResult<DeskCharge>> {
-  return withTenant(caller.tenantId, caller.actor, async (tx) =>
-    readCharge(tx, chargeId, await callerDoctorId(tx, caller)),
-  );
+  return withTenant(caller.tenantId, caller.actor, async (tx) => {
+    if ((await tx.visitCharge.count({ where: { id: chargeId, ...readBranchWhere("createdAt") } })) === 0) {
+      return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "visit" as const } };
+    }
+    return readCharge(tx, chargeId, await callerDoctorId(tx, caller));
+  });
 }
 
 /**

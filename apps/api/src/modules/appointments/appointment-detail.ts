@@ -1,5 +1,6 @@
 import { withTenant } from "../../prisma/with-tenant.ts";
 import type { CallerContext } from "./appointments.service.ts";
+import { readBranchWhere } from "../../common/branch-read.ts";
 
 /**
  * The non-clinical half of the appointment detail panel — `PHASE-4.md`.
@@ -67,7 +68,7 @@ export async function getAppointmentDetail(
 ): Promise<AppointmentDetail | null> {
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
     const appointment = await tx.appointment.findFirst({
-      where: { id: appointmentId },
+      where: { id: appointmentId, ...readBranchWhere("scheduledStart") },
       select: {
         id: true,
         status: true,

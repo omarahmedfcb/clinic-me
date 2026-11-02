@@ -50,6 +50,15 @@ const WRITE_ROUTES: { route: string; audited: "clinic-trail" | "vendor-trail" | 
   { route: "POST /platform/clinics", audited: "clinic-trail" },
   { route: "POST /platform/clinics/whatsapp", audited: "clinic-trail" },
   { route: "POST /platform/clinics/:tenantId/suspension", audited: "clinic-trail" },
+  { route: "POST /platform/clinics/:tenantId/branch-limit", audited: "clinic-trail" },
+  { route: "POST /platform/clinics/:tenantId/support-access", audited: "clinic-trail" },
+  { route: "POST /platform/branch-requests/:requestId/decision", audited: "clinic-trail" },
+  // The message is audited by its platform trigger, and each clinic's copies by theirs, into that clinic's trail.
+  { route: "POST /platform/messages", audited: "trigger" },
+  // The support_sessions trigger writes each request and withdrawal into the clinic's own trail.
+  { route: "POST /platform/support-sessions/clinics/:tenantId", audited: "trigger" },
+  { route: "POST /platform/support-sessions/clinics/:tenantId/:sessionId/token", audited: "clinic-trail" },
+  { route: "POST /platform/support-sessions/clinics/:tenantId/:sessionId/withdraw", audited: "trigger" },
   { route: "POST /platform/clinics/:tenantId/admins/:userId/password", audited: "clinic-trail" },
   { route: "POST /platform/clinics/:tenantId/contracts", audited: "clinic-trail" },
   { route: "POST /platform/clinics/:tenantId/file", audited: "trigger" },

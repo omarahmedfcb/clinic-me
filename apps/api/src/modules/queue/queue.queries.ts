@@ -14,6 +14,7 @@ import {
   type QueueEntry,
   type QueueQuery,
 } from "./queue.types.ts";
+import { readBranchWhere } from "../../common/branch-read.ts";
 
 /**
  * The queue's reads. Mutations live in `queue.moves.ts`.
@@ -183,6 +184,7 @@ export async function describeQueue(
         scheduledStart: { gte: query.dayStart, lt: query.dayEnd },
         status: { in: [...ON_QUEUE] },
         ...(query.doctorId === undefined ? {} : { doctorId: query.doctorId }),
+        ...readBranchWhere("scheduledStart"),
       },
       select: {
         id: true,
@@ -214,12 +216,12 @@ export async function describeQueue(
       patientIds.length === 0
         ? []
         : await tx.patientInsurance.findMany({
-            where: { patientId: { in: patientIds } },
-            select: {
-              patientId: true,
-              policy: { select: { insurerName: true, validFrom: true, validTo: true } },
-            },
-          });
+          where: { patientId: { in: patientIds } },
+          select: {
+            patientId: true,
+            policy: { select: { insurerName: true, validFrom: true, validTo: true } },
+          },
+        });
 
     // The queue's one visit read, batched like the coverage read above and for the same reason:
     // the board polls every five seconds and a per-row lookup would multiply that by the number of
@@ -228,13 +230,13 @@ export async function describeQueue(
       appointments.length === 0
         ? []
         : await tx.visit.findMany({
-            where: appointmentDoctorScope(
-              appointments.map((row) => ({ appointmentId: row.id, doctorId: row.doctorId })),
-            ),
-            // Status only. Selecting anything a clinician typed would be a leak, and the DTO
-            // allow-list is what stops the next field arriving quietly.
-            select: { appointmentId: true, status: true },
-          });
+          where: appointmentDoctorScope(
+            appointments.map((row) => ({ appointmentId: row.id, doctorId: row.doctorId })),
+          ),
+          // Status only. Selecting anything a clinician typed would be a leak, and the DTO
+          // allow-list is what stops the next field arriving quietly.
+          select: { appointmentId: true, status: true },
+        });
 
     return {
       rows: appointments,
@@ -304,6 +306,7 @@ export async function pendingNoShows(
         scheduledStart: { gte: query.dayStart, lt: query.dayEnd },
         status: { in: ["BOOKED", "CONFIRMED"] },
         ...(query.doctorId === undefined ? {} : { doctorId: query.doctorId }),
+        ...readBranchWhere("scheduledStart"),
       },
       select: {
         id: true,

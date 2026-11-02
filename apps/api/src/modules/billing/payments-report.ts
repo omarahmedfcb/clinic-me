@@ -4,6 +4,7 @@
 import { calendarDayIn, instantsForLocal } from "../appointments/domain/zoned-time.ts";
 import { doctorIdForMembership } from "../clinical/clinical.access.ts";
 import { withTenant, type ActorContext, type TransactionClient } from "../../prisma/with-tenant.ts";
+import { readBranchWhere } from "../../common/branch-read.ts";
 
 export interface ReportCaller {
   tenantId: string;
@@ -146,6 +147,7 @@ export async function getPaymentsReport(
       where: {
         receiptDate: { gte: new Date(`${bounds.from}T00:00:00.000Z`), lte: new Date(`${bounds.to}T00:00:00.000Z`) },
         ...(doctorId === null ? {} : { visit: { doctorId } }),
+        ...readBranchWhere("receiptDate"),
       },
       select: {
         amountMinor: true,
@@ -162,7 +164,7 @@ export async function getPaymentsReport(
     // Charges written in the period, for what was billed; plus everything still open, for what is
     // owed. The two questions have different windows and collapsing them would answer neither.
     const charges = await tx.visitCharge.findMany({
-      where: { ...mine, OR: [{ createdAt: { gte: from, lt: until } }, { status: "OPEN" }] },
+      where: { AND: [{ ...mine, OR: [{ createdAt: { gte: from, lt: until } }, { status: "OPEN" }] }, readBranchWhere("createdAt")] },
       select: {
         id: true,
         visitId: true,

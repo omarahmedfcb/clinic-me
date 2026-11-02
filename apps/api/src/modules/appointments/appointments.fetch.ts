@@ -162,6 +162,7 @@ export async function loadDayInput(
       status: a.status,
       allowOverlap: a.allowOverlap,
       serviceBufferMinutes: a.service.bufferMinutes,
+      branchId: a.branchId,
     })),
   };
 }
@@ -252,6 +253,7 @@ export async function loadWeekInput(
     status: a.status,
     allowOverlap: a.allowOverlap,
     serviceBufferMinutes: a.service.bufferMinutes,
+    branchId: a.branchId,
   }));
 
   return (date: string) => ({

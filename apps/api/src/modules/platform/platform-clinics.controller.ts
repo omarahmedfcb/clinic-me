@@ -12,10 +12,12 @@ import {
   UnprocessableEntityException,
   UseGuards,
 } from "@nestjs/common";
-import { IsBoolean, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from "class-validator";
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from "class-validator";
+import { setBranchLimit } from "./platform-branch-limit.ts";
+import { setSupportAccess } from "./platform-support-access.ts";
 import { actorContext } from "../../common/actor-context.ts";
 import { refusal } from "../../common/refusals.ts";
-import { recordOperatorAction } from "./platform-audit.ts";
+import { recordOperatorAction, recordOperatorRead } from "./platform-audit.ts";
 import { saveClientFile } from "./platform-client-file.ts";
 import {
   renewClinic,
@@ -65,6 +67,16 @@ export class SuspendClinicDto {
   @IsOptional() @IsString() @MaxLength(500) reason?: string;
 }
 
+export class SetSupportAccessDto {
+  @IsBoolean() enabled!: boolean;
+  @IsString() @MaxLength(500) reason!: string;
+}
+
+export class SetBranchLimitDto {
+  @IsInt() @Min(1) @Max(100) maxBranches!: number;
+  @IsString() @MaxLength(500) reason!: string;
+}
+
 export class ResetAdminPasswordDto {
   @IsIn(["ADMIN", "OWNER"]) role!: "ADMIN" | "OWNER";
 }
@@ -98,7 +110,10 @@ export class PlatformClinicsController {
 
   @Get()
   async list(@Req() request: PlatformRequest) {
-    return { clinics: await listClinics(actorContext.getOrThrow()) };
+    const actor = actorContext.getOrThrow();
+    const clinics = await listClinics(actor);
+    await recordOperatorRead(actor, { entityType: "tenants", entityId: actor.userId, what: `clinic list (${clinics.length})` });
+    return { clinics };
   }
 
   @Post()
@@ -171,6 +186,44 @@ export class PlatformClinicsController {
       detail: { status: result.status, reason: body.reason ?? null, by: request.platformAdmin.fullName },
     });
 
+    return result;
+  }
+
+  @Post(":tenantId/support-access")
+  @HttpCode(200)
+  async supportAccess(
+    @Req() request: PlatformRequest,
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Body() body: SetSupportAccessDto,
+  ) {
+    const actor = actorContext.getOrThrow();
+    const result = this.unwrap(await setSupportAccess(actor, tenantId, body));
+    await recordOperatorAction(actor, {
+      tenantId,
+      action: "UPDATE",
+      entityType: "tenants",
+      entityId: tenantId,
+      detail: { supportAccessEnabled: result.enabled, reason: body.reason, by: request.platformAdmin.fullName },
+    });
+    return result;
+  }
+
+  @Post(":tenantId/branch-limit")
+  @HttpCode(200)
+  async branchLimit(
+    @Req() request: PlatformRequest,
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Body() body: SetBranchLimitDto,
+  ) {
+    const actor = actorContext.getOrThrow();
+    const result = this.unwrap(await setBranchLimit(actor, tenantId, body));
+    await recordOperatorAction(actor, {
+      tenantId,
+      action: "UPDATE",
+      entityType: "tenants",
+      entityId: tenantId,
+      detail: { maxBranches: result.maxBranches, previousLimit: result.previousLimit, reason: body.reason, by: request.platformAdmin.fullName },
+    });
     return result;
   }
 

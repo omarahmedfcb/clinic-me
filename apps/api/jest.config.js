@@ -12,6 +12,8 @@ const swcJestConfig = {
 
 /** @type {import('jest').Config} */
 module.exports = {
+  // Global, not per project (ignored there): each file's module graph outlives it (~33 MB a file), so restart the worker past 1.5 GB.
+  workerIdleMemoryLimit: "1536MB",
   projects: [
     {
       displayName: "unit",

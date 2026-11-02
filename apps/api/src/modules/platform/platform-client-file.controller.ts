@@ -22,7 +22,7 @@ import { IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLen
 import { actorContext } from "../../common/actor-context.ts";
 import { refusal } from "../../common/refusals.ts";
 import { ObjectNotFound, STORAGE_PROVIDER, type StorageProvider } from "../attachments/storage/storage-provider.ts";
-import { recordOperatorAction } from "./platform-audit.ts";
+import { recordOperatorAction, recordOperatorRead } from "./platform-audit.ts";
 import {
   ACCOUNT_STATUSES,
   addContact,
@@ -63,6 +63,8 @@ export class NewContactDto {
 export class NewContractDto {
   @IsString() @Matches(ISO_DAY) startsOn!: string;
   @IsString() @Matches(ISO_DAY) endsOn!: string;
+  /** Multipart, so a string. "true" only when the signed agreement names support as a data processor. */
+  @IsOptional() @IsIn(["true", "false"]) dataProcessorClause?: "true" | "false";
 }
 
 interface UploadedMultipartFile {
@@ -104,7 +106,10 @@ export class PlatformClientFileController {
 
   @Get("file")
   async read(@Param("tenantId", ParseUUIDPipe) tenantId: string) {
-    return this.unwrap(await readClientFile(actorContext.getOrThrow(), tenantId));
+    const actor = actorContext.getOrThrow();
+    const file = this.unwrap(await readClientFile(actor, tenantId));
+    await recordOperatorRead(actor, { tenantId, entityType: "tenants", entityId: tenantId, what: "client file" });
+    return file;
   }
 
   @Post("file")
@@ -171,6 +176,7 @@ export class PlatformClientFileController {
           bytes: file.buffer,
           startsOn: body.startsOn,
           endsOn: body.endsOn,
+          dataProcessorClause: body.dataProcessorClause === "true",
         },
         (key, bytes) => this.storage.put(key, bytes),
       ),
@@ -199,7 +205,9 @@ export class PlatformClientFileController {
     @Param("contractId", ParseUUIDPipe) contractId: string,
     @Res() response: Response,
   ): Promise<void> {
-    const found = this.unwrap(await readContract(actorContext.getOrThrow(), tenantId, contractId));
+    const actor = actorContext.getOrThrow();
+    const found = this.unwrap(await readContract(actor, tenantId, contractId));
+    await recordOperatorRead(actor, { tenantId, entityType: "platform_clinic_contracts", entityId: contractId, what: "contract" });
 
     let bytes: Buffer;
     try {

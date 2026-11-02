@@ -128,7 +128,7 @@ const stripped = Object.keys(dotenvValues).filter((key) => !provided.includes(ke
 console.log(`Variables withheld: ${stripped.length > 0 ? stripped.join(", ") : "(none)"}\n`);
 
 const args = ["jest", "--selectProjects", project];
-if (project === "integration") args.push("--runInBand");
+if (project === "integration") args.push("--maxWorkers=1");
 const child = spawn("npx", args, {
   cwd: apiDir,
   env: childEnv,

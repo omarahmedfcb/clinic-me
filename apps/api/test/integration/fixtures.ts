@@ -5,6 +5,11 @@ import { prisma } from "../../src/prisma/client.ts";
 import { injected } from "../../src/prisma/injected.ts";
 import { type ActorContext, withPlatformActor, withTenant } from "../../src/prisma/with-tenant.ts";
 
+/** The database's clock, for comparing with rows it timestamps; never this machine's clock, which is another clock. */
+export async function databaseNow(): Promise<Date> {
+  return (await prisma.$queryRaw<{ t: Date }[]>`SELECT clock_timestamp() AS t`)[0]!.t;
+}
+
 /** withTenant() now requires an actor (D16); this is the one place tests build that value, always
  * from a real, already-created user id -- the row exists once the audit trigger's FK constraint
  * on audit_logs.actor_user_id starts enforcing that, which withTenant()'s own UUID-shape check
@@ -52,6 +57,8 @@ export async function createTestTenant(): Promise<string> {
       locale: "ar",
       currency: "EGP",
       status: "ACTIVE",
+      // Room for the extra branches the branch specs create; the limit itself is tested in branch-limit.
+      maxBranches: 5,
       settings: {},
     },
   });

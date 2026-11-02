@@ -122,6 +122,10 @@ export const FIELD_NAMES = [
   "relationshipToContact",
   // A10, 2026-09-19: a webhook URL that is not HTTPS, or that resolves into our own network.
   "webhookUrl",
+  "requestedLimit",
+  "branchIds",
+  "decision",
+  "operatorId",
 ] as const;
 
 export type FieldName = (typeof FIELD_NAMES)[number];
@@ -146,6 +150,9 @@ export const RESOURCE_NAMES = [
   // The clinic's WhatsApp bot credential (2026-09-18). One live one per clinic, so both "already
   // issued" and "not found" need to be able to name it.
   "botCredential",
+  "branchRequest",
+  "operatorMessage",
+  "supportSession",
   "membership",
   "patient",
   "policy",
@@ -283,6 +290,12 @@ export const REFUSAL_CODES = [
   "SLUG_TAKEN",
   // Suspending a suspended clinic, or reactivating a live one. Nothing to do rather than refused.
   "ALREADY_IN_THAT_STATE",
+  // Support access switched on with no current contract naming support as a data processor. Different action: record one.
+  "DATA_PROCESSOR_CLAUSE_REQUIRED",
+  // "Allow changes" on a support session asked by anyone but the admin who approved it. Different action: ask that admin.
+  "NOT_THE_APPROVER",
+  // A support session that has not been allowed changes, asked to write. Different action: ask the approving admin to allow them.
+  "SUPPORT_READ_ONLY",
   // A field the DTO refused, with `field` saying which. Added 2026-09-15 after the founder read
   // "a system error occurred" for a typing mistake: a ValidationPipe rejection carries no code, and
   // a client that has no code renders its generic apology — which blames the server for the user.

@@ -4,13 +4,20 @@
 import {
   CallHandler,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
   NestInterceptor,
   UnauthorizedException,
 } from "@nestjs/common";
 import type { Observable } from "rxjs";
 import type { AuthenticatedRequest } from "./auth.guard.ts";
+import { refusal } from "./refusals.ts";
 import { prisma } from "../prisma/client.ts";
+
+const READING_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/** No request starts on a session with less left than the longest transaction may run (the client's 30 s cap). */
+export const SUPPORT_MARGIN_SECONDS = 30;
 
 interface ResolvedMembership {
   membershipId: string;
@@ -48,6 +55,18 @@ export class MembershipFreshnessInterceptor implements NestInterceptor {
     const claims = request.authClaims as AuthenticatedRequest["authClaims"] | undefined;
     // Unauthenticated routes — login, refresh — have no claim to check.
     if (claims === undefined) return next.handle();
+
+    if (claims.supportSessionId !== undefined) {
+      // Support access PR 3 and 4: the session is live with SUPPORT_MARGIN_SECONDS left, and the request is recorded, 300 at most.
+      const live = await prisma.$queryRaw<{ tenant_id: string; role: string; changes_allowed: boolean }[]>`
+        SELECT tenant_id, role, changes_allowed FROM record_support_request(${claims.supportSessionId}::uuid, ${claims.sub}::uuid, ${claims.membershipId}::uuid, ${SUPPORT_MARGIN_SECONDS}::int, ${request.method}, ${request.originalUrl})`;
+      if (live[0] === undefined || live[0].tenant_id !== claims.tenantId || live[0].role !== claims.role) {
+        throw new UnauthorizedException("The support session has ended.");
+      }
+      // PR 5a: read-only until the approving admin allows changes; the database refuses the write regardless.
+      if (!live[0].changes_allowed && !READING_METHODS.has(request.method)) throw new ForbiddenException(refusal("SUPPORT_READ_ONLY", {}));
+      return next.handle();
+    }
 
     const rows = await prisma.$queryRaw<ResolvedMembership[]>`
       SELECT membership_id AS "membershipId", tenant_id AS "tenantId", role AS "role"

@@ -1,6 +1,7 @@
 // Every operator action is audited — 0f. `platform-audit.spec.ts` names each `/platform/*` write
 // route and how it is audited, and fails when one appears that is in neither list.
 
+import { prisma } from "../../prisma/client.ts";
 import { injectedIdOnly } from "../../prisma/injected.ts";
 import { withPlatformActor, withTenant, type ActorContext } from "../../prisma/with-tenant.ts";
 
@@ -76,7 +77,8 @@ export async function recordPlatformAction(
       | "UPDATE"
       | "BREAK_GLASS_ACCESS"
       | "OPERATOR_RECOVERY_CODE_USED"
-      | "OPERATOR_TOTP_REPLACED";
+      | "OPERATOR_TOTP_REPLACED"
+      | "READ_SENSITIVE";
     entityType: string;
     entityId: string;
     /** Scalars only, for the reason `recordOperatorAction` gives: never a password, never a secret. */
@@ -91,5 +93,44 @@ export async function recordPlatformAction(
         ${input.entityId}::uuid,
         ${JSON.stringify(input.detail)}::jsonb
       )`;
+  });
+}
+
+let readerId: Promise<string> | undefined;
+const platformReader = async (): Promise<ActorContext> => {
+  readerId ??= prisma.$queryRaw<{ id: string }[]>`SELECT platform_reader_id() AS id`.then((rows) => rows[0]!.id);
+  return { userId: await readerId, ip: "platform", userAgent: "platform" };
+};
+
+/**
+ * An operator's read of clinic data (branches 6.5; Q8 ruled 2026-10-31). Always the vendor's trail, naming the operator.
+ * With a `tenantId`, also that clinic's own trail, as read by the platform and naming nobody.
+ */
+export async function recordOperatorRead(
+  actor: ActorContext,
+  input: { tenantId?: string; entityType: string; entityId: string; what: string },
+): Promise<void> {
+  await recordPlatformAction(actor, {
+    action: "READ_SENSITIVE",
+    entityType: input.entityType,
+    entityId: input.entityId,
+    detail: { what: input.what, tenantId: input.tenantId ?? null },
+  });
+  if (input.tenantId === undefined) return;
+  await withTenant(input.tenantId, await platformReader(), async (tx) => {
+    await tx.auditLog.create({
+      data: injectedIdOnly({
+        tenantId: input.tenantId!,
+        actorUserId: (await platformReader()).userId,
+        actorRole: "PLATFORM",
+        action: "READ_SENSITIVE",
+        scope: "UNSCOPED",
+        entityType: input.entityType,
+        entityId: input.entityId,
+        newState: { what: input.what, readBy: "platform" },
+        ipAddress: "platform",
+        userAgent: "platform",
+      }),
+    });
   });
 }

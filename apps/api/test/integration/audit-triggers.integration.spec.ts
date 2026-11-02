@@ -261,6 +261,10 @@ describe("audit triggers", () => {
         -- precisely so it can be read. Same reasoning as audit_logs itself: this table records that
         -- someone LOOKED, not that anything changed.
         AND c.relname <> 'notification_reads'
+        -- support_session_requests is itself the record of every request under a support session
+        -- (support access PR 4), append-only, written by one definer function; auditing it would
+        -- write a second copy of each request into the clinic's trail.
+        AND c.relname <> 'support_session_requests'
         AND NOT EXISTS (
           SELECT 1 FROM pg_trigger t
           WHERE t.tgrelid = c.oid AND NOT t.tgisinternal AND t.tgname = c.relname || '_audit'
@@ -313,7 +317,12 @@ describe("audit triggers", () => {
     // `last_used_at`, or every call the bot makes would write an audit row.
     // 50 as of 2026-09-18: `webhook_deliveries`. Its trigger fires only when a delivery is given up
     // on — an audit row per retry would bury the clinic history under our retry schedule.
-    expect(Number(counted[0]?.n)).toBe(54);
+    // 57 as of 2026-10-27: branches, membership_branches and branch_requests (docs/BRANCHES-DESIGN.md).
+    // 58 as of 2026-10-31: branch_limit_changes (§9 A, step 6.1).
+    // 60 as of 2026-10-31: branch_limit_graces and branch_grace_choices (step 6.3).
+    // 63 as of 2026-11-01: operator_messages (its platform trigger) and its two clinic tables (step 6.4).
+    // 64 as of 2026-11-01: branch_exception_reviews (step 6.6).
+    expect(Number(counted[0]?.n)).toBe(64);
   });
 
   /**

@@ -1,6 +1,8 @@
 import { Module } from "@nestjs/common";
 import { ThrottlingModule } from "./common/throttling.module.ts";
-import { APP_INTERCEPTOR } from "@nestjs/core";
+import { APP_FILTER, APP_INTERCEPTOR } from "@nestjs/core";
+import { SupportReadOnlyFilter } from "./common/support-read-only.filter.ts";
+import { SupportSessionEndedFilter } from "./common/support-session-ended.filter.ts";
 import { ActorContextInterceptor } from "./common/actor-context.interceptor.ts";
 import { MembershipFreshnessInterceptor } from "./common/membership-freshness.interceptor.ts";
 import { PasswordChangeInterceptor } from "./common/password-change.interceptor.ts";
@@ -10,6 +12,9 @@ import { BillingModule } from "./modules/billing/billing.module.ts";
 import { HealthModule } from "./modules/health/health.module.ts";
 import { AppointmentsModule } from "./modules/appointments/appointments.module.ts";
 import { BotModule } from "./modules/bot/bot.module.ts";
+import { BranchesModule } from "./modules/branches/branches.module.ts";
+import { OperatorMessagesModule } from "./modules/operator-messages/operator-messages.module.ts";
+import { SupportModule } from "./modules/support/support.module.ts";
 import { ComplaintsModule } from "./modules/complaints/complaints.module.ts";
 import { AttachmentsModule } from "./modules/attachments/attachments.module.ts";
 import { ClinicIdentityModule } from "./modules/clinic-identity/clinic-identity.module.ts";
@@ -28,6 +33,7 @@ import { VisitDocumentsModule } from "./modules/visit-documents/visit-documents.
 import { WebchatModule } from "./modules/webchat/webchat.module.ts";
 import { WhatsAppModule } from "./modules/whatsapp/whatsapp.module.ts";
 import { PrismaModule } from "./prisma/prisma.module.ts";
+import { BranchScopeInterceptor } from "./common/branch-scope.interceptor.ts";
 
 /**
  * ActorContextInterceptor is registered globally, not per-route.
@@ -42,7 +48,7 @@ import { PrismaModule } from "./prisma/prisma.module.ts";
   imports: [
     // Every named throttler, once — see common/throttling.module.ts for why it is a wrapper.
     ThrottlingModule,
-    
+
     PrismaModule,
     BillingModule,
     HealthModule,
@@ -63,6 +69,9 @@ import { PrismaModule } from "./prisma/prisma.module.ts";
     NotificationsModule,
     AuditModule,
     ComplaintsModule,
+    BranchesModule,
+    OperatorMessagesModule,
+    SupportModule,
     PlatformModule,
     WebchatModule,
     VisitDocumentsModule,
@@ -76,6 +85,10 @@ import { PrismaModule } from "./prisma/prisma.module.ts";
     // 2026-09-13. Before the password check would be equally correct; what matters is that it runs
     // on every authenticated request, so a changed role or a suspension takes effect at once.
     { provide: APP_INTERCEPTOR, useClass: MembershipFreshnessInterceptor },
+    // After freshness: the branches a membership may act in are only worth resolving for a live one.
+    { provide: APP_INTERCEPTOR, useClass: BranchScopeInterceptor },
+    { provide: APP_FILTER, useClass: SupportSessionEndedFilter },
+    { provide: APP_FILTER, useClass: SupportReadOnlyFilter },
   ],
 })
-export class AppModule {}
+export class AppModule { }

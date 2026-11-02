@@ -4,6 +4,7 @@
 import { calendarDayIn, instantsForLocal } from "../appointments/domain/zoned-time.ts";
 import { doctorIdForMembership } from "../clinical/clinical.access.ts";
 import { withTenant, type ActorContext, type TransactionClient } from "../../prisma/with-tenant.ts";
+import { readBranchWhere } from "../../common/branch-read.ts";
 
 export interface PaymentsCaller {
   tenantId: string;
@@ -107,7 +108,7 @@ export async function getPaymentsOverview(
     // Today's charges, plus anything still owed from before — an outstanding balance is the reason
     // the desk goes looking, and it does not stop being owed at midnight.
     const charges = await tx.visitCharge.findMany({
-      where: { ...mine, OR: [{ createdAt: { gte: dayStart } }, { status: "OPEN" }] },
+      where: { AND: [{ ...mine, OR: [{ createdAt: { gte: dayStart } }, { status: "OPEN" }] }, readBranchWhere("createdAt")] },
       select: {
         id: true,
         visitId: true,
@@ -138,7 +139,7 @@ export async function getPaymentsOverview(
       charge.visit.doctor.printedName ?? charge.visit.doctor.membership.user.fullName;
 
     const receipts = await tx.payment.findMany({
-      where: { receiptDate: new Date(`${day}T00:00:00.000Z`), ...(doctorId === null ? {} : { visit: { doctorId } }) },
+      where: { receiptDate: new Date(`${day}T00:00:00.000Z`), ...(doctorId === null ? {} : { visit: { doctorId } }), ...readBranchWhere("receiptDate") },
       select: {
         id: true,
         receiptNumber: true,

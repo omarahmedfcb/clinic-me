@@ -21,6 +21,9 @@ import { lapseOpenRequests } from "../transfers/transfers.service.ts";
 import { creditAbandonedPrePayments } from "../billing/patient-credit.ts";
 import { mintSlotToken, verifySlotToken, type SlotTokenResult } from "./slot-token.ts";
 import { lockDoctorDay } from "./slot-day-lock.ts";
+import { resolveSlotBranch } from "./slot-branch.ts";
+import { forReadBranches, withBusyElsewhere, type DayView } from "./read-scope.ts";
+import { refusedOutOfBranch } from "../../common/branch-refusal.ts";
 
 /**
  * Appointments: availability, booking, rescheduling, cancellation.
@@ -230,7 +233,7 @@ export async function describeDoctorDay(
   caller: CallerContext,
   doctorId: string,
   date: string,
-): Promise<DayDescription | null> {
+): Promise<DayView | null> {
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
     // The guard permitted the request; this scopes it. A DOCTOR reads their own day or none.
     const scopedId = await resolveReadableDoctorId(tx, caller, doctorId);
@@ -247,7 +250,8 @@ export async function describeDoctorDay(
     if (tenant === null) return null;
     const timezone = tenant.timezone;
 
-    return describeDay(await loadDayInput(tx, scopedId, date, timezone));
+    const input = forReadBranches(await loadDayInput(tx, scopedId, date, timezone));
+    return withBusyElsewhere(describeDay(input), input);
   });
 }
 
@@ -255,7 +259,7 @@ export async function describeDoctorDay(
 export const MAX_RANGE_DAYS = 31;
 
 export type WeekResult =
-  | { ok: true; days: (DayDescription & { date: string })[] }
+  | { ok: true; days: (DayView & { date: string })[] }
   | { ok: false; code: "NOT_FOUND" | "RANGE_TOO_LONG"; params: RefusalParams };
 
 /**
@@ -327,10 +331,11 @@ export async function describeDoctorWeek(
 
     const inputFor = await loadWeekInput(tx, scopedId, from, to, tenant.timezone);
 
-    const days: (DayDescription & { date: string })[] = [];
+    const days: (DayView & { date: string })[] = [];
     for (let i = 0; i < span; i += 1) {
       const date = addDays(from, i);
-      days.push({ ...describeDay(inputFor(date)), date });
+      const input = forReadBranches(inputFor(date));
+      days.push({ ...withBusyElsewhere(describeDay(input), input), date });
     }
     return { ok: true as const, days };
   });

@@ -377,6 +377,7 @@ export async function addContract(
     bytes: Buffer;
     startsOn: string;
     endsOn: string;
+    dataProcessorClause?: boolean;
   },
   put: (key: string, bytes: Buffer) => Promise<void>,
 ): Promise<ClientFileResult<{ id: string }>> {
@@ -422,6 +423,7 @@ export async function addContract(
         sizeBytes: input.bytes.length,
         startsOn,
         endsOn,
+        dataProcessorClause: input.dataProcessorClause ?? false,
         uploadedByUserId: actor.userId,
       },
     }),

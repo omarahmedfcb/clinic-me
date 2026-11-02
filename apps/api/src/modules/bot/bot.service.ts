@@ -8,6 +8,7 @@ import type { CallerContext } from "../patients/patients.service.ts";
 import { isIntakeIncomplete } from "../patients/domain/intake-completeness.ts";
 import { latinSearchKey } from "../patients/domain/transliterate.ts";
 import { recordNotification } from "../notifications/notifications.service.ts";
+import { readBranchWhere } from "../../common/branch-read.ts";
 
 /**
  * The clinic's currency (ISO 4217). A service's price is minor units with no currency of its own -- the
@@ -271,7 +272,7 @@ export async function readAppointmentStatus(
 } | null> {
   return withTenant(ctx.tenantId, ctx.actor, async (tx) => {
     const appointment = await tx.appointment.findFirst({
-      where: { id: appointmentId },
+      where: { id: appointmentId, ...readBranchWhere("scheduledStart") },
       select: {
         id: true,
         status: true,

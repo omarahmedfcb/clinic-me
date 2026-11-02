@@ -15,7 +15,7 @@
     "start": "node dist/main.js",
     "start:fresh": "npm run build && npm start",
     "test": "jest --selectProjects unit",
-    "test:integration": "jest --selectProjects integration --runInBand",
+    "test:integration": "jest --selectProjects integration --maxWorkers=1",
     "test:no-dotenv": "node scripts/run-without-dotenv.mjs unit",
     "test:integration:no-dotenv": "node scripts/run-without-dotenv.mjs integration",
     "seed": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON prisma/seed/index.ts",
@@ -26,6 +26,7 @@
     "outbound:messages": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/outbound-messages.ts",
     "whatsapp:templates": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/whatsapp-templates.ts",
     "webhook:dispatch": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/webhook-dispatch.ts",
+    "branches:enforce-limits": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/branch-limits.ts",
     "webhook:echo": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/webhook-echo.ts",
     "sandbox:bot": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/sandbox-bot.ts",
     "bot:acceptance": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/bot-acceptance.ts"
