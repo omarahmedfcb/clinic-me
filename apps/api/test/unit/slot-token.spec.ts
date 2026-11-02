@@ -28,6 +28,7 @@ const claims = {
   tenantId: TENANT,
   doctorId: "00000000-0000-7000-8000-0000000000d1",
   serviceId: "00000000-0000-7000-8000-0000000000s1",
+  branchId: "00000000-0000-7000-8000-0000000000b1",
   startMs: Date.parse("2026-09-02T07:00:00Z"),
   endMs: Date.parse("2026-09-02T07:30:00Z"),
 };

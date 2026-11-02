@@ -139,6 +139,7 @@ export async function loadDayInput(
       endTime: wall(t.endTime),
       validFrom: day(t.validFrom),
       validTo: t.validTo === null ? null : day(t.validTo),
+      branchId: t.branchId,
     })),
     breaks: breaks.map((b) => ({
       id: b.id,
@@ -153,6 +154,7 @@ export async function loadDayInput(
       type: e.type,
       startTime: e.startTime === null ? null : wall(e.startTime),
       endTime: e.endTime === null ? null : wall(e.endTime),
+      branchId: e.branchId,
     })),
     existingAppointments: appointments.map((a) => ({
       id: a.id,
@@ -230,6 +232,7 @@ export async function loadWeekInput(
     endTime: wall(t.endTime),
     validFrom: day(t.validFrom),
     validTo: t.validTo === null ? null : day(t.validTo),
+    branchId: t.branchId,
   }));
   const mappedBreaks = breaks.map((b) => ({
     id: b.id,
@@ -244,6 +247,7 @@ export async function loadWeekInput(
     type: e.type,
     startTime: e.startTime === null ? null : wall(e.startTime),
     endTime: e.endTime === null ? null : wall(e.endTime),
+    branchId: e.branchId,
   }));
   const mappedAppointments = appointments.map((a) => ({
     id: a.id,

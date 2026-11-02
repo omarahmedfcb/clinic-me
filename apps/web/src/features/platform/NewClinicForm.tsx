@@ -10,6 +10,7 @@ import type { TranslationKey } from "../../i18n/strings.ts";
 import { cx } from "../../lib/cx.ts";
 import type { NewClinicInput } from "./platform-api.ts";
 import { rangeIsAcceptable, todayIso } from "./subscription-days.ts";
+import { NEW_CLINIC_TIME_ZONE } from "../../lib/clinic-time-zone.ts";
 
 /** "new": a number nobody has used on WhatsApp. "existing": the clinic's WhatsApp Business app number (coexistence). */
 export type NumberType = "new" | "existing";
@@ -18,7 +19,7 @@ export type NewClinicSubmit = { whatsapp: false } | { whatsapp: true; existingNu
 export const BLANK_CLINIC: NewClinicInput = {
   name: "",
   slug: "",
-  timezone: "Africa/Cairo",
+  timezone: NEW_CLINIC_TIME_ZONE,
   country: "EG",
   currency: "EGP",
   address: "",

@@ -21,7 +21,6 @@ export function generateSlots(input: GenerateSlotsInput): Slot[] {
   // write path rejects these (services_buffer_minutes_sane, tenants_slot_granularity_sane).
   if (granularityMinutes <= 0 || service.durationMinutes <= 0) return [];
 
-  const { free } = planDay(input);
   const durationMs = service.durationMinutes * 60_000;
   const stepMs = granularityMinutes * 60_000;
 
@@ -29,21 +28,37 @@ export function generateSlots(input: GenerateSlotsInput): Slot[] {
   // zero. One boundary instead of two places for it to be wrong.
   const earliest = now.getTime() + leadMinutes * 60_000;
 
+  // A doctor may work in several branches on one day (BRANCHES-DESIGN §4.4): each branch is planned
+  // on its own, so a closure of one never removes another's hours, and each slot says where it is.
+  // Appointments are passed to every plan unfiltered: a doctor is in one place at a time, so a
+  // booking in one branch takes that time from all of them.
+  const branchIds = [
+    ...new Set([
+      ...input.templates.map((t) => t.branchId),
+      ...input.exceptions.flatMap((e) => (e.type === "EXTRA_AVAILABILITY" && e.branchId !== null ? [e.branchId] : [])),
+    ]),
+  ].sort();
+
   const slots: Slot[] = [];
-  for (const window of free) {
-    // Q19: the grid anchors to the window start, not to the hour. A window opening at 09:07
-    // offers 09:07; hour-anchoring silently discards the first fragment of every odd window.
-    for (let start = window.start; start + durationMs <= window.end; start += stepMs) {
-      if (start <= earliest) continue;
-      const at = new Date(start);
-      slots.push({
-        doctorId,
-        start: at,
-        end: new Date(start + durationMs),
-        utcOffsetMinutes: offsetMinutesAt(at, timezone),
-        sessionDate: date,
-      });
+  for (const branchId of branchIds) {
+    const { free } = planDay({ ...input, branchId });
+    for (const window of free) {
+      // Q19: the grid anchors to the window start, not to the hour. A window opening at 09:07
+      // offers 09:07; hour-anchoring silently discards the first fragment of every odd window.
+      for (let start = window.start; start + durationMs <= window.end; start += stepMs) {
+        if (start <= earliest) continue;
+        const at = new Date(start);
+        slots.push({
+          doctorId,
+          start: at,
+          end: new Date(start + durationMs),
+          utcOffsetMinutes: offsetMinutesAt(at, timezone),
+          sessionDate: date,
+          branchId,
+        });
+      }
     }
   }
-  return slots.sort((a, b) => a.start.getTime() - b.start.getTime());
+  // Time first, then branch, so two branches offering the same instant list in a stable order.
+  return slots.sort((a, b) => a.start.getTime() - b.start.getTime() || (a.branchId < b.branchId ? -1 : a.branchId > b.branchId ? 1 : 0));
 }

@@ -23,7 +23,8 @@ export type ClinicRefusal =
   | "ALREADY_IN_THAT_STATE"
   | "INVALID_DATE_RANGE"
   | "DATE_IN_PAST"
-  | "SUBSCRIPTION_GAP";
+  | "SUBSCRIPTION_GAP"
+  | "DATA_PROCESSOR_CLAUSE_REQUIRED";
 
 export type ClinicResult<T> = { ok: true; value: T } | { ok: false; code: ClinicRefusal; params: RefusalParams };
 

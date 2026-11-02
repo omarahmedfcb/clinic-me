@@ -8,6 +8,7 @@ import { setSoundEnabled, soundEnabled } from "./sound-preference.ts";
 import { notificationSound } from "./sound.ts";
 import { NOTIFICATION_POLL_MS } from "../../lib/polling.ts";
 import { Bell, Volume2, VolumeX } from "lucide-react";
+import { DISPLAY_TIME_ZONE } from "../../lib/clinic-time-zone.ts";
 
 /**
  * The notification bell: an unread count, a dropdown of recent items, and mark-as-read.
@@ -209,14 +210,14 @@ export function NotificationBell() {
   }
 
   const time = new Intl.DateTimeFormat(intlLocale(locale), {
-    timeZone: "Africa/Cairo",
+    timeZone: DISPLAY_TIME_ZONE,
     dateStyle: "short",
     timeStyle: "short",
     hour12: false,
   });
 
   const clock = new Intl.DateTimeFormat(intlLocale(locale), {
-    timeZone: "Africa/Cairo",
+    timeZone: DISPLAY_TIME_ZONE,
     timeStyle: "short",
     hour12: false,
   });

@@ -3,22 +3,36 @@
 
 type AuthFetch = (path: string, init?: RequestInit) => Promise<Response>;
 
+/** One row of an event. Which columns changed travels as names only — the value is what the §8 boundary withholds. */
 export interface AuditEntry {
   id: string;
-  at: string;
   actorUserId: string;
-  actorName: string | null;
   actorRole: string;
   action: string;
   entityType: string;
   entityId: string;
-  /** Which columns changed. Names only — the value is what the §8 boundary withholds. */
   changedFields: string[];
+}
+
+/** Why an event is not tied to one branch; null in a single-branch clinic and for an event that names its branch. */
+export type AuditReach = "UNSCOPED" | "BEFORE_BRANCHES";
+
+/** One transaction: who, when, how many changes, and the first of them (the API caps `entries`). */
+export interface AuditEvent {
+  at: string;
+  actorUserId: string;
+  actorName: string | null;
+  actorRole: string;
   ipAddress: string;
+  /** All of the event's changes, which may be more than `entries` holds. */
+  entryCount: number;
+  reach: AuditReach | null;
+  entries: AuditEntry[];
 }
 
 export interface AuditPage {
-  entries: AuditEntry[];
+  events: AuditEvent[];
+  /** Events, not rows. */
   total: number;
 }
 
@@ -50,8 +64,8 @@ export async function loadAuditLog(authFetch: AuthFetch, query: AuditQuery = {})
   const response = await authFetch(`/api/audit-log?${params.toString()}`);
   if (!response.ok) throw new Error(`GET /audit-log -> ${response.status}`);
   const body = (await response.json()) as Partial<AuditPage>;
-  if (!Array.isArray(body.entries)) throw new Error("GET /audit-log -> unreadable payload");
-  return { entries: body.entries, total: body.total ?? body.entries.length };
+  if (!Array.isArray(body.events)) throw new Error("GET /audit-log -> unreadable payload");
+  return { events: body.events, total: body.total ?? body.events.length };
 }
 
 export async function loadAuditFilters(authFetch: AuthFetch): Promise<AuditFilterOptions> {

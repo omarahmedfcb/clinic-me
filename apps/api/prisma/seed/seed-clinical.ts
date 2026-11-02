@@ -197,10 +197,13 @@ export async function seedClinical(
   );
 
   await inChunks(appointments, tenantId, actor, async (tx, batch) => {
+    // The clinic's default branch (see seed-staff.ts): every seeded appointment is in it.
+    const { id: branchId } = await tx.branch.findFirstOrThrow({ where: { isDefault: true }, select: { id: true } });
     await tx.appointment.createMany({
       data: batch.map((appointment) =>
         injected({
           id: appointment.id,
+          branchId,
           patientId: appointment.patientId,
           doctorId: appointment.doctorId,
           serviceId: appointment.serviceId,

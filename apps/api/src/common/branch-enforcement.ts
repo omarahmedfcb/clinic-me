@@ -156,6 +156,7 @@ export const BRANCH_ENFORCEMENT: Record<string, BranchEnforcement> = {
   "POST /whatsapp/connection/reconnect": "clinic-level",
   "GET /whatsapp/handoffs": "clinic-level",
   "POST /whatsapp/handoffs/:conversationId/resume": "clinic-level",
+  "POST /whatsapp/handoffs/resume-all": "clinic-level",
 
   "GET /memberships": "clinic-level",
   "GET /staff": "clinic-level",
@@ -216,6 +217,9 @@ export const BRANCH_ENFORCEMENT: Record<string, BranchEnforcement> = {
   "POST /platform/clinics/:tenantId/suspension": "no-clinic",
   "POST /platform/clinics/:tenantId/branch-limit": "no-clinic",
   "POST /platform/clinics/:tenantId/support-access": "no-clinic",
+  "POST /platform/clinics/:tenantId/renewal": "no-clinic",
+  "POST /platform/clinics/:tenantId/whatsapp": "no-clinic",
+  "POST /platform/session/refresh": "no-clinic",
   "GET /platform/branch-requests": "no-clinic",
   "GET /platform/branch-limit-graces": "no-clinic",
   "GET /platform/messages": "no-clinic",

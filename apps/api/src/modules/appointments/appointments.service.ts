@@ -218,6 +218,7 @@ export async function findAvailableSlots(
             tenantId: caller.tenantId,
             doctorId: slot.doctorId,
             serviceId: query.serviceId,
+            branchId: slot.branchId,
             startMs: slot.start.getTime(),
             endMs: slot.end.getTime(),
           },
@@ -398,10 +399,7 @@ export async function bookAppointment(
     // retry" rule does not reach this error shape. `23P01` is never retried: it is an answer.
     return await retryOnDeadlock(() =>
       withTenant(caller.tenantId, caller.actor, async (tx) => {
-        const t0 = Date.now();
-        const lap = (step: string) => console.log(`[book-timing] +${Date.now() - t0}ms ${step}`);
         const patient = await tx.patient.findFirst({ where: { id: input.patientId } });
-        lap("patient read");
         if (patient === null) {
           return {
             ok: false as const,
@@ -422,7 +420,6 @@ export async function bookAppointment(
           where: { id: claims.serviceId },
           select: { priceMinor: true },
         });
-        lap("service read");
         if (quotedService === null) {
           return {
             ok: false as const,
@@ -440,10 +437,14 @@ export async function bookAppointment(
           doctorId: claims.doctorId,
           at: new Date(claims.startMs),
         });
-        lap("day lock acquired");
+
+        // The branch the token signs; a branch outside the caller's scope reads as not found (§4.2).
+        const slotBranch = resolveSlotBranch(claims.branchId);
+        if (!slotBranch.ok) return { ok: false as const, code: slotBranch.code, params: slotBranch.params };
 
         const created = await tx.appointment.create({
           data: injected({
+            branchId: slotBranch.branchId,
             patientId: input.patientId,
             doctorId: claims.doctorId,
             serviceId: claims.serviceId,
@@ -458,7 +459,6 @@ export async function bookAppointment(
             updatedBy: caller.actor.userId,
           }),
         });
-        lap("appointment inserted");
 
         await tx.appointmentEvent.create({
           data: injected({
@@ -470,7 +470,6 @@ export async function bookAppointment(
             actorUserId: caller.actor.userId,
           }),
         });
-        lap("event inserted");
 
         // In this transaction, not after it: a booking that rolls back must not leave a
         // notification claiming it happened (PHASE-2.md §16).
@@ -621,9 +620,13 @@ export async function rescheduleAppointment(
           at: new Date(claims.startMs),
         });
 
+        const slotBranch = resolveSlotBranch(claims.branchId);
+        if (!slotBranch.ok) return { ok: false as const, code: slotBranch.code, params: slotBranch.params };
+
         const updated = await tx.appointment.update({
           where: { id: appointmentId },
           data: {
+            branchId: slotBranch.branchId,
             scheduledStart: new Date(claims.startMs),
             scheduledEnd: new Date(claims.endMs),
             doctorId: claims.doctorId,

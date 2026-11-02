@@ -70,4 +70,12 @@ export class CreateExceptionDto {
 
   @IsOptional() @IsString() @MaxLength(200)
   reason?: string | null;
+
+  /** The one branch the exception is for. Omit for every branch (not allowed for extra availability). */
+  @IsOptional() @IsUUID()
+  branchId?: string | null;
+
+  /** Omit to take the default its type has. */
+  @IsOptional() @IsEnum(["ONE_BRANCH", "EVERY_BRANCH"])
+  scope?: "ONE_BRANCH" | "EVERY_BRANCH" | null;
 }

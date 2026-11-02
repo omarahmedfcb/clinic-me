@@ -52,6 +52,10 @@ const WRITE_ROUTES: { route: string; audited: "clinic-trail" | "vendor-trail" | 
   { route: "POST /platform/clinics/:tenantId/suspension", audited: "clinic-trail" },
   { route: "POST /platform/clinics/:tenantId/branch-limit", audited: "clinic-trail" },
   { route: "POST /platform/clinics/:tenantId/support-access", audited: "clinic-trail" },
+  { route: "POST /platform/clinics/:tenantId/renewal", audited: "clinic-trail" },
+  { route: "POST /platform/clinics/:tenantId/whatsapp", audited: "clinic-trail" },
+  // A fresh token for the caller's own, still-valid session: it writes no record about anybody.
+  { route: "POST /platform/session/refresh", audited: "own-account" },
   { route: "POST /platform/branch-requests/:requestId/decision", audited: "clinic-trail" },
   // The message is audited by its platform trigger, and each clinic's copies by theirs, into that clinic's trail.
   { route: "POST /platform/messages", audited: "trigger" },

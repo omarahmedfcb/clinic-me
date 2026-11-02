@@ -55,6 +55,7 @@ describe("schedule range", () => {
       await tx.scheduleException.create({
         data: injected({
           doctorId: null,
+          scope: "EVERY_BRANCH",
           date: new Date("2026-09-03T00:00:00Z"),
           type: "HOLIDAY",
           startTime: null,

@@ -87,6 +87,8 @@ export class SchedulesController {
       startTime: body.startTime ?? null,
       endTime: body.endTime ?? null,
       reason: body.reason ?? null,
+      branchId: body.branchId ?? null,
+      scope: body.scope ?? null,
     });
     if (result.ok) return { ok: true };
     const refused = refusal(result.code, result.params);

@@ -150,6 +150,7 @@ export const RESOURCE_NAMES = [
   // The clinic's WhatsApp bot credential (2026-09-18). One live one per clinic, so both "already
   // issued" and "not found" need to be able to name it.
   "botCredential",
+  "branch",
   "branchRequest",
   "operatorMessage",
   "supportSession",
@@ -323,6 +324,8 @@ export const REFUSAL_CODES = [
   "INVALID_AMOUNT",
   // A clinic already has a client file. It is edited, not created twice.
   "CLIENT_FILE_EXISTS",
+  // The clinic has more than one active branch and the request did not say which one. Different action: pick a branch.
+  "BRANCH_REQUIRED",
 ] as const;
 
 export type RefusalCode = (typeof REFUSAL_CODES)[number];

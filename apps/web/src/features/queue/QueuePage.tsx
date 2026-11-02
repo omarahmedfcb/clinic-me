@@ -254,6 +254,7 @@ export function QueuePage() {
    * steps. This is a banner that stays until somebody acknowledges it.
    */
   const [rejections, setRejections] = useState<Transfer[]>([]);
+  const shownRejections = useRef(new Set<string>());
 
   /**
    * Re-read on every poll rather than held still, so "waiting 12 minutes" is honest. There is no
@@ -305,11 +306,10 @@ export function QueuePage() {
       setTransfers(allTransfers);
       setNow(new Date());
 
-      setRejections((current) => {
-        const seen = new Set(current.map((item) => item.id));
-        const fresh = allTransfers.filter((item) => item.status === "REJECTED" && !seen.has(item.id));
-        return fresh.length === 0 ? current : [...current, ...fresh];
-      });
+      // Every rejection ever shown, not those still on screen: a dismissed one must not return.
+      const fresh = allTransfers.filter((item) => item.status === "REJECTED" && !shownRejections.current.has(item.id));
+      for (const item of fresh) shownRejections.current.add(item.id);
+      if (fresh.length > 0) setRejections((current) => [...current, ...fresh]);
       setFailed(false);
     } catch (err) {
       // Logged, not swallowed. The bare `catch {}` this replaced turned a wrong API path into a

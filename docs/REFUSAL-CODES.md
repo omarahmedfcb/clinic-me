@@ -62,9 +62,9 @@ somebody at the desk could act on. The code goes to the console; the user gets `
 | `NO_VISIT_YET` | — | The appointment exists; no visit has been recorded against it. Different action: wait | 404 |
 | `NO_CONTACT_RECORD` | — | No household to attach a policy to. Different action: add contact details first | 422 |
 
-`resource` is one of: `appointment`, `attachment`, `botCredential`, `charge`, `clinic`, `complaint`,
-`coverage`, `doctor`, `exception`, `insuranceCompany`, `membership`, `patient`, `policy`,
-`procedure`, `service`, `transfer`, `visit`.
+`resource` is one of: `appointment`, `attachment`, `botCredential`, `branch`, `branchRequest`, `charge`, `clinic`, `complaint`,
+`coverage`, `doctor`, `exception`, `insuranceCompany`, `membership`, `operatorMessage`, `patient`, `policy`,
+`procedure`, `service`, `supportSession`, `transfer`, `visit`.
 An unknown value renders a generic
 noun rather than leaving a hole in the sentence.
 
@@ -150,6 +150,10 @@ the code.
 | `SUBSCRIPTION_GAP` | `field` | A renewal that would leave a gap after a subscription that is still running or has not started | 422 |
 | `INVALID_AMOUNT` | `field` | A discount outside 0–100, or an agreed price below zero | 422 |
 | `CLIENT_FILE_EXISTS` | — | A clinic has one client file. It is edited, not created twice | 422 |
+| `BRANCH_REQUIRED` | — | The clinic has more than one active branch and the request did not name which. Different action: pick a branch | 422 |
+| `DATA_PROCESSOR_CLAUSE_REQUIRED` | — | Support access cannot be enabled until a current contract names support as a data processor. Different action: record one | 422 |
+| `NOT_THE_APPROVER` | — | "Allow changes" on a support session, asked by anyone but the admin who approved it | 403 |
+| `SUPPORT_READ_ONLY` | — | A support session that has not been allowed changes was asked to write. Different action: ask the approving admin to allow them | 403 |
 | `DUPLICATE_PHONE` | — | That number is already somebody's login. It parses; it is taken | 409 |
 | `DUPLICATE_NATIONAL_ID` | — | Another patient at this clinic already has that national ID. Open that patient rather than registering a second | 409 |
 | `NOT_EDITABLE_HERE` | `name` | A doctor's record belongs to the Doctors tab, not the users list | 422 |

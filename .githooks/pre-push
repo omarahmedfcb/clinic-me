@@ -14,6 +14,9 @@ root="$(git rev-parse --show-toplevel)"
 while read -r _local_ref local_sha _remote_ref remote_sha; do
   [ "$local_sha" = "$remote_sha_zero" ] && continue
 
+  # The push gate: `npm run verify` must have last passed on exactly this commit (scripts/check-verified.mjs).
+  node "$root/scripts/check-verified.mjs" "$local_sha" || exit 1
+
   if [ "$remote_sha" = "$remote_sha_zero" ]; then
     # A new branch. Diff against the upstream default rather than the whole of history, which would
     # re-check every commit ever made and fail on damage somebody already repaired.

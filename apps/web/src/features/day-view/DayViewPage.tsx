@@ -16,6 +16,7 @@ import { isDoctorRole, ownDoctorId } from "../auth/own-doctor.ts";
 import { loadDoctors, type DoctorSummary } from "../schedules/schedules-api.ts";
 import { AppointmentDetailPanel } from "../appointment-detail/AppointmentDetailPanel.tsx";
 import { loadDay, type DayDescription } from "./day-view-api.ts";
+import { DISPLAY_TIME_ZONE } from "../../lib/clinic-time-zone.ts";
 
 /**
  * Reception's calendar: one doctor, one day.
@@ -179,7 +180,7 @@ export function DayViewPage() {
   // The tenant's zone. Hardcoding it here would be the one place CLAUDE.md forbids a literal, but
   // the day view renders a tenant's own clinic and the API already resolved everything in that
   // zone — these instants are absolute, so this only decides how they are *labelled*.
-  const timeZone = "Africa/Cairo";
+  const timeZone = DISPLAY_TIME_ZONE;
   const clock = new Intl.DateTimeFormat(intlLocale(locale), {
     timeZone,
     hour: "2-digit",

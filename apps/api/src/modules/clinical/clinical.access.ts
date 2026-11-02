@@ -2,6 +2,7 @@ import type { AppointmentStatus } from "../../generated/prisma/client.ts";
 import type { RefusalParams } from "../../common/refusals.ts";
 import { injectedIdOnly } from "../../prisma/injected.ts";
 import type { TransactionClient } from "../../prisma/with-tenant.ts";
+import { requestAuditReach } from "../../common/audit-reach.ts";
 import type { CallerContext } from "../appointments/appointments.service.ts";
 import { hasActiveTransferGrant } from "../transfers/transfer-access.ts";
 import { visitScope, type VisitScopeCaller } from "./visit-scope.ts";
@@ -315,6 +316,7 @@ export async function recordSensitiveRead(
       },
       ipAddress: caller.actor.ip,
       userAgent: caller.actor.userAgent,
+      ...requestAuditReach(),
     }),
   });
 }

@@ -12,30 +12,46 @@ import { AuditLogPage } from "./AuditLogPage.tsx";
  */
 
 const PAGE = {
-  entries: [
+  events: [
     {
-      id: "a1",
       at: "2026-09-13T08:15:00.000Z",
       actorUserId: "u1",
       actorName: "منى سيد فهمي",
       actorRole: "ADMIN",
-      action: "UPDATE",
-      entityType: "users",
-      entityId: "11111111-1111-4111-8111-111111111111",
-      changedFields: ["role", "status"],
       ipAddress: "127.0.0.1",
+      entryCount: 1,
+      reach: null,
+      entries: [
+        {
+          id: "a1",
+          actorUserId: "u1",
+          actorRole: "ADMIN",
+          action: "UPDATE",
+          entityType: "users",
+          entityId: "11111111-1111-4111-8111-111111111111",
+          changedFields: ["role", "status"],
+        },
+      ],
     },
     {
-      id: "a2",
       at: "2026-09-13T07:00:00.000Z",
       actorUserId: "u2",
       actorName: "شيماء طارق",
       actorRole: "RECEPTIONIST",
-      action: "CREATE",
-      entityType: "appointments",
-      entityId: "22222222-2222-4222-8222-222222222222",
-      changedFields: [],
       ipAddress: "127.0.0.1",
+      entryCount: 3,
+      reach: "UNSCOPED",
+      entries: [
+        {
+          id: "a2",
+          actorUserId: "u2",
+          actorRole: "RECEPTIONIST",
+          action: "CREATE",
+          entityType: "appointments",
+          entityId: "22222222-2222-4222-8222-222222222222",
+          changedFields: [],
+        },
+      ],
     },
   ],
   total: 2,
@@ -71,12 +87,24 @@ describe("the audit log viewer", () => {
     renderPage();
     const table = await screen.findByTestId("audit-table");
 
+    // An event is one line; its rows are listed once it is opened.
     expect(table.textContent).toContain("منى سيد فهمي");
+    expect(screen.getAllByTestId("audit-event")).toHaveLength(2);
+    for (const line of screen.getAllByRole("button", { expanded: false })) fireEvent.click(line);
+
     expect(table.textContent).toContain("users");
     expect(table.textContent).toContain("role");
-    // The «users» audit from #100 is what this screen was asked for; a CREATE has no previous
-    // state, so it shows an em dash rather than pretending every column changed.
+    // A CREATE has no previous state, so it lists no changed fields rather than pretending every column changed.
     expect(table.textContent).toContain("appointments");
+  });
+
+  test("an event with more changes than it lists says how many are not shown", async () => {
+    renderPage();
+    await screen.findByTestId("audit-table");
+    fireEvent.click(screen.getAllByRole("button", { expanded: false })[1]!);
+
+    expect(screen.getByTestId("audit-event-more").textContent).toContain("2");
+    expect(screen.getAllByTestId("audit-event-reach")).toHaveLength(1);
   });
 
   test("filtering by person asks the server, and starts the list again", async () => {

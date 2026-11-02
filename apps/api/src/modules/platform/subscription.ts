@@ -69,7 +69,7 @@ export async function runExpiryPass(now: Date = new Date()): Promise<{ suspended
         });
         if (result.ok) {
           suspended += 1;
-          console.log(`subscription-expiry: suspended tenant ${tenant.id} (last day ${endsOn})`);
+          console.info(`subscription-expiry: suspended tenant ${tenant.id} (last day ${endsOn})`);
         }
         continue;
       }
@@ -80,7 +80,7 @@ export async function runExpiryPass(now: Date = new Date()): Promise<{ suspended
           tx.tenant.update({ where: { id: tenant.id }, data: { botPaused: shouldPause } }),
         );
         botChanged += 1;
-        console.log(
+        console.info(
           `subscription-bot: ${shouldPause ? "paused" : "resumed"} bot for tenant ${tenant.id} (${phase.toLowerCase()})`,
         );
       }

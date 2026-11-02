@@ -102,6 +102,9 @@ export async function seedStaff(
   const servicePrices: number[] = [];
 
   await withTenant(tenantId, actor, async (tx) => {
+    // The clinic's default branch, created with the clinic by a trigger: the seed works in it, as a clinic that
+    // has not added a second branch does. No write path guesses a branch any more, so the seed names it.
+    const { id: branchId } = await tx.branch.findFirstOrThrow({ where: { isDefault: true }, select: { id: true } });
     for (const member of clinic.staff) {
       const userId = userIdByKey.get(member.key);
       if (userId === undefined) throw new Error(`seedStaff: no user seeded for "${member.key}".`);
@@ -135,6 +138,7 @@ export async function seedStaff(
         await tx.scheduleTemplate.create({
           data: injected({
             id: templateId,
+            branchId,
             doctorId,
             weekday,
             startTime: timeOnly(member.doctor.shift.startHour, member.doctor.shift.startMinute),
@@ -199,6 +203,8 @@ export async function seedStaff(
       await tx.scheduleException.create({
         data: injected({
           doctorId,
+          // Extra availability names its branch; a closure applies to every branch (migration 20261029155000).
+          ...(exception.type === "EXTRA_AVAILABILITY" ? { branchId, scope: "ONE_BRANCH" as const } : { scope: "EVERY_BRANCH" as const }),
           date: dateOnly(when.getUTCFullYear(), when.getUTCMonth() + 1, when.getUTCDate()),
           type: exception.type,
           startTime:

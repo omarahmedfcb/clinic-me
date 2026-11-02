@@ -49,6 +49,8 @@ export async function recordOperatorAction(
         entityType: input.entityType,
         entityId: input.entityId,
         newState: input.detail,
+        // The operator acts on the clinic, not in one of its branches.
+        scope: "UNSCOPED",
         ipAddress: actor.ip,
         userAgent: actor.userAgent,
       }),

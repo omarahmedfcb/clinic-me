@@ -45,6 +45,8 @@ export interface ScheduleTemplateRow {
   endTime: WallClock;
   validFrom: CalendarDate;
   validTo: CalendarDate | null;
+  /** The branch these hours are worked in (BRANCHES-DESIGN §1). */
+  branchId: string;
 }
 
 /** A break inside one template's window. Subtracted from that template's session only. */
@@ -72,6 +74,11 @@ export interface ScheduleExceptionRow {
   type: "BLOCKED" | "HOLIDAY" | "EXTRA_AVAILABILITY";
   startTime: WallClock | null;
   endTime: WallClock | null;
+  /**
+   * `null` is every branch. EXTRA_AVAILABILITY always names one: an extra window that names no branch
+   * opens nothing, because no branch is guessed for it (BRANCHES-DESIGN §4.4).
+   */
+  branchId: string | null;
 }
 
 /**
@@ -115,6 +122,8 @@ export interface Slot {
   end: Date;
   utcOffsetMinutes: number;
   sessionDate: CalendarDate;
+  /** The branch of the template (or extra-availability exception) this slot was cut from. */
+  branchId: string;
 }
 
 /**
@@ -140,6 +149,12 @@ export interface DayPlanInput {
   breaks: ScheduleBreakRow[];
   exceptions: ScheduleExceptionRow[];
   existingAppointments: OccupancyRow[];
+  /**
+   * Plan one branch only: its templates, the extra windows it owns, and the closures that name it or
+   * every branch. Absent plans the whole clinic's day, which is what the calendar draws; booking
+   * always goes through `generateSlots`, which plans each branch in turn.
+   */
+  branchId?: string;
 }
 
 /**

@@ -94,6 +94,21 @@ enum BranchGraceStatus {
   CLEARED
 }
 
+/// Whether a schedule exception closes (or opens) one branch or every branch of the clinic
+/// (migration 20261029155000_schedule_exception_scope). EXTRA_AVAILABILITY is always ONE_BRANCH (CHECK).
+enum ExceptionScope {
+  ONE_BRANCH
+  EVERY_BRANCH
+}
+
+/// An audit row's reach, explicit so a null branch is never ambiguous (migration 20261029163000_audit_scope).
+/// BEFORE_BRANCHES is historical only; a trigger refuses it on new rows.
+enum AuditScope {
+  ONE_BRANCH
+  UNSCOPED
+  BEFORE_BRANCHES
+}
+
 enum MembershipStatus {
   INVITED
   ACTIVE
@@ -353,6 +368,9 @@ enum AuditAction {
   /// reason as the one above: a second-factor change on the console must be filterable by column,
   /// not found by reading a detail blob out of every row.
   OPERATOR_TOTP_REPLACED
+  /// A request refused because the branch it named is outside the caller's scope. Recorded so a probe for another
+  /// branch's rows leaves a trail (migration 20261029080000_audit_branch_scope_refused).
+  BRANCH_SCOPE_REFUSED
 }
 
 /**
@@ -444,6 +462,8 @@ model Tenant {
   /// subscription range, or its range has not started yet. Owned by the subscription sync (the outbound
   /// worker and the client-file save) -- never set by hand. Staff can still sign in.
   botPaused                Boolean      @default(false) @map("bot_paused")
+  /// When branches went live for this clinic; rows older than this read as the default branch.
+  branchesEnabledAt        DateTime?    @map("branches_enabled_at") @db.Timestamptz(6)
   /// The operator's limit on ACTIVE branches (BRANCHES-DESIGN §9 A); every change is a `branch_limit_changes` row.
   maxBranches              Int          @default(1) @map("max_branches")
   /// Support access (docs/SUPPORT-ACCESS.md). A trigger refuses true without a current contract carrying the clause.
@@ -727,6 +747,8 @@ model Membership {
   userId              String           @map("user_id") @db.Uuid
   tenantId            String           @map("tenant_id") @db.Uuid
   role                MembershipRole
+  /// Defaulted by a trigger on insert / role change, so application code may omit it.
+  branchScope         BranchScope      @default(dbgenerated()) @map("branch_scope")
   permissionsOverride Json?            @map("permissions_override")
   status              MembershipStatus
   createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -735,6 +757,7 @@ model Membership {
   user               User               @relation(fields: [userId], references: [id])
   tenant             Tenant             @relation(fields: [tenantId], references: [id])
   doctor             Doctor?
+  branches           MembershipBranch[]
   refreshTokens      RefreshToken[]
   notificationReads  NotificationRead[]
   transfersInitiated PatientTransfer[]  @relation("TransferInitiatedBy")
@@ -831,6 +854,7 @@ model Service {
 model ScheduleTemplate {
   id        String    @id @db.Uuid
   tenantId  String    @map("tenant_id") @db.Uuid
+  branchId String @map("branch_id") @db.Uuid
   doctorId  String    @map("doctor_id") @db.Uuid
   weekday   Int
   startTime DateTime  @map("start_time") @db.Time(0)
@@ -841,10 +865,12 @@ model ScheduleTemplate {
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant Tenant          @relation(fields: [tenantId], references: [id])
+  branch Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
   doctor Doctor          @relation(fields: [doctorId], references: [id])
   breaks ScheduleBreak[]
 
   @@index([tenantId])
+  @@index([tenantId, branchId])
   @@map("schedule_templates")
 }
 
@@ -868,6 +894,9 @@ model ScheduleBreak {
 model ScheduleException {
   id        String                @id @db.Uuid
   tenantId  String                @map("tenant_id") @db.Uuid
+  branchId String? @map("branch_id") @db.Uuid
+  /// EVERY_BRANCH exactly when branchId is null (CHECK).
+  scope ExceptionScope
   // NULL means every doctor in the tenant (PHASE-2.md Q13). A public holiday that has to be
   // entered once per doctor is a holiday someone works by accident -- and the doctor hired next
   // month inherits nothing. This is what keeps HOLIDAY meaningfully distinct from BLOCKED:
@@ -885,6 +914,7 @@ model ScheduleException {
   updatedAt DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant Tenant  @relation(fields: [tenantId], references: [id])
+  branch Branch? @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
   // onDelete spelled out because Prisma's default for an OPTIONAL relation is SetNull, while the
   // database has RESTRICT -- migration 14 made this column nullable without saying so, and the two
   // then disagreed. Restrict is also the right answer: a doctor with a one-off closure recorded
@@ -894,6 +924,7 @@ model ScheduleException {
 
   @@index([tenantId])
   @@index([tenantId, date])
+  @@index([tenantId, branchId])
   @@map("schedule_exceptions")
 }
 
@@ -1144,6 +1175,7 @@ model PatientInsurance {
 model Appointment {
   id                        String            @id @db.Uuid
   tenantId                  String            @map("tenant_id") @db.Uuid
+  branchId String @map("branch_id") @db.Uuid
   patientId                 String            @map("patient_id") @db.Uuid
   doctorId                  String            @map("doctor_id") @db.Uuid
   serviceId                 String            @map("service_id") @db.Uuid
@@ -1174,6 +1206,7 @@ model Appointment {
   updatedAt                 DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant                Tenant             @relation(fields: [tenantId], references: [id])
+  branch Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
   patient               Patient            @relation(fields: [patientId], references: [id])
   doctor                Doctor             @relation(fields: [doctorId], references: [id])
   service               Service            @relation(fields: [serviceId], references: [id])
@@ -1190,6 +1223,7 @@ model Appointment {
 
   @@index([tenantId, doctorId, scheduledStart])
   @@index([tenantId, scheduledStart, status])
+  @@index([tenantId, branchId, scheduledStart])
   @@map("appointments")
 }
 
@@ -1223,6 +1257,8 @@ model AppointmentEvent {
 model Visit {
   id                    String      @id @db.Uuid
   tenantId              String      @map("tenant_id") @db.Uuid
+  /// Stamped by the visits_stamp_branch trigger from the appointment.
+  branchId String @default(dbgenerated()) @map("branch_id") @db.Uuid
   patientId             String      @map("patient_id") @db.Uuid
   doctorId              String      @map("doctor_id") @db.Uuid
   appointmentId         String      @map("appointment_id") @db.Uuid
@@ -1261,6 +1297,7 @@ model Visit {
   updatedAt             DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant                Tenant                 @relation(fields: [tenantId], references: [id])
+  branch Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
   patient               Patient                @relation(fields: [patientId], references: [id])
   doctor                Doctor                 @relation(fields: [doctorId], references: [id])
   appointment           Appointment            @relation(fields: [appointmentId], references: [id])
@@ -1291,6 +1328,7 @@ model Visit {
   // (nothing enforced it) nor the wanted one.
   @@index([tenantId, patientId, completedAt])
   @@index([tenantId, doctorId, status])
+  @@index([tenantId, branchId])
   @@map("visits")
 }
 
@@ -1417,6 +1455,10 @@ model VisitInvestigation {
 model Payment {
   id                      String              @id @db.Uuid
   tenantId                String              @map("tenant_id") @db.Uuid
+  /// Stamped by the allocate_receipt_number trigger from the charge, visit or appointment.
+  branchId String @default(dbgenerated()) @map("branch_id") @db.Uuid
+  /// Stamped by the stamp_currency trigger from the clinic.
+  currency String @default(dbgenerated()) @db.Char(3)
   patientId               String              @map("patient_id") @db.Uuid
   appointmentId           String?             @map("appointment_id") @db.Uuid
   visitId                 String?             @map("visit_id") @db.Uuid
@@ -1442,6 +1484,7 @@ model Payment {
   updatedAt               DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant          Tenant              @relation(fields: [tenantId], references: [id])
+  branch Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
   patient         Patient             @relation(fields: [patientId], references: [id])
   charge          VisitCharge?        @relation(fields: [chargeId], references: [id])
   appointment     Appointment?        @relation(fields: [appointmentId], references: [id])
@@ -1451,6 +1494,7 @@ model Payment {
   adjustments     PaymentAdjustment[]
   creditsCreated  PatientCredit[]
 
+  @@unique([branchId, receiptNumber], map: "payments_branch_id_receipt_number_key")
   @@index([tenantId, status])
   @@index([tenantId, patientId])
   /// The payments report and overview: a branch's receipts for a period (20261031111500).
@@ -1462,6 +1506,8 @@ model Payment {
 model PaymentAdjustment {
   id             String         @id @db.Uuid
   tenantId       String         @map("tenant_id") @db.Uuid
+  /// Stamped by the stamp_currency trigger from the clinic.
+  currency String @default(dbgenerated()) @db.Char(3)
   paymentId      String         @map("payment_id") @db.Uuid
   adjustmentType AdjustmentType @map("adjustment_type")
   amountMinor    Int            @map("amount_minor")
@@ -2310,6 +2356,12 @@ model PatientTransfer {
 model VisitCharge {
   id                         String       @id @db.Uuid
   tenantId                   String       @map("tenant_id") @db.Uuid
+  /// Stamped by the allocate_invoice_number trigger from the visit.
+  branchId String @default(dbgenerated()) @map("branch_id") @db.Uuid
+  /// Sequential and gapless per branch, allocated by a trigger inside the writing transaction.
+  invoiceNumber Int @default(dbgenerated()) @map("invoice_number")
+  /// Stamped by the stamp_currency trigger from the clinic.
+  currency String @default(dbgenerated()) @db.Char(3)
   visitId                    String       @unique @map("visit_id") @db.Uuid
   patientId                  String       @map("patient_id") @db.Uuid
   status                     ChargeStatus @default(OPEN)
@@ -2328,6 +2380,7 @@ model VisitCharge {
   updatedAt                  DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant               Tenant            @relation(fields: [tenantId], references: [id])
+  branch Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
   visit                Visit             @relation(fields: [visitId], references: [id])
   patient              Patient           @relation(fields: [patientId], references: [id])
   discountAuthorisedBy User?             @relation("ChargeDiscountAuthorisedBy", fields: [discountAuthorisedByUserId], references: [id])
@@ -2335,6 +2388,7 @@ model VisitCharge {
   payments             Payment[]
   creditsApplied       PatientCredit[]
 
+  @@unique([branchId, invoiceNumber], map: "visit_charges_branch_id_invoice_number_key")
   /// The patient's share and the balance are NOT columns: they are computed by the
   /// `visit_charge_balances` view (D7 as amended -- database-computed, not necessarily GENERATED).
   @@index([tenantId, status])
@@ -2345,6 +2399,8 @@ model VisitCharge {
 model VisitChargeLine {
   id               String           @id @db.Uuid
   tenantId         String           @map("tenant_id") @db.Uuid
+  /// Stamped by the stamp_currency trigger from the clinic.
+  currency String @default(dbgenerated()) @db.Char(3)
   chargeId         String           @map("charge_id") @db.Uuid
   nameSnapshot     String           @map("name_snapshot")
   unitPriceMinor   Int              @map("unit_price_minor")
@@ -2393,6 +2449,8 @@ model ChargeableMaterial {
 model PatientCredit {
   id              String         @id @db.Uuid
   tenantId        String         @map("tenant_id") @db.Uuid
+  /// Stamped by the stamp_currency trigger from the clinic.
+  currency String @default(dbgenerated()) @db.Char(3)
   patientId       String         @map("patient_id") @db.Uuid
   movement        CreditMovement
   /// Always positive. The direction is the movement — a signed amount invites a sum that nets two

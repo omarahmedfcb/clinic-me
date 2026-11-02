@@ -304,8 +304,10 @@ describe("the manifest itself is legible", () => {
       "POST /platform/clinics/:tenantId/contacts/:contactId/remove",
       "POST /platform/clinics/:tenantId/contracts",
       "POST /platform/clinics/:tenantId/file",
+      "POST /platform/clinics/:tenantId/renewal",
       "POST /platform/clinics/:tenantId/support-access",
       "POST /platform/clinics/:tenantId/suspension",
+      "POST /platform/clinics/:tenantId/whatsapp",
       "POST /platform/clinics/whatsapp",
       "POST /platform/login",
       "POST /platform/messages",
@@ -319,6 +321,7 @@ describe("the manifest itself is legible", () => {
       // password and a live code again; `recovery` is behind `PendingPlatformGuard` and is the
       // lost-authenticator path. Both act only on the account in the token.
       "POST /platform/recovery-codes/regenerate",
+      "POST /platform/session/refresh",
       "POST /platform/support-sessions/clinics/:tenantId",
       "POST /platform/support-sessions/clinics/:tenantId/:sessionId/token",
       "POST /platform/support-sessions/clinics/:tenantId/:sessionId/withdraw",

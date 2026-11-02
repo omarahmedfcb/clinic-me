@@ -25,13 +25,19 @@ import { addDays, resolveBoundary, weekdayOf } from "./zoned-time.ts";
  * scattered through the whole function.
  */
 export function planDay(input: DayPlanInput): DayPlan {
-  const { timezone, date, doctorId } = input;
+  const { timezone, date, doctorId, branchId } = input;
 
   // Q27: sort every input before use. Prisma returns rows in whatever order Postgres gives, which
   // is stable in practice and guaranteed nowhere, and this claims to be deterministic.
-  const templates = [...input.templates].sort(byId);
+  //
+  // One branch, when asked for one (BRANCHES-DESIGN §4.4): that branch's templates, and the closures
+  // that name it or every branch. Extra availability is filtered in `expandExtraAvailability`, which
+  // is where "names no branch, opens nothing" lives for the whole-clinic plan too.
+  const templates = [...input.templates].filter((t) => branchId === undefined || t.branchId === branchId).sort(byId);
   const breaks = [...input.breaks].sort(byId);
-  const exceptions = [...input.exceptions].sort(byId);
+  const exceptions = [...input.exceptions]
+    .filter((e) => branchId === undefined || e.branchId === null || e.branchId === branchId)
+    .sort(byId);
   const appointments = [...input.existingAppointments].sort(byId);
 
   // Steps 1-3. Only sessions anchored to `date` survive (step 6, Q8b) — which is what lets one
@@ -188,6 +194,8 @@ function expandExtraAvailability(
         e.type === "EXTRA_AVAILABILITY" &&
         e.date === anchor &&
         appliesToDoctor(e.doctorId, doctorId) &&
+        // No branch is guessed for an extra window: one that names none opens nothing.
+        e.branchId !== null &&
         e.startTime !== null &&
         e.endTime !== null,
     )

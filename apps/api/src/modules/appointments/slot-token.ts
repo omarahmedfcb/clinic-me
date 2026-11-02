@@ -35,6 +35,8 @@ export interface SlotClaims {
   tenantId: string;
   doctorId: string;
   serviceId: string;
+  /** The branch the slot is in. Signed with the rest, so a token cannot be carried to another branch. */
+  branchId: string;
   startMs: number;
   endMs: number;
   expiresAtMs: number;
@@ -71,6 +73,7 @@ function payload(claims: SlotClaims): string {
     claims.tenantId,
     claims.doctorId,
     claims.serviceId,
+    claims.branchId,
     String(claims.startMs),
     String(claims.endMs),
     String(claims.expiresAtMs),
@@ -154,15 +157,16 @@ export function verifySlotToken(
   }
 
   const fields = body.split(".");
-  if (fields.length !== 7) return { ok: false, failure: "MALFORMED" };
-  const [tenantId, doctorId, serviceId, startMs, endMs, expiresAtMs, nonce] = fields as [
-    string, string, string, string, string, string, string,
+  if (fields.length !== 8) return { ok: false, failure: "MALFORMED" };
+  const [tenantId, doctorId, serviceId, branchId, startMs, endMs, expiresAtMs, nonce] = fields as [
+    string, string, string, string, string, string, string, string,
   ];
 
   const claims: SlotClaims = {
     tenantId,
     doctorId,
     serviceId,
+    branchId,
     startMs: Number(startMs),
     endMs: Number(endMs),
     expiresAtMs: Number(expiresAtMs),

@@ -41,6 +41,7 @@ const template = (over: Partial<ScheduleTemplateRow> = {}): ScheduleTemplateRow 
   endTime: "12:00",
   validFrom: "2026-01-01",
   validTo: null,
+  branchId: "b1",
   ...over,
 });
 
@@ -101,7 +102,7 @@ describe("slot engine boundaries", () => {
     });
 
     it("does not work the day after validTo", () => {
-      expect(slots({ templates: [template({ validTo: "2026-08-31" })] })).toEqual([]);
+      expect(slots({ templates: [template({ validTo: "2026-08-31", branchId: "b1" })] })).toEqual([]);
     });
 
     it("does not work the day before validFrom", () => {
@@ -148,6 +149,7 @@ describe("slot engine boundaries", () => {
       startTime: null,
       endTime: null,
       ...over,
+      branchId: null,
     });
 
     it("a whole-day block clears the day", () => {
@@ -155,7 +157,7 @@ describe("slot engine boundaries", () => {
     });
 
     it("a clinic-wide holiday clears the day for a doctor it does not name (Q13)", () => {
-      expect(slots({ exceptions: [blocked({ type: "HOLIDAY", doctorId: null })] })).toEqual([]);
+      expect(slots({ exceptions: [blocked({ type: "HOLIDAY", doctorId: null, branchId: null })] })).toEqual([]);
     });
 
     it("a block naming another doctor is ignored", () => {
@@ -179,6 +181,7 @@ describe("slot engine boundaries", () => {
         type: "EXTRA_AVAILABILITY",
         startTime: "18:00",
         endTime: "19:00",
+        branchId: "b1",
       };
       const partial = blocked({ startTime: "18:00", endTime: "18:30" });
       // No template, so the only availability is the exception pair — which is what makes this a
@@ -195,6 +198,7 @@ describe("slot engine boundaries", () => {
         type: "EXTRA_AVAILABILITY",
         startTime: "18:00",
         endTime: "19:00",
+        branchId: "b1",
       };
       expect(slots({ exceptions: [blocked(), extra] })).toEqual([]);
     });
@@ -260,6 +264,7 @@ describe("slot engine boundaries", () => {
         type: "BLOCKED",
         startTime: null,
         endTime: null,
+        branchId: null,
       };
       expect(slots({ templates: [night], exceptions: [block] })).toEqual([]);
     });
@@ -377,6 +382,7 @@ describe("slot engine boundaries", () => {
             type: "BLOCKED",
             startTime: "12:00",
             endTime: "13:00",
+            branchId: null,
           },
         ],
       });

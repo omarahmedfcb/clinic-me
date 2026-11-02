@@ -3,6 +3,7 @@ import { Button } from "../../design-system/Button.tsx";
 import { intlLocale } from "../../i18n/format.ts";
 import { useLocale } from "../../i18n/locale-context.tsx";
 import { useSession } from "../auth/session.tsx";
+import { DISPLAY_TIME_ZONE } from "../../lib/clinic-time-zone.ts";
 
 /**
  * Shown on every screen while the assistant is silent on one or more WhatsApp chats because a person
@@ -66,7 +67,7 @@ export function HandoffBanner() {
   if (!allowed || chats.length === 0) return null;
 
   const clock = new Intl.DateTimeFormat(intlLocale(locale), {
-    timeZone: "Africa/Cairo",
+    timeZone: DISPLAY_TIME_ZONE,
     timeStyle: "short",
     hour12: false,
   });

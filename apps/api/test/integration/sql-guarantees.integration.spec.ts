@@ -163,6 +163,7 @@ describe("SQL guarantees", () => {
             actorUserId: fixture.userId,
             actorRole: "OWNER",
             action: "CREATE",
+            scope: "UNSCOPED",
             entityType: "patient",
             entityId: fixture.patientId,
             ipAddress: "127.0.0.1",

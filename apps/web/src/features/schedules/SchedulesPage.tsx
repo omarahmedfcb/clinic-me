@@ -36,6 +36,7 @@ import {
   type ScheduleTemplate,
   type WeekDay,
 } from "./schedules-api.ts";
+import { DISPLAY_TIME_ZONE } from "../../lib/clinic-time-zone.ts";
 
 /**
  * Checkpoint 4, screen one — the schedule editor, in the order a human actually thinks.
@@ -427,7 +428,7 @@ export function SchedulesPage() {
         weekStart={weekStart}
         onShiftWeek={(days) => setWeekStart((current) => addDays(current, days))}
         onToday={() => setWeekStart(weekStartOf(today()))}
-        timeZone="Africa/Cairo"
+        timeZone={DISPLAY_TIME_ZONE}
       />
 
       {/*
