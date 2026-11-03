@@ -25,7 +25,7 @@ import type { MetaEchoMessage } from "./meta-webhook-payload.ts";
 import { resolveTenantByPhoneNumberId, type ResolvedWhatsAppTenant } from "./whatsapp-tenants.ts";
 
 /** How long a pause lasts, from the last staff reply. */
-export const HANDOFF_PAUSE_MS = 2 * 60 * 60 * 1000;
+export const HANDOFF_PAUSE_MS = 10 * 60 * 1000;
 
 /** A bot reply that goes out is logged a moment later; Meta's echo of a human message can race it. */
 const ECHO_SETTLE_MS = 3000;
