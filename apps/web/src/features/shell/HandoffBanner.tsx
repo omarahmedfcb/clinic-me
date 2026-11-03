@@ -5,9 +5,10 @@ import { useLocale } from "../../i18n/locale-context.tsx";
 import { useSession } from "../auth/session.tsx";
 
 /**
- * Shown on every screen while the assistant is silent on one or more WhatsApp chats because a person
- * has them (staff replied from the Business app, or the patient asked for someone). The pause lapses
- * by itself after a few hours; this is the button that ends it sooner, for one chat or all of them.
+ * Shown on every screen while the assistant is silent on one or more WhatsApp chats because staff
+ * replied in them from the WhatsApp Business app (a patient asking for a person no longer pauses
+ * anything -- they are sent to the clinic's human support). The pause lapses by itself two hours after
+ * the last reply; this is the button that ends it sooner, for one chat or all of them.
  *
  * Same capability as the bell it complements (`appointments.read`), and the same endpoints.
  */

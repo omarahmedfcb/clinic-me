@@ -34,6 +34,7 @@ const RECEPTIONIST = {
   editableHere: true,
   doctorId: null,
   hasPhoto: false,
+  isHumanSupport: false,
 };
 
 const DOCTOR = {
@@ -48,6 +49,7 @@ const DOCTOR = {
   editableHere: false,
   doctorId: "d1",
   hasPhoto: false,
+  isHumanSupport: false,
 };
 
 function json(body: unknown, status = 200): Response {
@@ -83,6 +85,59 @@ describe("the staff list", () => {
     expect(screen.getByText("+201111111111")).toBeTruthy();
     // Never signed in is a fact, and reads as one rather than as a blank cell.
     expect(screen.getByTestId("staff-page").textContent).toContain("لم يدخل بعد");
+  });
+
+  describe("human support on WhatsApp", () => {
+    const SECOND = { ...RECEPTIONIST, membershipId: "m4", userId: "u4", fullName: "ياسمين الشربيني", phoneE164: "+201333333333" };
+
+    test("marks the chosen receptionist and offers the others as a choice", async () => {
+      renderPage(async () => json([{ ...RECEPTIONIST, isHumanSupport: true }, SECOND, DOCTOR]));
+      await screen.findByTestId("staff-page");
+
+      expect(screen.getByTestId("human-support-m2")).toBeTruthy();
+      expect(screen.queryByTestId("set-human-support-m2")).toBeNull();
+      expect(screen.getByTestId("set-human-support-m4")).toBeTruthy();
+      // Only a receptionist can be human support: a doctor's row has no such button.
+      expect(screen.queryByTestId("set-human-support-m3")).toBeNull();
+      expect(screen.queryByTestId("human-support-missing")).toBeNull();
+    });
+
+    test("choosing one sends the choice and reloads the list", async () => {
+      let chosen = false;
+      const { fetchMock } = renderPage(async (path, init) => {
+        if (String(path) === "/api/staff/human-support" && init?.method === "PUT") {
+          chosen = true;
+          return json({ ...SECOND, isHumanSupport: true });
+        }
+        return json(chosen ? [RECEPTIONIST, { ...SECOND, isHumanSupport: true }] : [{ ...RECEPTIONIST, isHumanSupport: true }, SECOND]);
+      });
+      await screen.findByTestId("staff-page");
+
+      fireEvent.click(screen.getByTestId("set-human-support-m4"));
+      await waitFor(() => expect(screen.getByTestId("human-support-m4")).toBeTruthy());
+
+      const put = fetchMock.mock.calls.find(([path]) => String(path) === "/api/staff/human-support");
+      expect(JSON.parse(String((put?.[1] as RequestInit).body))).toEqual({ membershipId: "m4" });
+      expect(screen.queryByTestId("human-support-m2")).toBeNull();
+    });
+
+    test("warns when nobody is set, so a patient asking for a person would be told it is unavailable", async () => {
+      renderPage(async () => json([RECEPTIONIST, SECOND, DOCTOR]));
+      await screen.findByTestId("staff-page");
+      expect(screen.getByTestId("human-support-missing")).toBeTruthy();
+    });
+
+    test("a refusal from the server is shown, not swallowed", async () => {
+      renderPage(async (path, init) =>
+        String(path) === "/api/staff/human-support" && init?.method === "PUT"
+          ? json({ code: "NOT_A_RECEPTIONIST", params: { name: "ياسمين" } }, 422)
+          : json([RECEPTIONIST, SECOND]),
+      );
+      await screen.findByTestId("staff-page");
+
+      fireEvent.click(screen.getByTestId("set-human-support-m4"));
+      expect((await screen.findByTestId("staff-failure")).textContent).toContain("موظف استقبال");
+    });
   });
 
   test("a doctor is listed and linked, never edited here", async () => {

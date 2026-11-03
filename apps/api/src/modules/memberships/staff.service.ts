@@ -10,6 +10,7 @@ import { withTenant, type ActorContext } from "../../prisma/with-tenant.ts";
 import { hashPassword } from "../auth/password.ts";
 import { normalisePhone } from "../auth/phone.ts";
 import { revokeAllForUser } from "../auth/refresh-tokens.ts";
+import { pickHumanSupport, pinSoleReceptionist } from "./human-support.ts";
 
 export interface StaffCaller {
   tenantId: string;
@@ -25,7 +26,8 @@ export type StaffRefusalReason =
   | "DUPLICATE_PHONE"
   | "NOT_EDITABLE_HERE"
   | "OWNER_ROLE_FIXED"
-  | "SELF_ROLE_CHANGE";
+  | "SELF_ROLE_CHANGE"
+  | "NOT_A_RECEPTIONIST";
 
 export type StaffResult<T> =
   | { ok: true; value: T }
@@ -55,6 +57,8 @@ export interface StaffMember {
   doctorId: string | null;
   /** Whether a photo is stored. The bytes come from the route, never a URL — see photo-key.ts. */
   hasPhoto: boolean;
+  /** True for the one receptionist patients are sent to when they ask for a person on WhatsApp. */
+  isHumanSupport: boolean;
 }
 
 const ROW = {
@@ -89,7 +93,7 @@ type Row = {
   doctor: { id: string } | null;
 };
 
-const toMember = (row: Row): StaffMember => ({
+const toMember = (row: Row, humanSupportMembershipId: string | null = null): StaffMember => ({
   membershipId: row.id,
   userId: row.user.id,
   fullName: row.user.fullName,
@@ -101,13 +105,43 @@ const toMember = (row: Row): StaffMember => ({
   editableHere: row.doctor === null,
   doctorId: row.doctor?.id ?? null,
   hasPhoto: row.user.photoStorageKey !== null,
+  isHumanSupport: humanSupportMembershipId !== null && row.id === humanSupportMembershipId,
 });
 
 /** Everyone with a membership here, suspended accounts included: the screen has to reactivate one. */
 export async function listStaff(caller: StaffCaller): Promise<StaffMember[]> {
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
-    const rows = await tx.membership.findMany({ select: ROW, orderBy: { createdAt: "asc" } });
-    return rows.map((row) => toMember(row as Row));
+    const rows = (await tx.membership.findMany({ select: ROW, orderBy: { createdAt: "asc" } })) as Row[];
+    const tenant = await tx.tenant.findUniqueOrThrow({
+      where: { id: caller.tenantId },
+      select: { humanSupportMembershipId: true },
+    });
+    // The same rule the bot applies (human-support.ts), so the badge on a row is exactly who a patient
+    // would be sent to right now -- including the "only receptionist" default nobody has chosen.
+    const support = pickHumanSupport(
+      tenant.humanSupportMembershipId,
+      rows.filter((row) => row.role === "RECEPTIONIST" && row.status === "ACTIVE").map((row) => ({ membershipId: row.id })),
+    );
+    return rows.map((row) => toMember(row, support?.membershipId ?? null));
+  });
+}
+
+/**
+ * Chooses the receptionist patients are sent to when they ask for a person on WhatsApp.
+ *
+ * Only an ACTIVE receptionist of this clinic qualifies. A doctor or an admin is refused, and so is a
+ * suspended account: the number would be given to patients and nobody would be answering it. A
+ * membership of another clinic is `NOT_FOUND`, never a 403 (CLAUDE.md).
+ */
+export async function setHumanSupport(caller: StaffCaller, membershipId: string): Promise<StaffResult<StaffMember>> {
+  return withTenant(caller.tenantId, caller.actor, async (tx): Promise<StaffResult<StaffMember>> => {
+    const row = await tx.membership.findFirst({ where: { id: membershipId }, select: ROW });
+    if (row === null) return { ok: false, code: "NOT_FOUND", params: { resource: "membership" } };
+    if (row.role !== "RECEPTIONIST" || row.status !== "ACTIVE") {
+      return { ok: false, code: "NOT_A_RECEPTIONIST", params: { name: row.user.fullName } };
+    }
+    await tx.tenant.update({ where: { id: caller.tenantId }, data: { humanSupportMembershipId: membershipId } });
+    return { ok: true, value: toMember(row as Row, membershipId) };
   });
 }
 
@@ -180,6 +214,9 @@ export async function createStaff(
   // lock them out of the clinic they are already working in.
   const member = await withTenant(caller.tenantId, caller.actor, async (tx) => {
     const membershipId = randomUUID();
+    // A clinic that has been relying on its only receptionist keeps them as human support when a
+    // colleague joins (human-support.ts).
+    if (input.role === "RECEPTIONIST") await pinSoleReceptionist(tx, caller.tenantId);
     await tx.membership.create({
       data: injected({ id: membershipId, userId, role: input.role, status: "ACTIVE" }),
     });
@@ -294,6 +331,7 @@ export async function updateStaff(
     // The role goes through the tenant client, because a membership is the clinic's record. The
     // database refuses a change that would leave the clinic with no active administrator.
     if (changesRole && input.role !== undefined) {
+      if (input.role === "RECEPTIONIST") await pinSoleReceptionist(tx, caller.tenantId);
       await tx.membership.update({ where: { id: membershipId }, data: { role: input.role } });
     }
     return tx.membership.findFirstOrThrow({ where: { id: membershipId }, select: ROW });

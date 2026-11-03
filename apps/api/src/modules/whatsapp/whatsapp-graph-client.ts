@@ -150,6 +150,51 @@ export async function sendWhatsAppButtons(
   return { externalMessageId };
 }
 
+/**
+ * A message with one button that opens a link -- here, a wa.me chat with the clinic's human support.
+ * Allowed inside the 24-hour window the patient's own message just opened, so it needs no template.
+ *
+ * Meta caps the button label at 20 characters and rejects the whole send past it, so that is checked
+ * here, before the HTTP call, the same way `sendWhatsAppButtons` does.
+ */
+export async function sendWhatsAppUrlButton(
+  phoneNumberId: string,
+  toWaId: string,
+  bodyText: string,
+  buttonLabel: string,
+  url: string,
+  token?: string
+): Promise<{ externalMessageId: string }> {
+  if (buttonLabel.length > 20) {
+    throw new Error(`sendWhatsAppUrlButton: button label over 20 chars: "${buttonLabel}"`);
+  }
+
+  const response = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${accessToken(token)}` },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to: toWaId,
+      type: "interactive",
+      interactive: {
+        type: "cta_url",
+        body: { text: bodyText },
+        action: { name: "cta_url", parameters: { display_text: buttonLabel, url } },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw sendError("WhatsApp link-button send failed", response.status, errorBody);
+  }
+
+  const data = (await response.json()) as { messages?: Array<{ id: string }> };
+  const externalMessageId = data.messages?.[0]?.id;
+  if (!externalMessageId) throw new Error("WhatsApp link-button send succeeded but returned no message id.");
+  return { externalMessageId };
+}
+
 /** One row of a list message. Meta's limits: `id` under 200 bytes, `title` under 24 characters,
  *  `description` (optional) under 72. */
 export interface WhatsAppListRow {

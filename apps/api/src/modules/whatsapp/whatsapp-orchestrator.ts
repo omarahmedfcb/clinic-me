@@ -15,6 +15,7 @@ import { clearAiChain, ingestInboundMessage, recordOutboundMessage } from "./wha
 import { sendWhatsAppButtons, sendWhatsAppList, sendWhatsAppText } from "./whatsapp-graph-client.ts";
 import { runFlow, WELCOME_IDLE_GAP_MS, type FlowOutgoing, type FlowState } from "./whatsapp-flow.ts";
 import { ResolvedWhatsAppTenant } from "./whatsapp-tenants.ts";
+import { detectLang, type Lang } from "./whatsapp-flow-text.ts";
 import { handleHumanRequest, wantsHuman } from "./whatsapp-handoff.ts";
 import { noteSendFailure } from "./whatsapp-connections.ts";
 
@@ -93,21 +94,22 @@ export async function handleInboundWhatsAppMessage(input: InboundWhatsAppMessage
   }
 
   if (ingest.alreadyProcessed) return;
-  // A person has this chat (the patient asked for one, or staff replied from the Business app): the
-  // message is logged above and the bot says nothing. The pause lapses by itself, or staff hand it back.
+  // Staff replied from the Business app (coexistence): the message is logged above and the bot says
+  // nothing on this chat. The pause lapses by itself, or staff hand it back.
   if (ingest.botPausedUntil !== null && ingest.botPausedUntil.getTime() > Date.now()) return;
 
+  // The patient typed that they want a person: send them to the clinic's human support. The bot is not
+  // paused and the saved flow state is untouched, so whatever they were doing is still there.
   if (input.input.kind === "text" && wantsHuman(input.input.text, ingest.flowState as FlowState | null)) {
     await handleHumanRequest({
       tenant,
       waId: input.waId,
       conversationId: ingest.conversationId,
       contactId: ingest.contactId,
-      text: input.input.text,
+      lang: detectLang(input.input.text, (ingest.flowState as { lang?: Lang } | null)?.lang ?? "ar"),
     });
     return;
   }
-
 
   let outgoing: FlowOutgoing;
   let nextState: FlowState | null;
@@ -121,6 +123,18 @@ export async function handleInboundWhatsAppMessage(input: InboundWhatsAppMessage
       isNewSession: ingest.isNewSession,
       inboundExternalMessageId: input.externalMessageId,
     });
+
+    // The patient tapped "talk to a human" on the menu (whatsapp-flow.ts's `stepMenu`).
+    if (result.handled && result.requestHuman === true) {
+      await handleHumanRequest({
+        tenant,
+        waId: input.waId,
+        conversationId: ingest.conversationId,
+        contactId: ingest.contactId,
+        lang: (result.nextState as { lang?: Lang } | null | undefined)?.lang ?? "ar",
+      });
+      return;
+    }
 
     if (!result.handled) {
       // Nothing left to interpret a stale interactive tap against (whatsapp-flow.ts's own note on

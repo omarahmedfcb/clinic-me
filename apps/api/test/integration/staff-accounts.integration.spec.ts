@@ -867,4 +867,54 @@ describe("staff accounts", () => {
       expect((await response.json()) as { status: string }).toMatchObject({ status: "SUSPENDED" });
     });
   });
+
+  describe("human support on WhatsApp", () => {
+    type Row = { membershipId: string; role: string; isHumanSupport: boolean };
+    const list = async (): Promise<Row[]> => (await call(adminToken, "GET", "/staff")).json() as Promise<Row[]>;
+
+    test("an admin chooses a receptionist, and exactly one row carries the flag", async () => {
+      const chosen = await createReceptionist();
+      await createReceptionist();
+
+      const response = await call(adminToken, "PUT", "/staff/human-support", { membershipId: chosen.membershipId });
+      expect(response.status).toBe(200);
+      expect((await response.json()) as { isHumanSupport: boolean }).toMatchObject({ isHumanSupport: true });
+
+      const flagged = (await list()).filter((row) => row.isHumanSupport);
+      expect(flagged.map((row) => row.membershipId)).toEqual([chosen.membershipId]);
+    });
+
+    test("the choice is stored on the clinic, and only an active receptionist of this clinic is accepted", async () => {
+      const rows = await list();
+      const doctor = rows.find((row) => row.role === "DOCTOR");
+      expect(doctor).toBeDefined();
+
+      // A doctor, and the admin themselves: neither is somebody patients should be sent to.
+      for (const membershipId of [doctor?.membershipId, adminMembershipId]) {
+        const refused = await call(adminToken, "PUT", "/staff/human-support", { membershipId });
+        expect(refused.status).toBe(422);
+        expect((await refused.json()) as { code: string }).toMatchObject({ code: "NOT_A_RECEPTIONIST" });
+      }
+
+      // Somebody who is not in this clinic at all is simply not found.
+      const unknown = await call(adminToken, "PUT", "/staff/human-support", {
+        membershipId: "00000000-0000-4000-8000-000000000000",
+      });
+      expect(unknown.status).toBe(404);
+    });
+
+    test("a suspended receptionist stops being the human support", async () => {
+      const chosen = await createReceptionist();
+      expect((await call(adminToken, "PUT", "/staff/human-support", { membershipId: chosen.membershipId })).status).toBe(200);
+
+      const suspended = await call(adminToken, "POST", `/staff/${chosen.membershipId}/status`, { status: "SUSPENDED" });
+      expect(suspended.status).toBe(201);
+
+      // Never the one patients are sent to, whatever the clinic's other receptionists make of the fallback.
+      expect((await list()).find((row) => row.membershipId === chosen.membershipId)?.isHumanSupport).toBe(false);
+
+      const refused = await call(adminToken, "PUT", "/staff/human-support", { membershipId: chosen.membershipId });
+      expect(refused.status).toBe(422);
+    });
+  });
 });

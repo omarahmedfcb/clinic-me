@@ -247,6 +247,8 @@ export const REFUSAL_CODES = [
   "OWNER_ROLE_FIXED",
   // The other half of SELF_SUSPEND: ask a colleague, rather than correct anything.
   "SELF_ROLE_CHANGE",
+  // Human support on WhatsApp has to be an active receptionist; the action is to pick one.
+  "NOT_A_RECEPTIONIST",
   "OVERLAPPING_TEMPLATE",
   "INVALID_WINDOW",
   "DUPLICATE_POLICY",

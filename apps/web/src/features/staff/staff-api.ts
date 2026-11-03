@@ -20,6 +20,8 @@ export interface StaffMember {
   doctorId: string | null;
   /** Whether a photo is stored, so a row with none draws initials instead of asking for a 404. */
   hasPhoto: boolean;
+  /** The receptionist patients are sent to when they ask for a person on WhatsApp. At most one row. */
+  isHumanSupport: boolean;
 }
 
 type Refused = { ok: false; code: string; params: Record<string, unknown> };
@@ -174,4 +176,18 @@ export async function changePassword(
   });
   if (!response.ok) return refusal(response);
   return { ok: true, ...((await response.json()) as { accessToken: string }) };
+}
+
+/** Chooses the receptionist patients are sent to when they ask for a person on WhatsApp. */
+export async function setHumanSupport(
+  authFetch: AuthFetch,
+  membershipId: string,
+): Promise<{ ok: true; member: StaffMember } | Refused> {
+  const response = await authFetch("/api/staff/human-support", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ membershipId }),
+  });
+  if (!response.ok) return refusal(response);
+  return { ok: true, member: (await response.json()) as StaffMember };
 }

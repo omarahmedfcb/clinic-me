@@ -19,6 +19,7 @@ import {
   loadUserPhoto,
   removeUserPhoto,
   resetStaffPassword,
+  setHumanSupport,
   setStaffStatus,
   updateStaff,
   uploadUserPhoto,
@@ -162,6 +163,16 @@ export function StaffPage({ onOpenDoctor }: { onOpenDoctor: (doctorId: string | 
     await refresh();
   }
 
+  async function onHumanSupport(member: StaffMember): Promise<void> {
+    setFailure(null);
+    const result = await setHumanSupport(authFetch, member.membershipId);
+    if (!result.ok) {
+      setFailure({ code: result.code, params: result.params });
+      return;
+    }
+    await refresh();
+  }
+
   const columns: Column<StaffMember>[] = [
     {
       key: "name",
@@ -192,7 +203,19 @@ export function StaffPage({ onOpenDoctor }: { onOpenDoctor: (doctorId: string | 
     {
       key: "role",
       header: t("staff.column.role"),
-      render: (row) => roleLabel(row.role, t),
+      render: (row) => (
+        <div className="flex flex-col items-start gap-1">
+          <span>{roleLabel(row.role, t)}</span>
+          {row.isHumanSupport && (
+            <span
+              className="inline-flex w-fit rounded-full bg-success-soft px-2 py-0.5 text-xs text-success"
+              data-testid={`human-support-${row.membershipId}`}
+            >
+              {t("staff.humanSupport.badge")}
+            </span>
+          )}
+        </div>
+      ),
     },
     {
       key: "status",
@@ -232,6 +255,16 @@ export function StaffPage({ onOpenDoctor }: { onOpenDoctor: (doctorId: string | 
             <Button size="sm" variant="secondary" data-testid={`edit-${row.membershipId}`} onClick={() => openEdit(row)}>
               {t("staff.edit")}
             </Button>
+            {row.role === "RECEPTIONIST" && row.status === "ACTIVE" && !row.isHumanSupport && (
+              <Button
+                size="sm"
+                variant="secondary"
+                data-testid={`set-human-support-${row.membershipId}`}
+                onClick={() => void onHumanSupport(row)}
+              >
+                {t("staff.humanSupport.set")}
+              </Button>
+            )}
             <Button size="sm" variant="secondary" data-testid={`reset-${row.membershipId}`} onClick={() => void onReset(row)}>
               {t("staff.resetPassword")}
             </Button>
@@ -270,6 +303,13 @@ export function StaffPage({ onOpenDoctor }: { onOpenDoctor: (doctorId: string | 
       {failure !== null && (
         <p role="alert" className="mb-3 text-xs text-danger" data-testid="staff-failure">
           {say(failure.code, failure.params)}
+        </p>
+      )}
+
+      {/* Nobody to send patients to: two or more receptionists and none chosen, or no active receptionist. */}
+      {!staff.some((member) => member.isHumanSupport) && (
+        <p role="status" className="mb-3 text-xs text-warning" data-testid="human-support-missing">
+          {t("staff.humanSupport.missing")}
         </p>
       )}
 

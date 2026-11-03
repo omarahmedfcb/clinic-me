@@ -44,8 +44,8 @@ const clients = new Map<string, BotApiClient>();
 function envFallback(): WhatsAppAccess | null {
   const accessToken = process.env["WHATSAPP_ACCESS_TOKEN"];
   if (!accessToken || !process.env["BOT_CREDENTIAL_ID"] || !process.env["BOT_CREDENTIAL_SECRET"]) return null;
-  // Testing only: lets the Meta test number exercise the handoff flow. It has no WhatsApp Business app
-  // behind it, so staff replies (echoes) can't happen on it; only the patient-request pause can be tried.
+  // Testing only: lets the Meta test number run as a coexistence number. It has no WhatsApp Business app
+  // behind it, so staff replies (echoes) can't happen on it and the bot-silencing cannot be tried there.
   const numberMode: NumberMode = process.env["WHATSAPP_ENV_NUMBER_MODE"] === "COEXISTENCE" ? "COEXISTENCE" : "NEW_NUMBER";
   return { accessToken, client: getDefaultBotApiClient(), numberMode };
 }

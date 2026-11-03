@@ -3,6 +3,9 @@
 // this is the one lookup the webhook handler is allowed to trust a clinic's identity from.
 
 import { prisma } from "../../prisma/client.ts";
+import { withTenant } from "../../prisma/with-tenant.ts";
+import { systemActor } from "../audit/system-actor.ts";
+import { resolveHumanSupport } from "../memberships/human-support.ts";
 import { isSubscriptionExempt } from "../platform/subscription-exemption.ts";
 import { resolveBotActor, type BotActor } from "../webchat/webchat-clinics.ts";
 import type { BotApiClient } from "./bot-api-client.ts";
@@ -21,6 +24,9 @@ export interface WhatsAppTenant {
    *  from, and it must be this clinic's own number, never one read off the inbound payload again. */
   phoneNumberId: string;
   bot: BotActor;
+  /** The receptionist's number (E.164) patients are sent to when they ask for a person, or `null` when
+   *  the clinic has none (memberships/human-support.ts). Optional so a flow spec need not set it. */
+  humanSupportPhone?: string | null;
 }
 
 /** A `WhatsAppTenant` plus what this clinic sends and calls /bot/* with. Kept off the base type so the
@@ -28,8 +34,8 @@ export interface WhatsAppTenant {
 export interface ResolvedWhatsAppTenant extends WhatsAppTenant {
   accessToken: string;
   client: BotApiClient;
-  /** COEXISTENCE: staff can also answer on this number from the Business app, so a human handoff
- *  has somewhere to go. NEW_NUMBER: nobody can, and the bot says so when asked. */
+  /** COEXISTENCE: staff can also answer on this number from the Business app, so the bot goes quiet on a
+   *  chat a person has replied in (whatsapp-handoff.ts). NEW_NUMBER: nobody can, nothing to detect. */
   numberMode: NumberMode;
 }
 
@@ -59,6 +65,10 @@ export async function resolveTenantByPhoneNumberId(phoneNumberId: string): Promi
   const access = await resolveWhatsAppAccess(tenant.id, tenant.whatsappPhoneNumberId);
   if (access === null) return null;
 
+  // Read under the system actor, like the bot membership above: this is infrastructure resolving who a
+  // patient is sent to, not a signed-in user reading the staff list.
+  const support = await withTenant(tenant.id, await systemActor(), (tx) => resolveHumanSupport(tx, tenant.id));
+
   return {
     id: tenant.id,
     timezone: tenant.timezone,
@@ -66,6 +76,7 @@ export async function resolveTenantByPhoneNumberId(phoneNumberId: string): Promi
     clinicNameEn: tenant.nameEn,
     phoneNumberId: tenant.whatsappPhoneNumberId,
     bot,
+    humanSupportPhone: support?.phoneE164 ?? null,
     accessToken: access.accessToken,
     client: access.client,
     numberMode: access.numberMode

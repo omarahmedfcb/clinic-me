@@ -433,6 +433,11 @@ model Tenant {
   /// Costs a full message per visit (it cannot be bundled with another), so it is opt-in.
   callInMessageEnabled        Boolean @default(false) @map("call_in_message_enabled")
   visitDocumentsLinkEnabled   Boolean @default(false) @map("visit_documents_link_enabled")
+  /// The receptionist patients are sent to when they ask for a person on WhatsApp (a wa.me link to that
+  /// person's number). Deliberately a bare uuid and not a relation: Tenant and Membership already relate
+  /// the other way, and the value is re-validated on every read (an ACTIVE RECEPTIONIST of this clinic),
+  /// so a removed or demoted receptionist simply stops counting. See memberships/human-support.ts.
+  humanSupportMembershipId    String? @map("human_support_membership_id") @db.Uuid
 
   memberships              Membership[]
   doctors                  Doctor[]
@@ -1820,9 +1825,9 @@ model Conversation {
   /// idle-session boundary that decides when the welcome message reappears (whatsapp-flow.ts's
   /// `WELCOME_IDLE_GAP_MS`).
   flowState              Json?              @map("flow_state")
-  /// While this is in the future the bot stays silent on this conversation: a human has it, either
-  /// because the patient asked for one or because staff replied from the WhatsApp Business app.
-  /// It simply lapses (4 hours, whatsapp-handoff.ts) unless staff hand the chat back sooner.
+  /// While this is in the future the bot stays silent on this conversation: staff replied from the
+  /// WhatsApp Business app (a patient asking for a person no longer pauses anything).
+  /// It simply lapses (2 hours, whatsapp-handoff.ts) unless staff hand the chat back sooner.
   botPausedUntil         DateTime?          @map("bot_paused_until") @db.Timestamptz(6)
   /// PATIENT_REQUEST | STAFF_REPLY, by a CHECK.
   botPausedReason        String?            @map("bot_paused_reason")

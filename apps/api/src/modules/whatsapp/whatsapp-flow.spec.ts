@@ -10,7 +10,7 @@ jest.mock("../webchat/gpt-client.ts", () => ({ callGpt: jest.fn() }));
 
 import { callGpt } from "../webchat/gpt-client.ts";
 import type { BotApiClient, BotDoctor, BotHouseholdMember, BotResult, BotService, BotSlot } from "./bot-api-client.ts";
-import { runFlow, type FlowContext, type FlowState } from "./whatsapp-flow.ts";
+import { MENU_BOOK_ID, MENU_HUMAN_ID, runFlow, type FlowContext, type FlowState } from "./whatsapp-flow.ts";
 import type { WhatsAppTenant } from "./whatsapp-tenants.ts";
 
 const mockedCallGpt = callGpt as jest.MockedFunction<typeof callGpt>;
@@ -101,20 +101,19 @@ afterEach(() => {
 });
 
 describe("opening a session", () => {
-  test("any opener gets the greeting plus the first booking question -- no menu", async () => {
+  test("any opener gets the greeting plus the menu: book, or talk to a human", async () => {
     freezeNow(MORNING);
     const client = fakeClient({});
     const result = await runFlow(ctxFor(client, null, { kind: "text", text: "ازيك" }, { isNewSession: true }));
 
     expect(result.handled).toBe(true);
-    expect(result.nextState).toEqual({ step: "PHONE_CHOICE", lang: "ar" });
+    expect(result.nextState).toEqual({ step: "MENU", lang: "ar" });
     expect(result.outgoing?.kind).toBe("buttons");
     if (result.outgoing?.kind === "buttons") {
       expect(result.outgoing.body).toContain(TENANT.clinicName);
-      expect(result.outgoing.body).toContain("+201001234567");
-      expect(result.outgoing.buttons.map((b) => b.id)).toEqual(["yn_yes", "yn_no"]);
+      expect(result.outgoing.buttons.map((b) => b.id)).toEqual([MENU_BOOK_ID, MENU_HUMAN_ID]);
     }
-    // Opening never needs the model any more.
+    // Opening never needs the model.
     expect(mockedCallGpt).not.toHaveBeenCalled();
   });
 
@@ -135,11 +134,11 @@ describe("opening a session", () => {
     freezeNow(MORNING);
     const client = fakeClient({});
     const result = await runFlow(ctxFor(client, null, { kind: "text", text: "hi there" }, { isNewSession: true }));
-    expect(result.nextState).toEqual({ step: "PHONE_CHOICE", lang: "en" });
+    expect(result.nextState).toEqual({ step: "MENU", lang: "en" });
     expect(result.outgoing?.kind === "buttons" && result.outgoing.body).toContain("Good morning");
   });
 
-  test("a thank-you after a finished booking is acknowledged, not answered with a new booking", async () => {
+  test("a thank-you after a finished booking is acknowledged, not answered with a new menu", async () => {
     const client = fakeClient({});
     const result = await runFlow(ctxFor(client, null, { kind: "text", text: "شكرا" }));
     expect(result.nextState).toBeNull();
@@ -150,15 +149,53 @@ describe("opening a session", () => {
     freezeNow(MORNING);
     const client = fakeClient({});
     const result = await runFlow(ctxFor(client, null, { kind: "text", text }, { isNewSession: true }));
-    expect(result.nextState?.step).toBe("PHONE_CHOICE");
+    expect(result.nextState?.step).toBe("MENU");
     expect(result.outgoing?.kind === "buttons" && result.outgoing.body).toContain(TENANT.clinicName);
   });
 
-  test("a state left by the old complaint flow is dropped and a fresh booking starts", async () => {
+  test("a patient coming back after a finished flow gets the menu again, without the greeting", async () => {
+    freezeNow(MORNING);
+    const client = fakeClient({});
+    const result = await runFlow(ctxFor(client, null, { kind: "text", text: "عايز احجز ميعاد" }));
+    expect(result.nextState).toEqual({ step: "MENU", lang: "ar" });
+    expect(result.outgoing?.kind === "buttons" && result.outgoing.body).not.toContain(TENANT.clinicName);
+  });
+
+  test("a state left by the old complaint flow is dropped and the menu is shown", async () => {
     const client = fakeClient({});
     const legacy = { step: "COMPLAINT_TEXT", lang: "ar", patientId: "pat-1", patientName: "سارة" } as unknown as FlowState;
     const result = await runFlow(ctxFor(client, legacy, { kind: "text", text: "الدكتور اتأخر" }));
+    expect(result.nextState).toEqual({ step: "MENU", lang: "ar" });
+  });
+});
+
+describe("the opening menu", () => {
+  test("tapping book goes to the first booking question", async () => {
+    const client = fakeClient({});
+    const result = await runFlow(ctxFor(client, { step: "MENU", lang: "ar" }, { kind: "interactive", id: MENU_BOOK_ID }));
     expect(result.nextState).toEqual({ step: "PHONE_CHOICE", lang: "ar" });
+    if (result.outgoing?.kind === "buttons") {
+      expect(result.outgoing.body).toContain("+201001234567");
+      expect(result.outgoing.buttons.map((b) => b.id)).toEqual(["yn_yes", "yn_no"]);
+    }
+  });
+
+  test("tapping talk to a human asks the caller to send the link and leaves the state alone", async () => {
+    const client = fakeClient({});
+    const state: FlowState = { step: "MENU", lang: "en" };
+    const result = await runFlow(ctxFor(client, state, { kind: "interactive", id: MENU_HUMAN_ID }));
+    expect(result.handled).toBe(true);
+    expect(result.requestHuman).toBe(true);
+    expect(result.nextState).toEqual(state);
+    expect(result.outgoing).toBeUndefined();
+  });
+
+  test("a typed answer that is neither button repeats the menu", async () => {
+    const client = fakeClient({});
+    gptSays("ما أعرفش");
+    const result = await runFlow(ctxFor(client, { step: "MENU", lang: "ar" }, { kind: "text", text: "كام سعر الكشف؟" }));
+    expect(result.nextState).toMatchObject({ step: "MENU", missCount: 1 });
+    expect(result.outgoing?.kind).toBe("buttons");
   });
 });
 

@@ -155,6 +155,7 @@ the code.
 | `NOT_EDITABLE_HERE` | `name` | A doctor's record belongs to the Doctors tab, not the users list | 422 |
 | `OWNER_ROLE_FIXED` | — | The owner's role is not changed from the users list; ownership transfer needs its own screen | 422 |
 | `SELF_ROLE_CHANGE` | — | You cannot change your own role — you would lose the screen that undoes it | 422 |
+| `NOT_A_RECEPTIONIST` | `name` | Human support on WhatsApp has to be an active receptionist — pick one | 422 |
 | `PASSWORD_CHANGE_REQUIRED` | — | A temporary password is outstanding. Nothing else works until it is replaced | 403 |
 | `OVERLAPPING_TEMPLATE` | — | The hours overlap something already saved for that doctor | 422 |
 | `INVALID_WINDOW` | — | The end date is before the start date | 400 |

@@ -1,8 +1,8 @@
 // The WhatsApp bot's step machine -- code decides which fixed-template question comes next, buttons
 // and lists carry the answer back, and the model is used only for two narrow jobs: reading a typed
 // date, and answering an off-script question without derailing the step the patient is mid-way
-// through. The bot books appointments and nothing else (the patient's medical complaint is one
-// question inside the booking). Every fact in a booking comes from a tool result or the patient's
+// through. The bot books appointments (the patient's medical complaint is one question inside the
+// booking) and, when asked, sends the patient to a person (whatsapp-handoff.ts). Every fact in a booking comes from a tool result or the patient's
 // own tap or words, exactly the property SYSTEM_PROMPT (whatsapp-orchestrator.ts) already asked of
 // the old all-GPT flow, now held by construction instead of by instruction.
 //
@@ -25,6 +25,10 @@ const EGYPT = "EG" as const;
  *  welcome line, and any half-finished flow discarded (whatsapp-conversation.ts's own note on why
  *  that discard is safe: nothing about the Conversation row itself changes). */
 export const WELCOME_IDLE_GAP_MS = 6 * 60 * 60 * 1000;
+
+/** The two buttons of the opening menu. Only `stepMenu` interprets them. */
+export const MENU_BOOK_ID = "menu_book";
+export const MENU_HUMAN_ID = "menu_human";
 
 const SLOTS_PER_PAGE = 9;
 /** How many upcoming calendar days to probe, at most, while building the date list -- bounded so a
@@ -80,6 +84,7 @@ const MAX_UNMATCHED_ATTEMPTS = 3;
 type FlowStateBase = { missCount?: number };
 export type FlowState = FlowStateBase &
   (
+    | { step: "MENU"; lang: Lang }
     | { step: "PHONE_CHOICE"; lang: Lang }
     | { step: "PHONE_ASK"; lang: Lang }
     | { step: "NAME_ASK"; lang: Lang; phoneE164: string }
@@ -142,6 +147,10 @@ export interface FlowResult {
    *  `handled` is `false`, since nothing here changed. */
   nextState?: FlowState | null;
   outgoing?: FlowOutgoing;
+  /** The patient picked "talk to a human" (the menu button, or a typed answer that meant it). The step
+   *  machine sends nothing itself: the caller sends the link to the clinic's human support
+   *  (whatsapp-handoff.ts) and leaves the saved state exactly as it was, so the bot carries on. */
+  requestHuman?: true;
 }
 
 function textOf(input: InboundWhatsAppInput): string | null {
@@ -458,6 +467,8 @@ export async function runFlow(ctx: FlowContext): Promise<FlowResult> {
   }
 
   switch (ctx.state.step) {
+    case "MENU":
+      return stepMenu(ctx, ctx.state);
     case "PHONE_CHOICE":
       return stepPhoneChoice(ctx, ctx.state);
     case "PHONE_ASK":
@@ -491,9 +502,9 @@ export async function runFlow(ctx: FlowContext): Promise<FlowResult> {
   }
 }
 
-/** New session or freshly finished flow, either way starting from nothing. The bot only books, so
- *  there is no menu to show: the welcome line (new sessions only) and the first booking question go
- *  out together. `openingText` is the patient's own words if this turn is free text. */
+/** New session or freshly finished flow, either way starting from nothing: the opening menu. The
+ *  welcome line (new sessions only) goes out in the same message, above the question. `openingText` is
+ *  the patient's own words if this turn is free text. */
 async function beginTurn(ctx: FlowContext, lang: Lang, openingText: string | null): Promise<FlowResult> {
   // A closing remark mid-session ("thanks") is answered with a sign-off. Never on a new session: that turn
   // must carry the welcome, or the next message finds the session already open and is never welcomed.
@@ -502,7 +513,31 @@ async function beginTurn(ctx: FlowContext, lang: Lang, openingText: string | nul
   }
 
   const welcomeLine = ctx.isNewSession ? `${T.welcome(lang, ctx.tenant.clinicName, dayPeriodInClinic(ctx.tenant.timezone))}\n\n` : "";
-  return beginIdentity(ctx, lang, welcomeLine);
+  return { handled: true, nextState: { step: "MENU", lang }, outgoing: menuOutgoing(lang, welcomeLine) };
+}
+
+// -------------------------------------------------------------------------------------------
+// The opening menu: book, or talk to a person
+// -------------------------------------------------------------------------------------------
+
+function menuOutgoing(lang: Lang, prefix: string): FlowOutgoing {
+  return {
+    kind: "buttons",
+    body: `${prefix}${T.menuQuestion(lang)}`,
+    buttons: [
+      { id: MENU_BOOK_ID, title: T.menuBook(lang) },
+      { id: MENU_HUMAN_ID, title: T.menuHuman(lang) },
+    ],
+  };
+}
+
+async function stepMenu(ctx: FlowContext, state: Extract<FlowState, { step: "MENU" }>): Promise<FlowResult> {
+  const id = idOf(ctx.input);
+  if (id === MENU_BOOK_ID) return beginIdentity(ctx, state.lang, "");
+  // The state is left alone on purpose: the patient is sent to the human support's chat, and if they come
+  // back to this one the menu is still there.
+  if (id === MENU_HUMAN_ID) return { handled: true, nextState: state, requestHuman: true };
+  return offScriptThenRepeat(ctx, state.lang, menuOutgoing(state.lang, ""));
 }
 
 // -------------------------------------------------------------------------------------------

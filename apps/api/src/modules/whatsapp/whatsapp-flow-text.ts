@@ -39,29 +39,46 @@ export function formatPrice(priceMinor: number, currency: string, lang: Lang): s
 
 export const T = {
   /** `period` is the clinic-local half of the day (see `dayPeriodInClinic`): "morning" before 12:00,
-   *  "evening" from 12:00 on. The line ends by naming what happens next rather than asking an open
-   *  question, because the very next thing the patient receives is the first booking question. */
+   *  "evening" from 12:00 on. Greeting only: the very next lines are the menu question and its buttons
+   *  (`menuQuestion`), sent in the same message. */
   welcome: (lang: Lang, clinicName: string, period: "morning" | "evening") =>
     pick(
       lang,
-      `${period === "morning" ? "صباح" : "مساء"} الخير 👋 معاك المساعد الآلي من ${clinicName}.\nهساعدك تحجز ميعاد.`,
-      `Good ${period === "morning" ? "morning" : "afternoon"} 👋 This is the virtual assistant of ${clinicName}.\nI'll help you book an appointment.`,
+      `${period === "morning" ? "صباح" : "مساء"} الخير 👋 معاك المساعد الآلي من ${clinicName}.`,
+      `Good ${period === "morning" ? "morning" : "afternoon"} 👋 This is the virtual assistant of ${clinicName}.`,
     ),
+
+  // -- the opening menu ----------------------------------------------------------------------
+  menuQuestion: (lang: Lang) => pick(lang, "تحب أساعدك إزاي؟", "How can I help you?"),
+  // Button titles: Meta rejects anything over 20 characters (whatsapp-graph-client.ts).
+  menuBook: (lang: Lang) => pick(lang, "حجز ميعاد", "Book appointment"),
+  menuHuman: (lang: Lang) => pick(lang, "التحدث مع موظف", "Talk to a human"),
 
   closingAcknowledge: (lang: Lang) =>
     pick(lang, "تحت أمرك في أي وقت 🙏", "Happy to help anytime 🙏"),
-  // -- human handoff -------------------------------------------------------------------------
-  handoffRequested: (lang: Lang) =>
+  // -- human support --------------------------------------------------------------------
+  /** Body of the message whose button opens a chat with the clinic's human support. */
+  handoffLinkBody: (lang: Lang) =>
     pick(
       lang,
-      "تمام، هحوّلك لحد من فريق العيادة وهيرد عليك في أقرب وقت 🙏",
-      "Sure, I'm passing you to a member of the clinic team. They'll reply as soon as they can 🙏",
+      "تمام 🙏 اضغط على الزر وهتفتح محادثة مع حد من فريق العيادة.",
+      "Sure 🙏 Tap the button to open a chat with a member of the clinic team.",
     ),
+  /** The button itself -- 20 characters at most. */
+  handoffLinkButton: (lang: Lang) => pick(lang, "كلّم فريق العيادة", "Chat with the team"),
+  /** The text already typed into the chat the button opens, so the receptionist knows who is writing and why. */
+  handoffPrefill: (lang: Lang, clinicName: string) =>
+    pick(
+      lang,
+      `السلام عليكم، أنا جاي من المساعد الآلي لـ ${clinicName} وعايز أكلم حد من الفريق.`,
+      `Hello, I'm coming from the ${clinicName} assistant and would like to talk to someone from the team.`,
+    ),
+  /** Nobody is set up as human support (or two or more receptionists and none chosen). */
   handoffUnavailable: (lang: Lang) =>
     pick(
       lang,
-      "معلش، التواصل مع موظف مش متاح على الرقم ده حالياً. أقدر أساعدك في حجز ميعاد.",
-      "Sorry, talking to a staff member isn't available on this number right now. I can help you book an appointment.",
+      "معلش، مفيش حد من الفريق متاح على واتساب دلوقتي. أقدر أساعدك في حجز ميعاد.",
+      "Sorry, nobody from the team is available on WhatsApp right now. I can help you book an appointment.",
     ),
   // -- identity ------------------------------------------------------------------------------
   // No stored name is ever read back to the patient (a resold phone number would leak it): they type

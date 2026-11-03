@@ -11,6 +11,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Req,
   Res,
   UnprocessableEntityException,
@@ -20,7 +21,7 @@ import {
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import type { Response } from "express";
-import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
+import { IsIn, IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength } from "class-validator";
 import { STORAGE_PROVIDER, type StorageProvider } from "../attachments/storage/storage-provider.ts";
 import { imageRefusal } from "../clinic-identity/clinic-identity.controller.ts";
 import { MAX_BRANDING_BYTES } from "../clinic-identity/clinic-identity.service.ts";
@@ -35,6 +36,7 @@ import {
   createStaff,
   listStaff,
   resetStaffPassword,
+  setHumanSupport,
   setStaffStatus,
   updateMyDetails,
   updateStaff,
@@ -62,6 +64,10 @@ export class UpdateStaffDto {
 export class UpdateMyDetailsDto {
   @IsOptional() @IsString() @IsNotEmpty() @MaxLength(120) fullName?: string;
   @IsOptional() @IsString() @IsNotEmpty() @MaxLength(40) phone?: string;
+}
+
+export class SetHumanSupportDto {
+  @IsUUID() membershipId!: string;
 }
 
 export class SetStatusDto {
@@ -103,6 +109,7 @@ export class StaffController {
       case "NOT_EDITABLE_HERE":
       case "OWNER_ROLE_FIXED":
       case "SELF_ROLE_CHANGE":
+      case "NOT_A_RECEPTIONIST":
         // Well formed, and refused on content: that record belongs elsewhere, or to somebody else.
         throw new UnprocessableEntityException(body);
       case "LAST_ADMIN":
@@ -119,6 +126,16 @@ export class StaffController {
   @RequirePermission("users.manage")
   async list(@Req() request: AuthenticatedRequest) {
     return listStaff(this.caller(request));
+  }
+
+  /**
+   * The receptionist patients are sent to when they ask for a person on WhatsApp. Admin only, like the
+   * rest of the screen. Declared before `:membershipId` so that path can never swallow it.
+   */
+  @Put("human-support")
+  @RequirePermission("users.manage")
+  async humanSupport(@Req() request: AuthenticatedRequest, @Body() body: SetHumanSupportDto) {
+    return this.unwrap(await setHumanSupport(this.caller(request), body.membershipId));
   }
 
   @Post()

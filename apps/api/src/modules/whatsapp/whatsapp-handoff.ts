@@ -1,27 +1,31 @@
-// Human handoff on a WhatsApp conversation. While `Conversation.botPausedUntil` is in the future the
-// bot stays silent on that chat, and a person answers on the clinic's number from the WhatsApp
-// Business app. Two things start a pause, one thing ends it early, and time ends it otherwise:
+// Talking to a person on WhatsApp. Two separate things live here:
 //
-//   - the patient asks for a person (`wantsHuman`)          -> pause + a desk notification
-//   - staff reply from the Business app (Meta's echo)        -> pause, extended on every reply
-//   - staff press "return to bot" in the web app             -> pause cleared
+//   1. A patient asks for a person (`wantsHuman`, or the menu's "talk to a human" button). The bot is NOT
+//      silenced: it sends the patient a button that opens a WhatsApp chat with the clinic's human
+//      support -- one receptionist, chosen in the Users tab (memberships/human-support.ts) -- and carries
+//      on exactly as before. Works on every kind of number.
 //
-// Only a COEXISTENCE number has a person to hand over to. On a NEW_NUMBER number nobody can answer
-// from a phone, so the patient is told plainly that it is not available and the bot carries on.
-
+//   2. Staff reply from the WhatsApp Business app on a COEXISTENCE number (Meta's echo). Clinics are
+//      asked not to, but if someone does, the bot goes quiet on THAT chat so a patient is not answered
+//      by a person and the bot at once. The pause is per chat, ends by itself after 2 hours from the
+//      last reply, and the desk can end it sooner:
+//
+//        - staff reply from the Business app (Meta's echo)   -> pause, extended on every reply
+//        - staff press "return to bot" in the web app          -> pause cleared
+//
 import { Prisma } from "../../generated/prisma/client.ts";
 import { withTenant, type ActorContext, type TransactionClient } from "../../prisma/with-tenant.ts";
 import { recordNotification } from "../notifications/notifications.service.ts";
 import { botActorContext, recordOutboundMessage } from "./whatsapp-conversation.ts";
 import { noteSendFailure } from "./whatsapp-connections.ts";
-import { detectLang, T } from "./whatsapp-flow-text.ts";
+import { T, type Lang } from "./whatsapp-flow-text.ts";
 import type { FlowState } from "./whatsapp-flow.ts";
-import { sendWhatsAppText } from "./whatsapp-graph-client.ts";
+import { sendWhatsAppText, sendWhatsAppUrlButton } from "./whatsapp-graph-client.ts";
 import type { MetaEchoMessage } from "./meta-webhook-payload.ts";
 import { resolveTenantByPhoneNumberId, type ResolvedWhatsAppTenant } from "./whatsapp-tenants.ts";
 
-/** How long a pause lasts, from the last human signal. */
-export const HANDOFF_PAUSE_MS = 4 * 60 * 60 * 1000;
+/** How long a pause lasts, from the last staff reply. */
+export const HANDOFF_PAUSE_MS = 2 * 60 * 60 * 1000;
 
 /** A bot reply that goes out is logged a moment later; Meta's echo of a human message can race it. */
 const ECHO_SETTLE_MS = 3000;
@@ -105,20 +109,14 @@ export function wantsHuman(text: string, state: FlowState | null): boolean {
 // Pausing
 // -------------------------------------------------------------------------------------------
 
+/** `PATIENT_REQUEST` is only ever read, from a pause written before human support replaced it. */
 type PauseReason = "PATIENT_REQUEST" | "STAFF_REPLY";
 
-/** Pauses (or extends the pause on) one conversation, inside the caller's transaction. */
-async function pauseInTx(
-  tx: TransactionClient,
-  actorUserId: string,
-  conversationId: string,
-  reason: PauseReason,
-  now: Date,
-  notify: boolean,
-): Promise<void> {
+/** Pauses (or extends the pause on) one conversation after a staff reply, inside the caller's transaction. */
+async function pauseInTx(tx: TransactionClient, conversationId: string, now: Date): Promise<void> {
   const conversation = await tx.conversation.findFirst({
     where: { id: conversationId },
-    select: { botPausedUntil: true, botPausedReason: true, contact: { select: { phoneE164: true } } },
+    select: { botPausedUntil: true },
   });
   if (conversation === null) return;
 
@@ -132,69 +130,90 @@ async function pauseInTx(
     where: { id: conversationId },
     data: {
       botPausedUntil: until,
-      botPausedReason: alreadyPaused ? (conversation.botPausedReason ?? reason) : reason,
+      botPausedReason: "STAFF_REPLY",
       // Whatever the bot was half-way through is stale once a person has spoken; when the bot comes
       // back it starts from the menu rather than resuming a question from hours ago.
       flowState: Prisma.JsonNull,
       lastAiResponseId: null,
     },
   });
+}
 
-  if (notify) {
-    await recordNotification(tx, actorUserId, {
-      kind: "HANDOFF_REQUESTED",
-      appointmentId: null,
-      patientId: null,
-      source: "WHATSAPP",
-      occurredAt: now,
-      payload: { conversationId, phone: conversation.contact.phoneE164 },
-    });
-  }
+/** The wa.me address of a chat with `phoneE164`, with `text` already typed into it. */
+export function whatsAppChatLink(phoneE164: string, text: string): string {
+  return `https://wa.me/${phoneE164.replace(/\D/g, "")}?text=${encodeURIComponent(text)}`;
 }
 
 /**
- * The patient asked for a person. Coexistence number: pause the bot, tell the desk, tell the patient
- * someone will reply. Any other number: tell the patient it is not available, and leave the chat as it was.
+ * The patient asked for a person. Send them a button that opens a chat with the clinic's human support,
+ * and tell the desk. Nothing about the conversation changes: the bot is not paused and the saved flow
+ * state is left alone, so the patient can come back and carry on. With no human support set up, the
+ * patient is told so and offered a booking instead.
  */
 export async function handleHumanRequest(args: {
   tenant: ResolvedWhatsAppTenant;
   waId: string;
   conversationId: string;
   contactId: string;
-  text: string;
+  lang: Lang;
 }): Promise<void> {
-  const { tenant, waId, conversationId, contactId, text } = args;
-  const lang = detectLang(text);
-  const now = new Date();
-  const coexistence = tenant.numberMode === "COEXISTENCE";
+  const { tenant, waId, conversationId, contactId, lang } = args;
+  const supportPhone = tenant.humanSupportPhone ?? null;
+  const clinicName = lang === "ar" ? tenant.clinicName : (tenant.clinicNameEn ?? tenant.clinicName);
 
   try {
-    if (coexistence) {
-      await withTenant(tenant.id, botActorContext(tenant.bot), (tx) =>
-        pauseInTx(tx, tenant.bot.userId, conversationId, "PATIENT_REQUEST", now, true),
-      );
+    let externalMessageId: string;
+    let loggedText: string;
+
+    if (supportPhone === null) {
+      loggedText = T.handoffUnavailable(lang);
+      externalMessageId = (await sendWhatsAppText(tenant.phoneNumberId, waId, loggedText, tenant.accessToken)).externalMessageId;
+    } else {
+      const body = T.handoffLinkBody(lang);
+      const label = T.handoffLinkButton(lang);
+      const url = whatsAppChatLink(supportPhone, T.handoffPrefill(lang, clinicName));
+      externalMessageId = (await sendWhatsAppUrlButton(tenant.phoneNumberId, waId, body, label, url, tenant.accessToken)).externalMessageId;
+      loggedText = `${body}\n[${label}]`;
     }
 
-    const reply = coexistence ? T.handoffRequested(lang) : T.handoffUnavailable(lang);
-    const sent = await sendWhatsAppText(tenant.phoneNumberId, waId, reply, tenant.accessToken);
     await recordOutboundMessage(tenant.id, tenant.bot, {
       conversationId,
       contactId,
-      externalMessageId: sent.externalMessageId,
-      text: reply,
+      externalMessageId,
+      text: loggedText,
       now: new Date(),
     });
   } catch (error) {
-    console.error("WhatsApp: human handoff failed", error);
+    console.error("WhatsApp: human support request failed", error);
     await noteSendFailure(tenant.id, error);
+    return;
   }
+
+  if (supportPhone === null) return;
+
+  // The desk's heads-up that a patient is about to write to the human support. Its own step: the patient
+  // already has their link, so a failure here is logged and nothing more.
+  await withTenant(tenant.id, botActorContext(tenant.bot), async (tx) => {
+    const conversation = await tx.conversation.findFirst({
+      where: { id: conversationId },
+      select: { contact: { select: { phoneE164: true } } },
+    });
+    await recordNotification(tx, tenant.bot.userId, {
+      kind: "HANDOFF_REQUESTED",
+      appointmentId: null,
+      patientId: null,
+      source: "WHATSAPP",
+      occurredAt: new Date(),
+      payload: { conversationId, phone: conversation?.contact.phoneE164 ?? "" },
+    });
+  }).catch((error: unknown) => console.error("WhatsApp: could not record the human support notification", error));
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Meta echoes every message a person sends from the WhatsApp Business app on a coexistence number.
- * A message we did not send ourselves means a human is in the chat: pause the bot there, and keep
+ * A message we did not send ourselves means a person is in the chat: pause the bot there, and keep
  * extending the pause for as long as they keep replying. Nothing from the echo is stored.
  */
 export async function handleStaffEchoes(phoneNumberId: string, echoes: MetaEchoMessage[]): Promise<void> {
@@ -226,7 +245,7 @@ export async function handleStaffEchoes(phoneNumberId: string, echoes: MetaEchoM
       // A person writing first to someone the bot has never talked to is not the bot's business.
       if (conversation === null) return;
 
-      await pauseInTx(tx, tenant.bot.userId, conversation.id, "STAFF_REPLY", now, false);
+      await pauseInTx(tx, conversation.id, now);
     }).catch((error: unknown) => console.error("WhatsApp: could not apply a staff echo", error));
   }
 }
