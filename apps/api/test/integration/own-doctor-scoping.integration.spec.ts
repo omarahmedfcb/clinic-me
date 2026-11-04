@@ -110,6 +110,7 @@ describe("own scoping for every doctorId reader", () => {
         const start = new Date(NOON.getTime() + minute * 60_000);
         await tx.appointment.create({
           data: injected({
+            branchId: fixture.branchId,
             id: randomUUID(),
             patientId: fixture.patientId,
             doctorId,
@@ -134,6 +135,7 @@ describe("own scoping for every doctorId reader", () => {
         const start = new Date(PAST_NOON.getTime() + minute * 60_000);
         await tx.appointment.create({
           data: injected({
+            branchId: fixture.branchId,
             id: randomUUID(),
             patientId: fixture.patientId,
             doctorId,

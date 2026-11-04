@@ -62,6 +62,7 @@ describe("the exclusion constraint can deadlock, and the retry survives it", () 
     (attempted[label] ??= []).push(id);
     return {
       id,
+      branchId: clinic.branchId,
       patientId: clinic.patientId,
       doctorId: clinic.doctorId,
       serviceId: clinic.serviceId,

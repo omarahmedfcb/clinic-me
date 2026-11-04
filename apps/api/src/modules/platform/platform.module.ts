@@ -8,6 +8,7 @@ import { PlatformBranchGracesController } from "./platform-branch-graces.control
 import { PlatformBranchRequestsController } from "./platform-branch-requests.controller.ts";
 import { PlatformMessagesController } from "./platform-messages.controller.ts";
 import { PlatformSupportSessionsController } from "./platform-support-sessions.controller.ts";
+import { PlatformBuildController } from "./platform-build.controller.ts";
 import { PlatformClinicsController } from "./platform-clinics.controller.ts";
 import { PlatformOperatorsController } from "./platform-operators.controller.ts";
 import { PlatformController } from "./platform.controller.ts";
@@ -21,6 +22,7 @@ import { PlatformController } from "./platform.controller.ts";
 @Module({
   controllers: [
     PlatformController,
+    PlatformBuildController,
     PlatformClinicsController,
     PlatformBranchRequestsController,
     PlatformBranchGracesController,

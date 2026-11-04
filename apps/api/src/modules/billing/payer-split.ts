@@ -5,6 +5,7 @@ import { withTenant, type TransactionClient } from "../../prisma/with-tenant.ts"
 import { doctorIdForMembership } from "../clinical/clinical.access.ts";
 import type { DeskCaller } from "./desk.ts";
 import { readBranchWhere } from "../../common/branch-read.ts";
+import { refusedOutOfBranch } from "../../common/branch-refusal.ts";
 
 /** A doctor reads and sets the split only on their own patients' charges (R2). */
 async function ownCharge(tx: TransactionClient, caller: DeskCaller, chargeId: string) {
@@ -52,6 +53,7 @@ export async function setPayerShare(
       where: await ownCharge(tx, caller, chargeId),
       select: {
         id: true,
+        branchId: true,
         status: true,
         subtotalMinor: true,
         discountMinor: true,
@@ -61,6 +63,9 @@ export async function setPayerShare(
     // 404 rather than 403 for another clinic's charge: the tenant extension has already made a
     // cross-tenant id indistinguishable from a missing one.
     if (charge === null) {
+      return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "visit" as const } };
+    }
+    if (await refusedOutOfBranch(tx, caller, { table: "visit_charges", id: charge.id, branchId: charge.branchId })) {
       return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "visit" as const } };
     }
     if (charge.status === "VOID") {

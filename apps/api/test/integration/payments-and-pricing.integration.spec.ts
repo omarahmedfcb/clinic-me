@@ -77,6 +77,7 @@ describe("doctor pricing and the payments screen", () => {
       const start = nextSlot();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id,
           patientId: clinic.patientId,
           doctorId,
@@ -180,6 +181,7 @@ describe("doctor pricing and the payments screen", () => {
       const appointmentId = randomUUID();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id: appointmentId,
           patientId: clinic.patientId,
           doctorId,

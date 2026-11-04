@@ -98,6 +98,24 @@ words** rather than leaving the reader to infer it from an absence.
 This is what lets the founder say the sentence `PHASE-1.md` identified as the point of the whole
 constraint, without qualification: **our staff cannot read your records.**
 
+**Amended 2026-10-30: support access is a named, conditional exception; the rule above stays the
+default** (`BRANCHES-DESIGN.md` §9 ruling C, its own phase after branches step 6):
+- requested or approved by the clinic **admin**, inside the system, so the approval is a recorded fact;
+- time-boxed to one hour, renewable only by a fresh approval, and scoped to what that admin can see.
+  ~~The clinical file is included only when the admin names it explicitly;~~ **Corrected 2026-11-01:**
+  an admin cannot read clinical content, so cannot grant it. Clinical scope is approved only by a
+  **doctor**, for that doctor's own patients, as a second recorded approval. A session is read-only
+  unless the admin allows changes, and **never** writes clinical content (`SUPPORT-ACCESS.md`);
+- every action is recorded under the operator's real identity **and** the approving admin's, marked
+  as a support session. There is no impersonation: the operator acts as themselves;
+- the clinic sees every support session in its settings and can end one at any moment.
+
+Once that phase ships, the sentence above carries a qualifier: *our staff cannot read your records
+unless your admin opens a time-boxed support session, which you see and can end.* **For the lawyer:**
+the service agreement needs a clause naming support as a consented data processor. Without it, the
+in-app approval alone is not enough under PDPL. `AccessGrant`, the unused table above, may be what
+that phase builds on; it is not reopened until then.
+
 ### The pull requests
 
 **0a. The operator's identity and the wall around it. ~70 min.**
@@ -142,6 +160,12 @@ derived from the doctor count the list already has. Nothing about a plan is writ
 
 A stored tier would be a second copy of a fact `PRICING.md` holds authoritatively, and nothing would
 keep the copy honest — the same reasoning that deleted the status sections from the phase documents.
+
+**Superseded 2026-10-30 (`PRICING.md`, rewritten):** three packages by doctor count, a paid
+multi-branch add-on, and a subscription **the operator can always adjust per clinic**. An adjustable
+subscription is a per-clinic fact the operator sets, so it is stored, not computed. The figures quoted
+above are the old model's. `apps/api/src/modules/platform/plan.ts` still computes them, so the console's
+plan line is wrong until the new prices are ruled (`PRICING.md` §4) and it is replaced.
 
 **0d. Suspend and reactivate, with a reason. ~45 min.** ***Carries a screen.***
 Never delete. `ARCHITECTURE.md` §6 already rules this: *"Suspension blocks access; it never deletes

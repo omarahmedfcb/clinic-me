@@ -86,6 +86,10 @@ services:
       # Behind Caddy, so the client IP arrives in X-Forwarded-For. Without this the audit trail
       # records the proxy's address on every row. See DEPLOY.md -- this is correctness, not config.
       TRUST_PROXY: "1"
+      # The commit running, for the operator console (GET /platform/build). Set on the `up` line from
+      # the checkout (SERVER-SETUP §11), never in /etc/clinic-os.env, where it would go stale. Not `:?`,
+      # which would also fail every cron `docker compose exec`: the API itself refuses to boot without it.
+      DEPLOYED_COMMIT: ${DEPLOYED_COMMIT:-}
     # The local backend's files. A named volume, not a bind mount into the repository: a patient's
     # scan inside the checkout is a scan a later `git add -A` commits, and DEPLOY.md §7 already
     # records that `pg_dump` does not cover this — the backup archives it separately.

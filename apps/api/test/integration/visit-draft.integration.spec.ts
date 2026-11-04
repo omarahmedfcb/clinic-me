@@ -50,6 +50,7 @@ describe("the visit draft write path", () => {
       const start = new Date(Date.now() + minutesFromNow * 60_000);
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id,
           patientId: clinic.patientId,
           doctorId,

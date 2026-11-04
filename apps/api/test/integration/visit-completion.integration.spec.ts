@@ -70,6 +70,7 @@ describe("finishing a visit", () => {
       const start = nextFixtureSlot();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
@@ -105,6 +106,7 @@ describe("finishing a visit", () => {
       for (let weekday = 0; weekday < 7; weekday += 1) {
         await tx.scheduleTemplate.create({
           data: injected({
+            branchId: clinic.branchId,
             doctorId: clinic.doctorId,
             weekday,
             startTime: new Date(Date.UTC(1970, 0, 1, 0, 0, 0)),
@@ -244,11 +246,12 @@ describe("finishing a visit", () => {
     const appointmentId = await appointmentFor(10000);
     const draft = await openDraft(appointmentId);
 
-    // Beyond every template's validity, so the engine offers nothing rather than the fixture
-    // pretending the doctor is busy.
+    // Beyond the booking horizon, so the search has nowhere to look and offers nothing. A follow-up now
+    // searches forward from its date (ruled 2026-10-29), so a date merely before the templates' validity
+    // would find the first day they start, which is the point of that ruling and not what is tested here.
     const response = await call("POST", `/appointments/${appointmentId}/visit/${draft.id}/complete`, {
       expectedRevision: draft.revision,
-      followUpDate: "2025-01-01",
+      followUpDate: "2099-01-01",
     });
     expect(response.status).toBe(201);
     const completed = (await response.json()) as { followUpAppointmentId: string | null };
@@ -282,6 +285,7 @@ describe("what was done at the visit", () => {
       const start = nextFixtureSlot();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
@@ -458,6 +462,7 @@ describe("what was done at the visit", () => {
       const start = nextFixtureSlot();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
           serviceId: clinic.serviceId,
@@ -502,6 +507,7 @@ describe("correcting a finished visit", () => {
       const start = nextFixtureSlot();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id: appointmentId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
@@ -676,6 +682,7 @@ describe("correcting a finished visit", () => {
       const start = nextFixtureSlot();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id: appointmentId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,

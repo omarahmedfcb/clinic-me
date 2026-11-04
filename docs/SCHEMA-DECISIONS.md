@@ -427,6 +427,50 @@ billing/offboarding work), not a gap someone else finds first.
 
 ---
 
+## D14a — The D5 boundary: a migration may add a label to an append-only row, never change what it recorded
+
+Ruled 2026-10-29.
+
+**The rule.** On an append-only table, a migration may add a column whose value for existing rows is
+computed from data already in each row. No recorded fact is altered or erased, no row trigger fires,
+and the D5 guard is never disabled. A migration may never alter or erase recorded content: not by
+`UPDATE` or `DELETE`, which D5 refuses anyway, and not by any route around D5 either. That includes
+disabling the trigger, `session_replication_role`, and DDL that rewrites an existing column.
+
+**`DROP COLUMN` falls on both sides, so it is named, and the test is content, not authorship.** A
+migration may drop a column only while every value in it is derived from data already in the row.
+Once any row carries a value that was recorded rather than derived, the column holds recorded content,
+and dropping it erases that, whoever added the column. `20261029163000_audit_scope/down.sql` drops
+`scope` only while no row is UNSCOPED: ONE_BRANCH is recoverable from `branch_id`, but UNSCOPED and
+BEFORE_BRANCHES both carry a null branch, so dropping it would make them indistinguishable, and
+re-applying would label as BEFORE_BRANCHES a row written after branches existed. It refuses once one
+exists, as `20261027100000_branches/down.sql` refuses once a clinic has a second branch or an invoice
+number. The branches down leaves `audit_logs.branch_id` in place for the same reason.
+
+Corrected 2026-10-29, the same day: the first wording ("only a column it added itself") used
+authorship as a proxy for content, and this migration's own down was the case where the proxy fails.
+
+**Permitted, and the instance:** `20261029163000_audit_scope`. It added `audit_logs.scope` and labelled
+each existing row by a column type change computed from that row's own `branch_id`: a recorded branch
+is `ONE_BRANCH`, and no recorded branch is `BEFORE_BRANCHES`. Every value that was there before is
+still there, byte for byte. The append-only trigger stayed enabled throughout, and the migration fails
+if it finds the trigger disabled. Inferring the default branch for the unlabelled rows was rejected for
+the same reason: it would write a fact nobody recorded.
+
+**Forbidden, without exception, and the instance:** `20260916170000_redact_totp_secret_in_audit`. It
+found an operator's authenticator secret recorded in plaintext in `audit_logs` and still did not
+rewrite it, because a log a migration can rewrite is a log whose integrity rests on reviewing
+migrations. That ruling stands.
+
+**Why the line is here.** The legal value of the audit trail is that what it says was recorded at the
+time cannot be changed afterwards. A label derived from the row adds a reading, while an edit replaces
+the record. To a regulator: *no migration has altered or erased a recorded audit entry, and the schema
+refuses one that tries; columns have been added beside existing entries, derived only from those
+entries.* A migration that changes old audit rows is either the first kind, and cites this entry, or
+the second kind, and is refused.
+
+---
+
 ## D15 — RLS extended from 12 tables to 29: D4's boundary was the wrong question
 
 D4 scoped RLS to 12 clinical/financial tables — the reasoning at the time was
@@ -2230,3 +2274,40 @@ browser reports nothing about whether paper came out).
 letterhead and say "nothing prescribed", because a doctor choosing what to hand over should not
 discover a missing document at the counter. An unissued sick note is different in kind: an empty
 prescription is a statement, an empty certificate is not a document.
+
+---
+
+## D47 — One transaction is one audit event, and an id is never a clock
+
+Ruled 2026-10-29.
+
+**Rows written in one transaction happened at one instant, so the viewer shows them as one event
+with no order inside it.** An event is the rows sharing a tenant, an actor and `created_at`, which
+is the transaction's `now()` to the microsecond. Inside an event, rows list by entity and then
+action: a deterministic order that claims no sequence, and the screen numbers none of them.
+Pagination counts events. An event lists at most its first 50 entries, with its full count; the
+filters reach the rest (ruled 2026-10-30, after one migration event held 5,772 rows).
+
+**A new migration that writes audit rows binds a marker first** (ruled 2026-10-30): it sets
+`app.current_user_agent` to `migration:<its name>` before its first write, so its events can be told
+apart from any other SYSTEM write by what they recorded. Migrations already merged are not edited.
+Their events carry `unknown`, which is the trigger's fallback for any unbound writer and not a
+migration's mark, so the viewer shows them like any other event: capped, with their full count. `read_orphaned_audit_logs()` follows the same rule
+(`20261029175000_orphaned_audit_read_by_transaction`).
+
+**Why not order by id.** UUIDv7 is time-ordered only to the millisecond. Postgres's
+`uuid_generate_v7()` fills the rest with random bits, so the audit trigger's ids within a
+millisecond are randomly ordered: 630 transactions in one test database displayed shuffled. The
+Node generator keeps a counter, but **per process**. A second API instance or a separate worker
+makes same-millisecond order random again. So a site that orders correctly today because all its
+ids are Node-minted is correct by accident of a single-process deployment. Nothing may rely on it.
+An id may break a tie for *stability*, such as a page boundary, never to mean *time*. Appointment
+events need no tiebreaker at all: each `to_status` is the next `from_status`
+(`queue/status-chain.ts`).
+
+**`AuditLog.createdAt` takes the database's timestamp** (`dbgenerated("CURRENT_TIMESTAMP")`). The
+column has always defaulted to it, but Prisma filled `@default(now())` from its own clock, so a
+row the application wrote (a sensitive read, a branch refusal, an operator action) sat up to
+milliseconds away from the trigger rows of its own transaction. **Rows written before this keep
+those timestamps and may show as an event of their own, apart from their siblings.** They are not
+rewritten (D14a).

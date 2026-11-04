@@ -6,7 +6,7 @@
   "type": "module",
   "engines": {
     "node": ">=24",
-    "npm": "11.19.0"
+    "npm": ">=11.19.0 <12"
   },
   "scripts": {
     "preview": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/review.mjs",

@@ -13,6 +13,7 @@ import {
   type ClinicalRefusal,
 } from "./clinical.access.ts";
 import { visitScope } from "./visit-scope.ts";
+import { refusedOutOfBranch } from "../../common/branch-refusal.ts";
 
 export type OrdersRefusal =
   | ClinicalRefusal
@@ -73,9 +74,13 @@ export async function reachVisitForOrders(
 
   const visit = await tx.visit.findFirst({
     where: { id: visitId, appointmentId, ...visitScope(caller) },
-    select: { status: true, doctorId: true, completedAt: true },
+    select: { status: true, doctorId: true, completedAt: true, branchId: true },
   });
   if (visit === null) return { ok: false, refusal: { code: "NOT_FOUND", params: { resource: "visit" } } };
+  // A write to a visit in a branch outside the caller's reads as missing, and the probe is recorded (§4.2).
+  if (needDraft && (await refusedOutOfBranch(tx, caller, { table: "visits", id: visitId, branchId: visit.branchId }))) {
+    return { ok: false, refusal: { code: "NOT_FOUND", params: { resource: "visit" } } };
+  }
 
   // Patient-first, because the appointment in the path may be finished and its status then answers
   // the wrong question — plus Q6's 24-hour window for the doctor who finished it (D35), which is

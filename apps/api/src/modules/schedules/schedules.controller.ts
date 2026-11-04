@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, ForbiddenException, NotFoundException, Param, ParseUUIDPipe, Post, Put, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, ForbiddenException, NotFoundException, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
 import { actorContext } from "../../common/actor-context.ts";
 import { AuthGuard, type AuthenticatedRequest } from "../../common/auth.guard.ts";
 import { PermissionGuard } from "../../common/permission.guard.ts";
@@ -54,11 +54,14 @@ export class SchedulesController {
     @Req() request: AuthenticatedRequest,
     @Param("doctorId", ParseUUIDPipe) doctorId: string,
     @Body() body: ReplaceTemplatesDto,
+    // The branch whose hours this replaces. Omit it in a clinic with one active branch; with several, it is required.
+    @Query("branchId", new ParseUUIDPipe({ optional: true })) branchId?: string,
   ) {
     const result = await replaceTemplates(
       this.caller(request),
       doctorId,
       body.templates.map((t) => ({ ...t, validTo: t.validTo ?? null })),
+      branchId,
     );
     if (result.ok) return { ok: true };
     const refused = refusal(result.code, result.params);
@@ -120,6 +123,8 @@ export class SchedulesController {
   ) {
     const result = await removeException(this.caller(request), exceptionId);
     if (result.ok) return { ok: true };
+    // An every-branch exception is not a scoped caller's to remove: 403, as it is when one is added (ruled 2026-09-07).
+    if (result.code === "SCOPE_TOO_NARROW") throw new ForbiddenException(refusal(result.code, result.params));
     throw new NotFoundException(refusal(result.code, result.params));
   }
 }

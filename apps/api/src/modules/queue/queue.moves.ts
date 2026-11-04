@@ -10,6 +10,7 @@ import { doctorIdForMembership } from "../clinical/clinical.access.ts";
 import { doctorFreeAt } from "./queue.readiness.ts";
 import type { RefusalParams } from "../../common/refusals.ts";
 import type { QueueMoveInput, QueueMoveResult, QueueRefusalReason } from "./queue.types.ts";
+import { refusedOutOfBranch } from "../../common/branch-refusal.ts";
 
 /** The refused half of a move. `applyEvent` never returns the other one, and the caller narrows. */
 type QueueRefusal = Extract<QueueMoveResult, { ok: false }>;
@@ -28,6 +29,7 @@ type QueueRefusal = Extract<QueueMoveResult, { ok: false }>;
  */
 async function claimRow(
   tx: TransactionClient,
+  caller: CallerContext,
   input: QueueMoveInput,
 ): Promise<
   | { ok: true; row: { id: string; status: AppointmentStatus; scheduledStart: Date; doctorId: string } }
@@ -49,9 +51,9 @@ async function claimRow(
   // withTenant, so another tenant's id selects zero rows exactly as `findFirst` did, and the 404
   // stays indistinguishable from an id that never existed.
   const locked = await tx.$queryRaw<
-    { id: string; status: AppointmentStatus; scheduled_start: Date; doctor_id: string }[]
+    { id: string; status: AppointmentStatus; scheduled_start: Date; doctor_id: string; branch_id: string }[]
   >`
-    SELECT id, status, scheduled_start, doctor_id
+    SELECT id, status, scheduled_start, doctor_id, branch_id
       FROM appointments
      WHERE id = ${input.appointmentId}::uuid
        FOR UPDATE
@@ -70,6 +72,15 @@ async function claimRow(
 
   // 404, not 403 — a cross-tenant id must be indistinguishable from one that never existed.
   if (row === null) {
+    return {
+      ok: false,
+      refusal: { ok: false, code: "NOT_FOUND", params: { resource: "appointment" } },
+    };
+  }
+
+  // An appointment in a branch outside the caller's reads exactly as a missing one, and the probe is recorded
+  // in that branch (BRANCHES-DESIGN §4.2). Before the status is compared, so nothing about it is confirmed.
+  if (await refusedOutOfBranch(tx, caller, { table: "appointments", id: row.id, branchId: found!.branch_id })) {
     return {
       ok: false,
       refusal: { ok: false, code: "NOT_FOUND", params: { resource: "appointment" } },
@@ -179,7 +190,7 @@ async function applyEvent(
  */
 export async function checkIn(caller: CallerContext, input: QueueMoveInput): Promise<QueueMoveResult> {
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
-    const claimed = await claimRow(tx, input);
+    const claimed = await claimRow(tx, caller, input);
     if (!claimed.ok) return claimed.refusal;
 
     const arrived = await applyEvent(tx, caller, claimed.row, "ARRIVE", { now: input.now });
@@ -266,7 +277,7 @@ async function moveOwn(
   event: AppointmentEvent,
 ): Promise<QueueMoveResult> {
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
-    const claimed = await claimRow(tx, input);
+    const claimed = await claimRow(tx, caller, input);
     if (!claimed.ok) return claimed.refusal;
 
     const callerDoctorId = await doctorIdForMembership(tx, caller.membershipId);
@@ -302,7 +313,7 @@ export async function markNoShow(
   input: QueueMoveInput,
 ): Promise<QueueMoveResult> {
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
-    const claimed = await claimRow(tx, input);
+    const claimed = await claimRow(tx, caller, input);
     if (!claimed.ok) return claimed.refusal;
 
     const tenant = await tx.tenant.findUnique({
@@ -332,7 +343,7 @@ async function moveOne(
   event: AppointmentEvent,
 ): Promise<QueueMoveResult> {
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
-    const claimed = await claimRow(tx, input);
+    const claimed = await claimRow(tx, caller, input);
     if (!claimed.ok) return claimed.refusal;
 
     const applied = await applyEvent(tx, caller, claimed.row, event, {

@@ -148,6 +148,8 @@ async function main() {
       TEST_DATABASE_URL: ownerUrl,
       TEST_APP_DATABASE_URL: appUrl,
       TEST_OBSERVER_URL: observerUrl,
+      // No role here may create a database, so the branches round trip (which needs a throwaway one) skips, visibly.
+      TEST_CANNOT_CREATE_DATABASES: "1",
     },
   });
   console.log(`\n  Green with no superuser in the picture. ${DRILL_DB} is left in place for inspection.`);

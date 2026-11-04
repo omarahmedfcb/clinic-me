@@ -125,6 +125,7 @@ describe("clinic-managed services", () => {
     await withTenant(clinicA.tenantId, actorFor(clinicA.userId), async (tx) => {
       await tx.appointment.create({
         data: injected({
+          branchId: clinicA.branchId,
           patientId: clinicA.patientId,
           doctorId: clinicA.doctorId,
           serviceId,

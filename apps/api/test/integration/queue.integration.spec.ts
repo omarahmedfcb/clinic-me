@@ -39,6 +39,7 @@ describe("the queue", () => {
     await withTenant(fixture.tenantId, actorFor(fixture.userId), async (tx) => {
       await tx.scheduleTemplate.create({
         data: injected({
+          branchId: fixture.branchId,
           doctorId: fixture.doctorId,
           weekday: 2,
           startTime: new Date(Date.UTC(1970, 0, 1, 9, 0, 0)),

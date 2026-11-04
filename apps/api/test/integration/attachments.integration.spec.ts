@@ -147,6 +147,7 @@ describe("attachments", () => {
       const start = new Date();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id: appointmentId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
@@ -295,6 +296,7 @@ describe("attachments", () => {
         const pastAppointmentId = randomUUID();
         await tx.appointment.create({
           data: injected({
+            branchId: clinic.branchId,
             id: pastAppointmentId,
             patientId: strangerId,
             doctorId: clinic.doctorId,
@@ -677,6 +679,7 @@ describe("attachments", () => {
         const past = new Date(Date.now() - 7 * 24 * 60 * 60_000);
         await tx.appointment.create({
           data: injected({
+            branchId: clinic.branchId,
             id: appointmentId,
             patientId: clinic.patientId,
             doctorId,

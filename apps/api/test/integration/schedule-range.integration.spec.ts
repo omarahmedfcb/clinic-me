@@ -41,6 +41,7 @@ describe("schedule range", () => {
       ] as const) {
         await tx.scheduleTemplate.create({
           data: injected({
+            branchId: fixture.branchId,
             doctorId: fixture.doctorId,
             weekday,
             startTime: new Date(Date.UTC(1970, 0, 1, startHour, 0, 0)),

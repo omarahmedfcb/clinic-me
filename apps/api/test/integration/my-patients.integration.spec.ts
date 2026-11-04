@@ -91,6 +91,7 @@ describe("«مرضاي» — the patients a doctor has treated", () => {
       const appointmentId = randomUUID();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id: appointmentId,
           patientId,
           doctorId,

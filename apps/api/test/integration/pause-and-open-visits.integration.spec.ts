@@ -66,6 +66,7 @@ describe("a paused consultation", () => {
       const start = new Date();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id,
           patientId: clinic.patientId,
           doctorId,

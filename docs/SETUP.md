@@ -17,7 +17,7 @@ What is *not* rehearsed is marked **[UNVERIFIED]** and explained in §11.
 | | |
 |---|---|
 | **Node** | 24 or newer. Verified on 24.13.0 and on 26.0.0; CI uses 24. `.nvmrc` at the repo root selects 24 for version managers, and both `package.json` files declare `"engines": { "node": ">=24" }`. Each tree also sets `engine-strict=true` in its `.npmrc`, so **`npm ci` refuses to install on an older Node** rather than warning and continuing. |
-| **npm** | **Exactly 11.19.0.** Pinned as `"engines": { "npm": "11.19.0" }` in both `package.json` files, and `engine-strict=true` makes it a hard stop — `npm ci` refuses on any other version. If yours differs: `npm i -g npm@11.19.0`. Unlike Node, which is a floor, this is an exact pin: the resolver version itself is what varies, and npm 11.12.1 and 11.19.0 rewrite `package-lock.json`'s peer bookkeeping differently. That diff looks like a dependency change and is not one. |
+| **npm** | **11.19.0 or a later 11.x.** Declared as `"engines": { "npm": ">=11.19.0 <12" }` in every `package.json`, and `engine-strict=true` makes it a hard stop — `npm ci` refuses outside that range. If yours is older: `npm i -g npm@11.19.0`. The floor exists because npm 11.12.1 and 11.19.0 rewrite `package-lock.json`'s peer bookkeeping differently, a diff that looks like a dependency change and is not one. It is a range, not an exact pin, because an exact pin failed CI on 2026-10-27 when the runner image moved to 11.19.1. Corepack's `packageManager` was rejected: it was unbundled from Node in v25, so it exists on CI's Node 24 and not on a local Node 26. |
 | **Docker Desktop** | Running, with virtualisation enabled. See §2. |
 | **git** | Any recent version. |
 
@@ -396,7 +396,7 @@ Then redo Step 5. This is safe in development; there is no data worth keeping ye
 
 **Port 5173 already in use** — another Vite dev server. Vite will pick the next free port and print it; use whatever it prints.
 
-**`npm ci` fails with `EBADENGINE`** — deliberate (§1): `engine-strict=true` turns the `engines` field into a hard stop. Read the `Required` and `Actual` lines npm prints, because there are two different causes and they need opposite fixes. `"node"` mismatched means your Node is older than 24 — upgrade Node. `"npm"` mismatched means your npm is not the pinned version — `npm i -g npm@11.19.0`. Do not delete the `.npmrc` for either.
+**`npm ci` fails with `EBADENGINE`** — deliberate (§1): `engine-strict=true` turns the `engines` field into a hard stop. Read the `Required` and `Actual` lines npm prints, because there are two different causes and they need opposite fixes. `"node"` mismatched means your Node is older than 24 — upgrade Node. `"npm"` mismatched means your npm is older than 11.19.0 or is 12 — `npm i -g npm@11.19.0`. Do not delete the `.npmrc` for either.
 
 **`npm audit` reports 3 high-severity vulnerabilities in `apps/api`** — known and accepted. All three are one advisory, `GHSA-ggr8-5vv4-36mx` (stack exhaustion in `deepmerge-ts` <8.0.0), reached only via `prisma` → `@prisma/config` → `deepmerge-ts@7.1.5`. `prisma` is a devDependency, so none of it ships in the runtime image, and the only input it parses is our own committed `prisma.config.ts`. **Do not run `npm audit fix --force`**: the remediation npm proposes is `prisma@6.12.0`, a major downgrade that breaks the exact-version pin required by `SCHEMA-DECISIONS.md` D10. The fix is an upstream Prisma bump of `@prisma/config`, which pins `deepmerge-ts` exactly.
 

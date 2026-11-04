@@ -24,7 +24,7 @@ Built by a solo non-developer founder with ~10–15 hours a week, working with C
 
 **Tenant isolation.** Every tenant-scoped query goes through the Prisma tenant extension. `tenantId` comes from the validated JWT only — never from a request body, query string, or header. A cross-tenant request returns **404, not 403** (403 confirms the record exists).
 
-**Money is integer minor units.** Never a float. Never a column named or formatted as EGP — currency lives in `tenants.currency`.
+**Money is integer minor units.** Never a float. Never a column named or formatted as EGP — currency lives in `tenants.currency`, and every ledger row (charges, charge lines, payments, adjustments, credits) snapshots it in its own `currency` column when written.
 
 **No timezone literals.** `Africa/Cairo` appears in seed data only. The slot engine takes timezone as a parameter.
 
@@ -199,6 +199,15 @@ Arabic character to `?`, and the API stored `"???? ??? ?????? ???????"` as the o
 was edited and no `sed` was involved. Either write the text with the editor, or hold it as a literal
 in a file the editor wrote and run that file — never interpolate it into a command.
 
+**A process is stopped only by a PID this session started and can name, or not at all.** Never by
+name, image or pattern: no `Stop-Process -Name node`, no `pkill jest`, no "every `node.exe`". List the
+processes with their command lines first, pick the ones whose command line and start time are work
+this session launched, and stop exactly those PIDs.
+
+Ruled 2026-10-30. Twice that morning a stop aimed at the whole machine was nearly run, once for
+stale Jest processes and once for a running gate. The second time it was the permission check that
+refused it, not the session. The founder's machine runs things that are not ours.
+
 ---
 
 ## Workflow
@@ -239,30 +248,36 @@ radius of breaking the editor rule; it does not make the rule optional.** Its fa
 a string — are listed in `check-encoding.spec.ts`, and the escape is `--no-verify` with the reason
 stated in the commit.
 
-**Merging a pull request is the founder's action, and is never inferred from intent.** Open it, say
-it is ready, and stop. `gh pr merge` is not a step in any workflow here — not when CI is green, not
-when the branch is trivial, not when the next piece of work depends on it, and not when a message
-looks like it must have meant that.
+**The same hook refuses a push unless `npm run verify` passed on exactly the commit being pushed.**
+`verify` clears a marker first and writes it last, with the commit it passed on, and only on a clean
+tree (`scripts/mark-verified.mjs`, `scripts/check-verified.mjs`). Ruled 2026-11-01, after the third
+"done, then corrected" in four days — each a slip inside a long compound command, the last a `;`
+that pushed over a red gate. The fix is mechanical because another sentence had not held. The escape
+is `--no-verify`, with the reason in the commit, as for the encoding check.
 
-Added 2026-09-06, after exactly that inference. The founder wrote *"Merge #59"* when #59 had already
+**A pull request that is Claude's to land — a fix, a cleanup, or an already-agreed step — is landed by
+auto-merge, and the report says what landed.** Its guards are proven by breaking them first, as
+everywhere. Squash, as `develop` already lands. **Anything carrying a screen waits for the founder:**
+open it, hand over a preview, and stop. So does a pull request he has reserved by name ("I will merge
+it"), even when it would otherwise qualify.
+
+**Never merge a pull request directly, and never use `--admin`.** Open the PR, wait until its own
+`pull_request` checks have started, then enable auto-merge. The branch run is not the PR run: only the
+PR run tests the merge result. Ruled 2026-10-29: #180–#186 were merged in the same second they were
+opened, so each one's PR run started at the merge and reported three minutes later, when it could no
+longer refuse anything.
+
+Ruled 2026-10-28, replacing "merging is the founder's action only" and the Phase 4 exception, after a
+one-line npm engine fix (#176) sat waiting on him while it blocked #175. His words: *"when a PR is
+yours to land — a fix, a cleanup, or a step we already agreed — enable auto-merge on it yourself once
+CI is green, and tell me what landed. Wait for me only on anything carrying a screen I should look at."*
+
+**A merge is never inferred from intent.** That half of the old rule stands. It was added 2026-09-06,
+after exactly that inference. The founder wrote *"Merge #59"* when #59 had already
 been merged an hour earlier and #60 was the only pull request open; #60 was merged on the reasoning
 that it was plainly what he meant. It probably was. That is not the point: **the reasoning that gets
 one merge right is the same reasoning that gets the next one wrong**, and the cost is asymmetric —
 an unmerged branch waits, a wrongly merged one is on `develop`.
-
-His ruling: *"merging a PR is the founder's action only, never inferred from intent."*
-
-**Standing exception, granted 2026-09-07 — the Phase 4 plan only.** A pull request that is one of
-the numbered PRs in `docs/PHASE-4-PLAN.md` may be merged without asking, when **both** hold: CI is
-green, and every guard it adds has been proven by breaking what it guards and watching the failure.
-**PRs 8 and 9 are excluded** — they carry screens, and a screen waits for the founder's eyes. PR 7 was
-excluded and has merged. **7a, 7b and 7c are covered**, by the founder's ruling of 2026-09-07: they
-carry screens too, and he reviews them on `develop` with `npm run preview` and files fixes as
-follow-ups rather than gating the merge. Report each merge after the fact.
-
-This narrows nothing about the rule above, which still governs everything else. The authorization is
-specific to a numbered, already-agreed list; a pull request that is not on that list is not covered
-by it, and neither is one whose guards were only observed passing.
 
 **In a stacked chain, never delete a branch until the whole stack has landed on `develop`.** Deleting a base branch does not retarget its child to `develop` — GitHub **closes** the child instead, and its own base then points at a branch that no longer exists. That happened on 2026-09-06: `--delete-branch` on #61 closed #62 and left it `CONFLICTING/DIRTY`. Nothing was lost, because the head branches survived, but recovering it took a replacement pull request. Merge the whole stack first, delete the branches afterwards.
 
@@ -270,6 +285,13 @@ So when an instruction names a pull request that is already merged, or names one
 another, report the discrepancy and wait. "You asked me to merge #59; #59 merged at 07:46 and #60 is
 the only one open — do you want #60 merged?" costs one exchange. It is also the same rule the
 session-start check exists for: **status is a fact, and facts get checked** before they are acted on.
+
+**The live server is maintained by a separate team, and a fix made only there does not survive.**
+Every fix applied on the server must come back to `develop` as a pull request, or be recorded in a
+file in this repository that is read before the final migration; the migration rebuilds the server
+from `develop`, so anything fixed only on the server is erased by it. Ruled 2026-10-29, after
+frontend changes made on the server were lost exactly that way on 2026-10-26. Nothing in the repo
+records which commit the server runs, so ask the team before assuming it matches any tag.
 
 **Every pull request delivers a numbered phase item or fixes a named bug.** Nothing else. No
 standalone infrastructure or tooling pull request unless something is actually blocked — and then
@@ -282,6 +304,8 @@ blocked phase item needs is part of that item's pull request, not a separate one
 **Verify by running the thing and inspecting the result — never by reading the command or trusting its exit code.** Every defect this project has found in its own documentation and tooling failed by *appearing to work*: a seed command that reported success and seeded nothing, a restore that returned zero patients and reported mostly-success, a typecheck that passed against a renamed column, a CI pipeline that had never run the seed at all, a `--dry-run` that passed on exactly the lockfile CI then rejected. Five for five. An exit code of 0 is a claim, not evidence; the evidence is the row count, the rendered page, the error you deliberately introduced and watched appear.
 
 **Prove a guard by breaking what it guards, before trusting it.** A guard that silently does nothing looks exactly like one that works — both produce a green run. So a change whose purpose is to make some class of mistake detectable is not finished when the suite passes; it is finished when the mistake has been deliberately introduced, the tooling has been watched to fail, and the change has been reverted. Record the contrast, not the claim: "0 errors before, 18 after" is a fact, "this adds type safety" is not. This applies to every guard added from here on, without being asked.
+
+**A break counts only when the run prints the NAMES of the tests that failed.** A failure with no test names means the suite did not load, and the break is redone. Ruled 2026-11-01: five times in two days a first break tested nothing — reverts that rolled back, breaks that did not compile, a migration record left broken — and each looked like a caught break until examined.
 
 **`docs/SETUP.md` must be checked whenever a change adds a package tree, a new service, or a new required environment variable.** It went stale two commits after it was written — it still claimed `apps/web` did not exist — and nothing caught it. A setup document is only load-bearing on a machine that has never seen the project, which is exactly the machine nobody tests on.
 

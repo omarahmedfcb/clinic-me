@@ -1,5 +1,6 @@
 import { prisma } from "./client.ts";
 import { tenantContext } from "./tenant-context.ts";
+import { branchContext } from "../common/branch-context.ts";
 
 /**
  * UUID-shaped string, any version/variant. Deliberately permissive on the version nibble --
@@ -139,7 +140,8 @@ export async function withTenant<T>(
       SELECT set_config('app.current_tenant_id', ${tenantId}, true),
              set_config('app.current_actor_id', ${actor.userId}, true),
              set_config('app.current_ip', ${actor.ip}, true),
-             set_config('app.current_user_agent', ${actor.userAgent}, true)
+             set_config('app.current_user_agent', ${actor.userAgent}, true),
+             set_config('app.current_branch_id', ${branchContext.selectedSingle() ?? ""}, true)
     `;
 
     if (actor.supportSessionId !== undefined) {

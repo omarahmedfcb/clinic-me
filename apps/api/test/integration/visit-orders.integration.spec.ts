@@ -60,6 +60,7 @@ describe("the visit's orders and its patient profile", () => {
       const start = nextFixtureSlot();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,

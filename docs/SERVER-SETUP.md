@@ -150,8 +150,10 @@ sudo mkdir -p /opt/clinic-os && sudo chown clinicops:clinicops /opt/clinic-os
 git clone <repository-url> /opt/clinic-os
 cd /opt/clinic-os
 git checkout <the commit or tag Amir named>
-git log -1 --oneline     # Record this. Every later question starts with "which commit is running?"
 ```
+
+Which commit is running is answered by the server itself, not by a note: every `up` passes
+`DEPLOYED_COMMIT`, and the operator console reads it from `GET /platform/build` (§11).
 
 ---
 
@@ -211,7 +213,7 @@ cd /opt/clinic-os
 set -a && . /etc/clinic-os.env && set +a   # For the psql command below only.
 
 # 1. Build, start Postgres, run migrations. The api container will fail its health check.
-docker compose -f docker-compose.server.yml --env-file /etc/clinic-os.env up -d --build
+DEPLOYED_COMMIT=$(git rev-parse HEAD) docker compose -f docker-compose.server.yml --env-file /etc/clinic-os.env up -d --build
 
 # 2. Give clinic_os_app the password that is already inside APP_DATABASE_URL.
 docker compose -f docker-compose.server.yml --env-file /etc/clinic-os.env \
@@ -220,7 +222,7 @@ docker compose -f docker-compose.server.yml --env-file /etc/clinic-os.env \
   -c "ALTER ROLE clinic_os_app WITH PASSWORD '<second secret>';"
 
 # 3. Bring it up again. The API reconnects and web starts behind it.
-docker compose -f docker-compose.server.yml --env-file /etc/clinic-os.env up -d
+DEPLOYED_COMMIT=$(git rev-parse HEAD) docker compose -f docker-compose.server.yml --env-file /etc/clinic-os.env up -d
 docker compose -f docker-compose.server.yml --env-file /etc/clinic-os.env ps
 ```
 
@@ -359,6 +361,20 @@ A delivery that never succeeds is retried at 1m, 5m, 15m, 1h, 3h, 6h and 12h, th
 written to that clinic's own audit trail. **Nothing at the desk waits for any of this**, so a bot
 whose endpoint is down never slows a receptionist down.
 
+## 9c. The branch-limit pass
+
+When the operator lowers a clinic's branch limit below its active branches, the clinic has 30 days
+(`docs/BRANCHES-DESIGN.md` §9 A). This pass suspends the excess once that grace ends. It never
+suspends a branch that still has a future booking: that branch's suspension is deferred, and the
+operator sees it in `GET /platform/branch-limit-graces`. It never deletes. Daily is enough:
+
+```cron
+15 3 * * * docker compose -f /srv/clinic-os/docker-compose.server.yml exec -T api npm run branches:enforce-limits >> /var/log/clinic-os-branch-limits.log 2>&1
+```
+
+Repeating it is safe: a deferred grace is retried on the next run. The log line names what happened,
+for example `done=1 deferred=1 suspended=1 held_by_bookings=1`.
+
 ---
 
 ## 10. Alerting: Cloud Eye and SMN
@@ -443,12 +459,39 @@ npm run release:gate
 
 # Build and run migrations, then the new containers. `migrate` gates `api` in the compose file:
 # if it fails, the API does not start and the previous container keeps serving.
-docker compose -f docker-compose.server.yml --env-file /etc/clinic-os.env up -d --build
+# DEPLOYED_COMMIT is set here, on this line, from the checkout — never in /etc/clinic-os.env, where it
+# would go stale and report a commit that is no longer running. Forgetting the prefix is a refused
+# deploy: the API will not boot without it. Compose has already stopped the previous api container by
+# then, so the site is down until you run this line again with the prefix. That is why deploys happen
+# while the clinics are closed, and why the health check below comes straight after.
+DEPLOYED_COMMIT=$(git rev-parse HEAD) docker compose -f docker-compose.server.yml --env-file /etc/clinic-os.env up -d --build
 
 curl -fsS https://<SITE_ADDRESS>/api/health && echo OK
 docker compose -f docker-compose.server.yml --env-file /etc/clinic-os.env ps
 docker compose -f docker-compose.server.yml --env-file /etc/clinic-os.env logs --tail=50 api
+
+# Confirmation, not the safeguard (the API refuses to boot without the commit): the running API
+# carries the commit you checked out. Two identical lines.
+git rev-parse HEAD
+docker compose -f docker-compose.server.yml --env-file /etc/clinic-os.env exec -T api printenv DEPLOYED_COMMIT
 ```
+
+**Last step, from your own machine, not the server.** Record the deploy in the repository with an
+annotated tag on the commit you deployed, and push it. The server holds no credential that can write
+to the repository, and must not: a server compromise must not become a source compromise.
+
+```bash
+git fetch origin
+TAG="deployed/<site>/$(date -u +%Y%m%dT%H%MZ)"        # e.g. deployed/pilot/20261029T1730Z
+git tag -a "$TAG" <the commit you deployed> -m "Deployed to <site> by <your name>"
+git push origin "$TAG"
+```
+
+The tag is the deployment history: `git log --oneline <latest deployed tag>..develop` lists what the
+clinics do not have yet. The current truth is the server's own answer: the operator console reads
+`GET /platform/build`, which reports the `DEPLOYED_COMMIT` the running API was started with. `/health`
+deliberately does not report it: it is public, and a build identifier tells an attacker which
+version to look up.
 
 **Take a backup first** (`§8`, run by hand), and do it during clinic downtime — the pilot clinic's
 day is the thing being protected.
@@ -456,6 +499,23 @@ day is the thing being protected.
 **Rolling back** is the same sequence with the previous tag. If a release included a migration,
 check with Amir before rolling back: the code is designed to tolerate the previous schema for one
 release, and that is a promise about one step, not several.
+
+### 11b. Rollout notes: checks before a particular migration applies
+
+Run these **before** the `migrate` step of a release that contains the named migration. Omar runs them.
+A result other than the one stated **stops the rollout**: do not migrate, and bring the number back to
+Amir. The migration would refuse it anyway, but halfway through a deploy rather than before one.
+
+**`20261101120000_support_request_trail`** adds a CHECK that only a support session's rows say `SUPPORT`.
+Before it, no audit row may already carry that role:
+
+```bash
+docker compose -f docker-compose.server.yml --env-file /etc/clinic-os.env \
+  exec -T -e PGPASSWORD="$POSTGRES_PASSWORD" postgres \
+  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM audit_logs WHERE actor_role = 'SUPPORT';"
+# Must print 0. Run as the migration superuser, which sees past RLS: as the app role it would count nothing.
+```
 
 ---
 
@@ -480,7 +540,8 @@ half-restores.
 
 Not a claim that each step was done — the output that shows it:
 
-1. The commit running, from `git log -1 --oneline`.
+1. The commit running, as the API reports it (`printenv DEPLOYED_COMMIT` in §11), and the
+   `deployed/<site>/…` tag you pushed for it.
 2. `/api/health` over HTTPS, and the certificate issuer.
 3. `rolsuper`/`rolbypassrls` both false, and the API container without `DATABASE_URL`.
 4. One backup run's output, and the two objects listed in the bucket.

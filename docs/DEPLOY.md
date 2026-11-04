@@ -166,6 +166,10 @@ password corrupts the URL and produces a failure that looks like a database prob
 
 Note the host is `postgres`, not `localhost` — these are container-to-container connections.
 
+**`DEPLOYED_COMMIT` is not in this file, on purpose.** It is passed on the `docker compose up` line
+from the checkout (`SERVER-SETUP.md` §11). Written here, it would go stale at the next deploy and
+the operator console would report a commit that is no longer running.
+
 **`ATTACHMENTS_STORAGE_ROOT` needs a volume, and Caddy must not be able to see it.** It is a path
 inside the API container, so without a volume it lives in the container's writable layer and every
 patient scan is destroyed by the next `docker compose up -d` — silently, because the database rows

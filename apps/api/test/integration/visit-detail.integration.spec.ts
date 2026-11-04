@@ -138,6 +138,7 @@ describe("GET /appointments/:id/visit", () => {
       const present = input.status === "IN_CONSULTATION";
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id,
           patientId: input.patientId ?? clinic.patientId,
           doctorId: input.doctorId,

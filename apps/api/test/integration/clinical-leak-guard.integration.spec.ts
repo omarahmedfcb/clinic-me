@@ -144,6 +144,7 @@ describe("no reception-facing endpoint returns clinical content", () => {
       const start = new Date();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id: appointmentId,
           patientId,
           doctorId: clinic.doctorId,

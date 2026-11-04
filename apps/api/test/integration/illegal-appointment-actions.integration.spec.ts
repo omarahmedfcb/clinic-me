@@ -44,6 +44,7 @@ describe("illegal cancel and reschedule are refused by the service", () => {
       for (const weekday of [2]) {
         await tx.scheduleTemplate.create({
           data: injected({
+            branchId: clinic.branchId,
             doctorId: clinic.doctorId,
             weekday,
             startTime: new Date(Date.UTC(1970, 0, 1, 9, 0, 0)),

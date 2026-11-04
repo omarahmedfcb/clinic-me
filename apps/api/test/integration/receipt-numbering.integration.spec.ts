@@ -19,6 +19,8 @@ import { actorFor, seedClinic, teardownClinic, type ClinicFixture } from "./fixt
 
 const receipt = (clinic: ClinicFixture, n: number) => ({
   id: randomUUID(),
+  // A receipt that names no charge, visit or appointment has to name its branch (BRANCHES-DESIGN §4.2).
+  branchId: clinic.branchId,
   patientId: clinic.patientId,
   amountMinor: 1_000 + n,
   method: "CASH" as const,
@@ -101,8 +103,9 @@ describe("receipt numbering", () => {
     // **The gapless half.** A `SEQUENCE` passes every test above and fails this one: `nextval` is
     // not rolled back, so the number the failed receipt took is gone for good.
     const before = await withTenant(clinic.tenantId, actorFor(clinic.userId), async (tx) =>
-      tx.tenant.findUniqueOrThrow({
-        where: { id: clinic.tenantId },
+      // The counter is the branch's since branches: one gapless run per branch.
+      tx.branch.findUniqueOrThrow({
+        where: { id: clinic.branchId },
         select: { nextReceiptNumber: true },
       }),
     );
@@ -116,8 +119,9 @@ describe("receipt numbering", () => {
     ).rejects.toThrow("abandoned");
 
     const after = await withTenant(clinic.tenantId, actorFor(clinic.userId), async (tx) =>
-      tx.tenant.findUniqueOrThrow({
-        where: { id: clinic.tenantId },
+      // The counter is the branch's since branches: one gapless run per branch.
+      tx.branch.findUniqueOrThrow({
+        where: { id: clinic.branchId },
         select: { nextReceiptNumber: true },
       }),
     );

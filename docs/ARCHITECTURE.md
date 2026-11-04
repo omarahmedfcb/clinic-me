@@ -353,6 +353,11 @@ prisma.$extends({
 
 ⚠️ **Pooling caveat.** RLS requires `SET LOCAL app.current_tenant_id` inside a transaction. With a transaction-mode pooler this only works if every RLS-protected query runs inside an explicit `$transaction`. **Decision required:** either (a) route all clinical reads through a transaction wrapper — small performance cost, or (b) use session-mode pooling with a smaller connection ceiling. Recommendation: (a).
 
+**One transaction is one connection, so its queries run one at a time.** A `Promise.all` over `tx.*`
+calls gains nothing and is deprecated by `pg` (removed in `pg@9`). Fourteen such sites exist in `src/`
+(found 2026-10-31). **A cleanup PR makes them sequential before any `pg` major upgrade**,
+`appointments/appointments.fetch.ts` first, since every day view runs through it. Not before.
+
 ### Super Admin isolation
 
 A platform admin has **no default read access to clinical data**. Access requires:
@@ -653,6 +658,19 @@ appointment.in_consultation
 
 **Onboarding model:** register Rahal Group as a **Meta Tech Provider** and use **Embedded Signup**, so each clinic connects its own WhatsApp number from inside our product in a few clicks rather than us brokering their verification. This converts the single biggest onboarding obstacle into a selling point.
 
+**Who connects it (ruled 2026-10-30, `BRANCHES-DESIGN.md` §9 ruling B):** the operator enables the
+feature; the clinic admin connects the clinic's own number in clinic settings. The clinic's settings
+screen is the single source of truth for the clinic's external credentials: nothing else writes them,
+everything else reads them. The console's new-clinic route that runs Embedded Signup and writes the
+connection (`POST /platform/clinics/whatsapp`) is therefore to change, and so is anything else that
+writes a credential from outside clinic settings.
+
+**"Follow us" is marketing, not service.** The clinic records its social links (Facebook, Instagram,
+Google) as plain URLs, and the bot may offer them. At Meta such a message is marketing: it needs its
+own approved template, and a marketing consent distinct from `WHATSAPP_COMMS`. It must never be sent
+as a standalone message. Violations penalise the clinic's own number, not ours. The link fields come in
+step 8; the message waits for the consent and template work.
+
 ```
 Meta Cloud API
    │ webhook (signed)
@@ -786,6 +804,10 @@ Priority is inverted from the usual pyramid: correctness of clinical and schedul
 - Component tests for the design system
 
 Tenant isolation tests run on every commit and block merge. This is the one failure mode that ends the business.
+
+**Seen once, cause unknown (2026-10-31):** `operator-recovery-codes.integration.spec.ts` took 295 s in
+one full run and its last test hit the 120 s timeout; alone, and in every other run, it is fast.
+**If it recurs, it is investigated as a lock** (what held the row it waited on), not dismissed as a flake.
 
 ---
 

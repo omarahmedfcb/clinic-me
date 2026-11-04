@@ -159,6 +159,7 @@ describe("the platform console reads no clinic data", () => {
       const appointmentId = randomUUID();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id: appointmentId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,

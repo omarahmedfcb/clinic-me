@@ -29,6 +29,7 @@ async function bookAt(
     const id = randomUUID();
     await tx.appointment.create({
       data: injected({
+        branchId: clinic.branchId,
         id,
         patientId: clinic.patientId,
         doctorId: doctorId ?? clinic.doctorId,

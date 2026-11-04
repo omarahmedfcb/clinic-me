@@ -119,6 +119,7 @@ describe("the platform back office", () => {
       const appointmentId = randomUUID();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id: appointmentId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,

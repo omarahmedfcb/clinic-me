@@ -7,6 +7,7 @@ import { injected } from "../../prisma/injected.ts";
 import { withTenant, type ActorContext, type TransactionClient } from "../../prisma/with-tenant.ts";
 import { doctorIdForMembership } from "../clinical/clinical.access.ts";
 import { readBranchWhere } from "../../common/branch-read.ts";
+import { refusedOutOfBranch } from "../../common/branch-refusal.ts";
 
 export type DeskRefusalReason =
   | "NOT_FOUND"
@@ -225,6 +226,7 @@ export async function applyDiscount(
       where: { id: chargeId },
       select: {
         id: true,
+        branchId: true,
         subtotalMinor: true,
         status: true,
         ceilingPercentSnapshot: true,
@@ -232,6 +234,9 @@ export async function applyDiscount(
       },
     });
     if (charge === null) {
+      return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "visit" as const } };
+    }
+    if (await refusedOutOfBranch(tx, caller, { table: "visit_charges", id: charge.id, branchId: charge.branchId })) {
       return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "visit" as const } };
     }
     if (charge.status === "VOID") {
@@ -308,6 +313,14 @@ export async function recordPayment(
       }
     }
 
+    // A receipt against an appointment in a branch outside the caller's is refused as that appointment missing.
+    if (input.appointmentId !== null) {
+      const named = await tx.appointment.findFirst({ where: { id: input.appointmentId }, select: { id: true, branchId: true } });
+      if (named !== null && (await refusedOutOfBranch(tx, caller, { table: "appointments", id: named.id, branchId: named.branchId }))) {
+        return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "appointment" as const } };
+      }
+    }
+
     // **Money always names what it is for** — R-A. A receipt belonging to neither a charge nor an
     // appointment is money no screen can ever show the patient, and refusing it is possible.
     if (input.chargeId === null && input.appointmentId === null) {
@@ -318,9 +331,12 @@ export async function recordPayment(
     if (input.chargeId !== null) {
       const charge = await tx.visitCharge.findFirst({
         where: doctorId === null ? { id: input.chargeId } : { id: input.chargeId, visit: { doctorId } },
-        select: { visitId: true },
+        select: { id: true, visitId: true, branchId: true },
       });
       if (charge === null) {
+        return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "visit" as const } };
+      }
+      if (await refusedOutOfBranch(tx, caller, { table: "visit_charges", id: charge.id, branchId: charge.branchId })) {
         return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "visit" as const } };
       }
       visitId = charge.visitId;

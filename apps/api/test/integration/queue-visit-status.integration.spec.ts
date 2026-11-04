@@ -62,6 +62,7 @@ describe("the queue's visit status", () => {
       const start = new Date();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,

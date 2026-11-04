@@ -102,6 +102,7 @@ describe("patient detail — Q18", () => {
       const start = new Date("2026-09-02T09:00:00Z");
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id: appointmentId,
           patientId,
           doctorId: clinic.doctorId,
@@ -511,6 +512,7 @@ describe("patient detail — Q18", () => {
         // and the shared fixture appointment already has one.
         const appointment = await tx.appointment.create({
           data: injected({
+            branchId: clinic.branchId,
             id: randomUUID(),
             patientId,
             doctorId: clinic.doctorId,
@@ -632,6 +634,7 @@ describe("patient detail — Q18", () => {
       await withTenant(clinic.tenantId, actorFor(clinic.userId), (tx) =>
         tx.appointment.create({
           data: injected({
+            branchId: clinic.branchId,
             id: cancelledId,
             patientId,
             doctorId: clinic.doctorId,

@@ -7,6 +7,7 @@ import type { RefusalParams } from "../../common/refusals.ts";
 import { injected } from "../../prisma/injected.ts";
 import { withTenant, type TransactionClient } from "../../prisma/with-tenant.ts";
 import type { CallerContext } from "../appointments/appointments.service.ts";
+import { refusedOutOfBranch } from "../../common/branch-refusal.ts";
 
 /**
  * Why a credit the system wrote exists. A code, not a sentence: the ledger is read in Arabic, and
@@ -213,9 +214,12 @@ export async function applyCreditToCharge(
   return withTenant(caller.tenantId, caller.actor, async (tx) => {
     const charge = await tx.visitCharge.findFirst({
       where: { id: input.chargeId },
-      select: { id: true, patientId: true },
+      select: { id: true, patientId: true, branchId: true },
     });
     if (charge === null) {
+      return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "charge" as const } };
+    }
+    if (await refusedOutOfBranch(tx, caller, { table: "visit_charges", id: charge.id, branchId: charge.branchId })) {
       return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "charge" as const } };
     }
 

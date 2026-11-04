@@ -113,6 +113,7 @@ export async function describeMonth(
        WHERE (a.scheduled_start AT TIME ZONE ${tenant.timezone})::date >= ${from}::date
          AND (a.scheduled_start AT TIME ZONE ${tenant.timezone})::date < ${to}::date
          ${onlyOneDoctor}
+         ${inReadBranches}
        GROUP BY 1, 2
        ORDER BY 1
     `);

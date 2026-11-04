@@ -30,6 +30,7 @@ async function charge(
   return withTenant(clinic.tenantId, actorFor(clinic.userId), async (tx) => {
     const appointment = await tx.appointment.create({
       data: injected({
+        branchId: clinic.branchId,
         id: randomUUID(),
         patientId: clinic.patientId,
         doctorId: clinic.doctorId,

@@ -193,7 +193,9 @@ export async function findAvailableSlots(
       };
     }
 
-    const dayInput = await loadDayInput(tx, query.doctorId, query.date, context.timezone);
+    // Time is offered only in the branches this read covers, and never in a suspended one (§9 A); appointments
+    // stay busy everywhere, because a doctor is in one place at a time.
+    const dayInput = forReadBranches(await loadDayInput(tx, query.doctorId, query.date, context.timezone));
     const leadMinutes =
       query.channel === "STAFF"
         ? context.tenant.bookingLeadMinutesStaff
@@ -213,6 +215,8 @@ export async function findAvailableSlots(
         start: slot.start,
         end: slot.end,
         utcOffsetMinutes: slot.utcOffsetMinutes,
+        // Where the slot is: the same branch the token signs, so a client can group or filter without decoding it.
+        branchId: slot.branchId,
         token: mintSlotToken(
           {
             tenantId: caller.tenantId,
@@ -571,6 +575,10 @@ export async function rescheduleAppointment(
             params: { resource: "appointment" } as const,
           };
         }
+        // An appointment in a branch outside the caller's reads as missing, and the probe is recorded (§4.2).
+        if (await refusedOutOfBranch(tx, caller, { table: "appointments", id: existing.id, branchId: existing.branchId })) {
+          return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "appointment" } as const };
+        }
 
         // Reschedule is not an event, so `transition()` never saw it and this check did not exist:
         // a COMPLETED appointment could be moved to a future slot, and COMPLETED still occupies
@@ -719,6 +727,9 @@ export async function changeAppointmentStatus(
         code: "NOT_FOUND" as const,
         params: { resource: "appointment" } as const,
       };
+    }
+    if (await refusedOutOfBranch(tx, caller, { table: "appointments", id: appointment.id, branchId: appointment.branchId })) {
+      return { ok: false as const, code: "NOT_FOUND" as const, params: { resource: "appointment" } as const };
     }
 
     const tenant = await tx.tenant.findUnique({

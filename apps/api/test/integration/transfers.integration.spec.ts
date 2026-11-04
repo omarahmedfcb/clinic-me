@@ -79,6 +79,7 @@ describe("patient transfers over HTTP", () => {
     await withTenant(clinic.tenantId, actorFor(clinic.userId), (tx) =>
       tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,

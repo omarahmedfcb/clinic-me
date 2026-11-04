@@ -121,6 +121,7 @@ describe("transfer access expires at the clinical-content endpoint", () => {
       appointmentId = randomUUID();
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id: appointmentId,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,

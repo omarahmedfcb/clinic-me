@@ -47,6 +47,9 @@ Thumbs.db
 # Prisma generated client
 **/src/generated/
 
+# Drug catalogue source (8 MB); build-drug-catalogue.mjs reads it, drug-data.ts is what is committed
+apps/api/scripts/egyptian-drugs.json
+
 # Misc
 .cache/
 

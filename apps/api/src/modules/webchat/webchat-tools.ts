@@ -18,6 +18,8 @@ import { listServices } from "../services/services.service.ts";
 import type { GptTool } from "./gpt-client.ts";
 import { getBookableClinic, listBookableClinics, resolveBotActor } from "./webchat-clinics.ts";
 import type { WebchatSession } from "./webchat-session.ts";
+import { branchContext } from "../../common/branch-context.ts";
+import { resolveBranchContext } from "../../common/branch-scope.interceptor.ts";
 
 /** Egypt only, for now -- this project has no other market yet, so the phone country and the
  *  fallback clinic timezone are both fixed rather than threaded through as configuration. */
@@ -312,6 +314,17 @@ async function toolBookAppointment(session: WebchatSession, args: Record<string,
   return { ok: true, appointmentId: result.appointmentId, localTime: formatInClinicTime(result.start, timezone) };
 }
 
+/**
+ * The webchat has no request membership of its own: it acts as the clinic's bot membership, so a tool that reads or
+ * books runs under that membership's branch scope, never the request's (an empty one, here).
+ */
+async function underBotScope<T>(session: WebchatSession, run: () => Promise<T>): Promise<T> {
+  const caller = callerFor(session);
+  if (!caller) return run();
+  const context = await resolveBranchContext(caller.tenantId, caller.membershipId, caller.actor, undefined);
+  return context === null ? run() : branchContext.run(context, run);
+}
+
 export async function executeWebchatTool(session: WebchatSession, name: string, rawArguments: string): Promise<unknown> {
   let args: Record<string, unknown> = {};
   try {
@@ -330,13 +343,13 @@ export async function executeWebchatTool(session: WebchatSession, name: string, 
     case "select_patient":
       return toolSelectPatient(session, args);
     case "list_doctors":
-      return toolListDoctors(session);
+      return underBotScope(session, () => toolListDoctors(session));
     case "list_services":
-      return toolListServices(session);
+      return underBotScope(session, () => toolListServices(session));
     case "list_slots":
-      return toolListSlots(session, args);
+      return underBotScope(session, () => toolListSlots(session, args));
     case "book_appointment":
-      return toolBookAppointment(session, args);
+      return underBotScope(session, () => toolBookAppointment(session, args));
     default:
       return { ok: false, reason: "UNKNOWN_TOOL" };
   }

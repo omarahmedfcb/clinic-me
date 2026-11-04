@@ -36,7 +36,8 @@ export function HandoffBanner() {
     try {
       const response = await authFetch("/api/whatsapp/handoffs");
       if (!response.ok) return;
-      setChats(((await response.json()) as { items: PausedChat[] }).items);
+      // A reply without a list is no list, not an error: the banner stays hidden rather than crashing the shell.
+      setChats(((await response.json()) as { items?: PausedChat[] }).items ?? []);
     } catch {
       // A banner that is briefly stale is not worth an error of its own; the next poll is 30 seconds away.
     }

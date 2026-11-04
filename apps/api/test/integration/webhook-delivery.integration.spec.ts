@@ -52,6 +52,7 @@ describe("the webhook outbox", () => {
     await asClinic(async (tx) => {
       await tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id,
           patientId: clinic.patientId,
           doctorId: clinic.doctorId,
@@ -378,6 +379,7 @@ describe("the webhook outbox", () => {
         const appointmentId = uuidv7();
         await tx.appointment.create({
           data: injected({
+            branchId: other.branchId,
             id: appointmentId,
             patientId: other.patientId,
             doctorId: other.doctorId,

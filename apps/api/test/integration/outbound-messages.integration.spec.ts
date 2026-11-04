@@ -69,6 +69,7 @@ describe("the WhatsApp outbox", () => {
     await asClinic((tx) =>
       tx.appointment.create({
         data: injected({
+          branchId: clinic.branchId,
           id,
           patientId,
           doctorId: clinic.doctorId,

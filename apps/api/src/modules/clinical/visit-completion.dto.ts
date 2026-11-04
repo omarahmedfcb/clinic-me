@@ -34,6 +34,11 @@ export class CompleteVisitDto {
   @Min(1)
   @Max(730)
   followUpIntervalDays?: number;
+
+  /** Book the follow-up in this branch instead of the visit's own. */
+  @IsOptional()
+  @IsUUID()
+  followUpBranchId?: string;
 }
 
 export class AmendVisitDto {
