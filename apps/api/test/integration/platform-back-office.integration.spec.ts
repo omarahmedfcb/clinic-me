@@ -350,6 +350,7 @@ describe("the platform back office", () => {
         agreedMonthlyMinor: 240_000,
         discountPercent: 10,
         accountStatus: "ACTIVE",
+        subscriptionStartsOn: "2026-09-01",
         renewalOn: "2027-01-31",
         notes: "تم الاتفاق في اجتماع سبتمبر.",
         salesOwnerUserId: ownerId,
@@ -474,6 +475,7 @@ describe("the platform back office", () => {
       const soon = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
       await call("POST", `/platform/clinics/${tenantId}/file`, ownerToken, {
         accountStatus: "OVERDUE",
+        subscriptionStartsOn: new Date().toISOString().slice(0, 10),
         renewalOn: soon,
       });
 
