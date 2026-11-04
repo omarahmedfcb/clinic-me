@@ -89,7 +89,7 @@ describe("every refusal code has Arabic on the client", () => {
     // the code in its prose. A guard that a deletion cannot fail is not one.
     const doc = readFileSync(path.join(REPO_ROOT, "docs", "REFUSAL-CODES.md"), "utf8");
     const rows = new Set(
-      [...doc.matchAll(/^\| `([A-Z_]+)` \|/gm)].map((match) => match[1] as string),
+      [...doc.matchAll(/^\|[ \t]*`([A-Z_]+)`[ \t]*\|/gm)].map((match) => match[1] as string),
     );
     expect(REFUSAL_CODES.filter((code) => !rows.has(code))).toEqual([]);
     expect(RESOURCE_NAMES.filter((name) => !doc.includes("`" + name + "`"))).toEqual([]);
