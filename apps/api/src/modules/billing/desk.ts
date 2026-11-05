@@ -6,6 +6,7 @@ import type { RefusalParams } from "../../common/refusals.ts";
 import { injected } from "../../prisma/injected.ts";
 import { withTenant, type ActorContext, type TransactionClient } from "../../prisma/with-tenant.ts";
 import { doctorIdForMembership } from "../clinical/clinical.access.ts";
+import { notifyPatientPaid } from "../notifications/desk-notifications.ts";
 
 export type DeskRefusalReason =
   | "NOT_FOUND"
@@ -353,6 +354,15 @@ export async function recordPayment(
         paidAt: now,
       }),
       select: { id: true, receiptNumber: true, receiptDate: true, amountMinor: true, method: true },
+    });
+
+    // The patient's doctor hears that the patient paid (not when the doctor took the money themselves).
+    await notifyPatientPaid(tx, caller, {
+      appointmentId: input.appointmentId,
+      visitId,
+      patientId: input.patientId,
+      collectorDoctorId: doctorId,
+      now,
     });
 
     // Read back separately: `create` with a relation in its select is not available on this model,

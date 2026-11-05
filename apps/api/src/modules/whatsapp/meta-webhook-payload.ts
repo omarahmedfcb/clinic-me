@@ -15,6 +15,8 @@ export interface MetaInteractiveReply {
 export interface MetaInboundMessage {
   id?: string;
   from?: string;
+  /** Business-scoped user id (BSUID). Present on every message since March 2026; `from` is this id, not a phone number, when the sender hides theirs behind a username. */
+  user_id?: string;
   timestamp?: string;
   type?: string;
   text?: { body?: string };

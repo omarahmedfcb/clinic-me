@@ -15,12 +15,26 @@ import type { MetaInboundMessage, MetaWebhookPayload } from "./meta-webhook-payl
 import { handleVerificationHandshake, verifyMetaSignature, META_SIGNATURE_HEADER } from "./whatsapp-signing.ts";
 import { checkSpamLimit, debounceMessage, SPAM_LIMIT_REPLY } from "./whatsapp-throttle.ts";
 import { sendWhatsAppText } from "./whatsapp-graph-client.ts";
-import { ResolvedWhatsAppTenant, resolveTenantByPhoneNumberId, type WhatsAppTenant } from "./whatsapp-tenants.ts";
+import { ResolvedWhatsAppTenant, resolveTenantWithReason, type WhatsAppTenant } from "./whatsapp-tenants.ts";
 import { handleInboundWhatsAppMessage } from "./whatsapp-orchestrator.ts";
 import { handleStaffEchoes } from "./whatsapp-handoff.ts";
 import { handleReminderTap } from "./reminder-reply.ts";
 import { REMINDER_PAYLOAD_PREFIX } from "./whatsapp-templates.ts";
 import { setConnectionStatus, tenantsByWaba } from "./whatsapp-connections.ts";
+
+/** Last four digits only: enough to tell two senders apart in a log, not enough to identify one. */
+function maskSender(from: string | undefined): string {
+  if (!from) return "unknown";
+  return from.length <= 4 ? "****" : `***${from.slice(-4)}`;
+}
+
+/** A message that reached a clinic but that nothing will answer. Silent before; now one line each. */
+function ignored(tenant: ResolvedWhatsAppTenant, message: MetaInboundMessage, why: string): void {
+  console.warn(
+    `${new Date().toISOString()} WhatsApp: IGNORED message ${message.id ?? "(no id)"} from ${maskSender(message.from)} ` +
+      `for tenant ${tenant.id}: ${why}`,
+  );
+}
 
 @Controller("webhooks/whatsapp")
 export class WhatsAppWebhookController {
@@ -96,14 +110,20 @@ export class WhatsAppWebhookController {
         // something *we* sent), not a patient's message -- nothing for this pipeline to do with it.
         if (!phoneNumberId || !messages || messages.length === 0) continue;
 
-        const tenant = await resolveTenantByPhoneNumberId(phoneNumberId);
-        if (!tenant) {
-          console.warn(`WhatsApp: no bookable clinic for phone_number_id ${phoneNumberId}`);
+        const resolution = await resolveTenantWithReason(phoneNumberId);
+        if (!resolution.ok) {
+          // pm2 lines carry no time, so every drop is stamped here; the sender is masked.
+          for (const message of messages) {
+            console.warn(
+              `${new Date().toISOString()} WhatsApp: DROPPED a ${message.type ?? "?"} message from ${maskSender(message.from)} ` +
+                `to phone_number_id ${phoneNumberId}: ${resolution.reason}`,
+            );
+          }
           continue;
         }
 
         for (const message of messages) {
-          await this.handleOneMessage(tenant, message);
+          await this.handleOneMessage(resolution.tenant, message);
         }
       }
     }
@@ -141,7 +161,20 @@ export class WhatsAppWebhookController {
   private async handleOneMessage(tenant: ResolvedWhatsAppTenant, message: MetaInboundMessage): Promise<void> {
     // Text and tapped interactive replies (buttons, list rows) are acted on; anything else (image,
     // location, and so on) is not, same as before.
-    if (!message.from || !message.id) return;
+    if (!message.from || !message.id) {
+      ignored(tenant, message, "the message has no `from` or no `id`");
+      return;
+    }
+
+    // Since March 2026 `from` is a business-scoped user id ("EG.1A2B...") instead of a phone number when
+    // the sender hides their number behind a WhatsApp username. This code builds "+<from>" as a phone, so
+    // say so loudly instead of failing later in a way nobody connects to this.
+    if (!/^\d{6,15}$/.test(message.from)) {
+      console.warn(
+        `${new Date().toISOString()} WhatsApp: sender id ${maskSender(message.from)} is not a phone number ` +
+          `(username/BSUID sender, user_id ${message.user_id ?? "absent"}); the pipeline below assumes a phone number`,
+      );
+    }
 
     const waId = message.from;
     const phoneE164 = `+${waId}`;
@@ -161,7 +194,10 @@ export class WhatsAppWebhookController {
     if (message.type === "button") {
       // A tap on a template's quick-reply button. Today only reminders carry one; anything else is ignored.
       const payload = message.button?.payload;
-      if (payload === undefined || !payload.startsWith(REMINDER_PAYLOAD_PREFIX)) return;
+      if (payload === undefined || !payload.startsWith(REMINDER_PAYLOAD_PREFIX)) {
+        ignored(tenant, message, "a template button that is not a reminder reply");
+        return;
+      }
 
       handleReminderTap({
         tenant,
@@ -183,7 +219,10 @@ export class WhatsAppWebhookController {
       // patient types next would corrupt both. Its `id` is whatever whatsapp-flow.ts minted for
       // that button; the flow step handler is what makes sense of it, not the model.
       const id = message.interactive?.button_reply?.id ?? message.interactive?.list_reply?.id;
-      if (id === undefined) return;
+      if (id === undefined) {
+        ignored(tenant, message, "an interactive reply with no button or list id");
+        return;
+      }
 
       handleInboundWhatsAppMessage({
         tenant,
@@ -198,7 +237,10 @@ export class WhatsAppWebhookController {
       return;
     }
 
-    if (message.type !== "text" || !message.text?.body) return;
+    if (message.type !== "text" || !message.text?.body) {
+      ignored(tenant, message, `a "${message.type ?? "?"}" message; only text, button taps and list taps are handled`);
+      return;
+    }
 
     // Coalesces a burst into one turn. `externalMessageId` here ends up being whichever message in
     // the burst settles the debounce last -- a known, accepted simplification of exactly-once

@@ -330,6 +330,14 @@ enum NotificationKind {
   HANDOFF_REQUESTED
   /// A message the platform owed a patient (reminder, documents link, ...) was given up on.
   WHATSAPP_MESSAGE_FAILED
+  /// The doctor started a consultation. Reception only.
+  CONSULTATION_STARTED
+  /// The doctor ended a consultation. Reception only.
+  CONSULTATION_ENDED
+  /// Reception checked a patient in. The appointment's doctor only.
+  PATIENT_CHECKED_IN
+  /// A payment was recorded for the doctor's patient. The doctor only.
+  PATIENT_PAID
 }
 
 enum AttachmentCategory {

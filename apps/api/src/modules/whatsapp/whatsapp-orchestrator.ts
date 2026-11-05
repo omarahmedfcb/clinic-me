@@ -96,7 +96,13 @@ export async function handleInboundWhatsAppMessage(input: InboundWhatsAppMessage
   if (ingest.alreadyProcessed) return;
   // Staff replied from the Business app (coexistence): the message is logged above and the bot says
   // nothing on this chat. The pause lapses by itself, or staff hand it back.
-  if (ingest.botPausedUntil !== null && ingest.botPausedUntil.getTime() > Date.now()) return;
+  if (ingest.botPausedUntil !== null && ingest.botPausedUntil.getTime() > Date.now()) {
+    console.info(
+      `${new Date().toISOString()} WhatsApp: bot is silent on conversation ${ingest.conversationId} until ` +
+        `${ingest.botPausedUntil.toISOString()} (a person replied from the Business app); tenant ${tenant.id}`,
+    );
+    return;
+  }
 
   // The patient typed that they want a person: send them to the clinic's human support. The bot is not
   // paused and the saved flow state is untouched, so whatever they were doing is still there.

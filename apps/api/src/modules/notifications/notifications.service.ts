@@ -1,6 +1,7 @@
 import type { MembershipRole, NotificationKind, Prisma } from "../../generated/prisma/client.ts";
 import { injected } from "../../prisma/injected.ts";
 import { withTenant, type ActorContext, type TransactionClient } from "../../prisma/with-tenant.ts";
+import { DOCTOR_KINDS, RECEPTION_KINDS } from "./notification-audience.ts";
 
 /**
  * Notifications: reading them, and the one function that writes them.
@@ -89,9 +90,10 @@ async function visibleTo(
   switch (caller.role) {
     case "OWNER":
     case "ADMIN":
-      return {};
+      // The desk/doctor kinds are for the two people they are addressed to, not for management.
+      return { kind: { notIn: [...RECEPTION_KINDS, ...DOCTOR_KINDS] } };
     case "RECEPTIONIST":
-      return { kind: { not: "COMPLAINT_RECEIVED" } };
+      return { kind: { notIn: ["COMPLAINT_RECEIVED", ...DOCTOR_KINDS] } };
     case "DOCTOR": {
       const doctor = await tx.doctor.findFirst({
         where: { membershipId: caller.membershipId },
@@ -99,7 +101,7 @@ async function visibleTo(
       });
       if (doctor === null) return NOBODY;
       return {
-        kind: { not: "COMPLAINT_RECEIVED" },
+        kind: { notIn: ["COMPLAINT_RECEIVED", ...RECEPTION_KINDS] },
         OR: [
           { appointment: { doctorId: doctor.id } },
           { payload: { path: ["toDoctorId"], equals: doctor.id } },

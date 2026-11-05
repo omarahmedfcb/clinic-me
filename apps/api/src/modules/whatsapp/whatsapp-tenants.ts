@@ -39,6 +39,58 @@ export interface ResolvedWhatsAppTenant extends WhatsAppTenant {
   numberMode: NumberMode;
 }
 
+export type TenantResolution =
+  | { ok: true; tenant: ResolvedWhatsAppTenant }
+  | { ok: false; reason: string };
+
+/**
+ * Same lookup as `resolveTenantByPhoneNumberId`, but says WHY there is no clinic. The webhook logs that
+ * reason: "no bookable clinic" alone cannot tell a number nobody owns from a suspended clinic, a paused
+ * bot, a missing AI_AGENT or a connection that is not ACTIVE.
+ */
+export async function resolveTenantWithReason(phoneNumberId: string): Promise<TenantResolution> {
+  const tenant = await prisma.tenant.findFirst({
+    where: { whatsappPhoneNumberId: phoneNumberId },
+    select: { id: true, timezone: true, whatsappPhoneNumberId: true, name: true, nameEn: true, botPaused: true, status: true, suspensionReason: true },
+  });
+  if (tenant === null || tenant.whatsappPhoneNumberId === null) {
+    return { ok: false, reason: "NO_CLINIC_OWNS_THIS_NUMBER (no tenants row has this whatsapp_phone_number_id)" };
+  }
+  const who = `tenant ${tenant.id}`;
+  if (tenant.status !== "ACTIVE") {
+    return { ok: false, reason: `CLINIC_NOT_ACTIVE (${who}, status ${tenant.status}, suspension_reason ${tenant.suspensionReason ?? "none"})` };
+  }
+  if (tenant.botPaused && !isSubscriptionExempt(tenant.whatsappPhoneNumberId)) {
+    return { ok: false, reason: `BOT_PAUSED_NO_RUNNING_SUBSCRIPTION (${who}, bot_paused = true)` };
+  }
+
+  const bot = await resolveBotActor(tenant.id);
+  if (bot === null) return { ok: false, reason: `NO_ACTIVE_AI_AGENT_MEMBERSHIP (${who})` };
+
+  const access = await resolveWhatsAppAccess(tenant.id, tenant.whatsappPhoneNumberId);
+  if (access === null) {
+    return { ok: false, reason: `NO_ACTIVE_WHATSAPP_CONNECTION (${who}; connection status is not ACTIVE, belongs to another tenant, or there is no connection row and no .env fallback)` };
+  }
+
+  const support = await withTenant(tenant.id, await systemActor(), (tx) => resolveHumanSupport(tx, tenant.id));
+
+  return {
+    ok: true,
+    tenant: {
+      id: tenant.id,
+      timezone: tenant.timezone,
+      clinicName: tenant.name,
+      clinicNameEn: tenant.nameEn,
+      phoneNumberId: tenant.whatsappPhoneNumberId,
+      bot,
+      humanSupportPhone: support?.phoneE164 ?? null,
+      accessToken: access.accessToken,
+      client: access.client,
+      numberMode: access.numberMode,
+    },
+  };
+}
+
 /**
  * The clinic whose WhatsApp number received this message, and its AI_AGENT membership -- reusing
  * `resolveBotActor` from the web chat rather than re-deriving "does this clinic have a bot" a
@@ -50,35 +102,6 @@ export interface ResolvedWhatsAppTenant extends WhatsAppTenant {
  * exactly the lookup that has to run before any tenant is known, so it cannot itself be tenant-scoped.
  */
 export async function resolveTenantByPhoneNumberId(phoneNumberId: string): Promise<ResolvedWhatsAppTenant | null> {
-  const tenant = await prisma.tenant.findFirst({
-    where: { whatsappPhoneNumberId: phoneNumberId, status: "ACTIVE" },
-    select: { id: true, timezone: true, whatsappPhoneNumberId: true, name: true, nameEn: true, botPaused: true },
-  });
-  if (tenant === null || tenant.whatsappPhoneNumberId === null) return null;
-  // `botPaused`: no subscription range yet, or it has not started -- the bot says nothing. A number listed
-  // in SUBSCRIPTION_EXEMPT_PHONE_NUMBER_IDS (the env-wired test clinic) is never paused.
-  if (tenant.botPaused && !isSubscriptionExempt(tenant.whatsappPhoneNumberId)) return null;
-
-  const bot = await resolveBotActor(tenant.id);
-  if (bot === null) return null;
-
-  const access = await resolveWhatsAppAccess(tenant.id, tenant.whatsappPhoneNumberId);
-  if (access === null) return null;
-
-  // Read under the system actor, like the bot membership above: this is infrastructure resolving who a
-  // patient is sent to, not a signed-in user reading the staff list.
-  const support = await withTenant(tenant.id, await systemActor(), (tx) => resolveHumanSupport(tx, tenant.id));
-
-  return {
-    id: tenant.id,
-    timezone: tenant.timezone,
-    clinicName: tenant.name,
-    clinicNameEn: tenant.nameEn,
-    phoneNumberId: tenant.whatsappPhoneNumberId,
-    bot,
-    humanSupportPhone: support?.phoneE164 ?? null,
-    accessToken: access.accessToken,
-    client: access.client,
-    numberMode: access.numberMode
-  };
+  const resolution = await resolveTenantWithReason(phoneNumberId);
+  return resolution.ok ? resolution.tenant : null;
 }

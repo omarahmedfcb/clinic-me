@@ -8,6 +8,7 @@ import { transition, type AppointmentEvent } from "../appointments/domain/transi
 import { graceReferenceInstant } from "./domain/no-show.ts";
 import { doctorIdForMembership } from "../clinical/clinical.access.ts";
 import { doctorFreeAt } from "./queue.readiness.ts";
+import { notifyQueueEvent } from "../notifications/desk-notifications.ts";
 import type { RefusalParams } from "../../common/refusals.ts";
 import type { QueueMoveInput, QueueMoveResult, QueueRefusalReason } from "./queue.types.ts";
 
@@ -121,6 +122,8 @@ async function applyEvent(
   // Non-optional here even though `transition()` defaults it: every queue event needs at least
   // `now`, and a missing context would silently skip the grace check on MARK_NO_SHOW.
   context: NonNullable<Parameters<typeof transition>[2]> & { now: Date },
+  // `notify: false` is for the intermediate edges `completeAppointmentInTx` walks on a doctor's behalf.
+  options: { notify?: boolean } = {},
 ): Promise<
   { ok: true; status: AppointmentStatus } | { ok: false; refusal: QueueRefusal }
 > {
@@ -163,6 +166,12 @@ async function applyEvent(
   // R-A, hooked at the same choke point and for the same reason: a patient marked no-show who had
   // pre-paid is owed that money, and the credit must commit with the status, not after it.
   await creditAbandonedPrePayments(tx, caller.actor.userId, row.id, decision.next);
+
+  // Check-in (to the doctor), consultation started and ended (to reception). Same transaction as the
+  // status change, so a move that rolls back leaves no notification behind.
+  if (options.notify !== false) {
+    await notifyQueueEvent(tx, caller.actor.userId, row.id, event, context.now);
+  }
 
   return { ok: true, status: decision.next };
 }
@@ -379,7 +388,9 @@ export async function completeAppointmentInTx(
 
   let current: AppointmentStatus = row.status;
   for (const event of path[current] ?? ["COMPLETE"]) {
-    const applied = await applyEvent(tx, caller, { id: row.id, status: current }, event, { now });
+    // Only the ending is announced: a doctor who never pressed "start" should not make reception see
+    // "started" and "finished" back to back.
+    const applied = await applyEvent(tx, caller, { id: row.id, status: current }, event, { now }, { notify: event === "COMPLETE" });
     if (!applied.ok) {
       return { ok: false, code: applied.refusal.code, params: applied.refusal.params };
     }

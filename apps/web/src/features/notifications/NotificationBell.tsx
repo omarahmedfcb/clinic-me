@@ -44,7 +44,11 @@ interface NotificationItem {
     | "APPOINTMENT_RESCHEDULED"
     | "COMPLAINT_RECEIVED"
     | "HANDOFF_REQUESTED"
-    | "WHATSAPP_MESSAGE_FAILED";
+    | "WHATSAPP_MESSAGE_FAILED"
+    | "CONSULTATION_STARTED"
+    | "CONSULTATION_ENDED"
+    | "PATIENT_CHECKED_IN"
+    | "PATIENT_PAID";
   occurredAt: string;
   source: string;
   payload: {
